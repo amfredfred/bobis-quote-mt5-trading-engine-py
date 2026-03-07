@@ -87,6 +87,8 @@ class SignalConsumer:
         if not event or not isinstance(payload, dict):
             return
 
+        print(f"event -> {event}")
+
         if not is_valid_signal_dict(payload):
             logger.debug(
                 "SignalConsumer: payload is not a signal, skipping event=%s", event

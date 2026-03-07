@@ -14,7 +14,7 @@ Usage:
 
     or with env vars:
     SIGNAL_ENGINE_WS_URL=ws://localhost:8765 \\
-    MT5_LOGIN=12345 MT5_PASSWORD=secret MT5_SERVER=Broker-Live \\
+    MT5_LOGIN=12345 MT5_PASSWORD=secret MT5_SERVER=Broker-Live \\ 
     RISK_PERCENT_PER_TRADE=1.0 \\
     python main.py
 """

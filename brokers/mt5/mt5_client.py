@@ -63,6 +63,7 @@ class Mt5Client:
                 login=self._config.login,
                 password=self._config.password,
                 server=self._config.server,
+                path=self._config.path
             )
             if not authorised:
                 error = mt5.last_error()

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+from dotenv import load_dotenv
+load_dotenv()
 
 
 def _require(key: str) -> str:
@@ -63,6 +65,7 @@ class Env:
     MT5_MAGIC:        int   = _optional_int("MT5_MAGIC", 20240101)
     MT5_SLIPPAGE:     int   = _optional_int("MT5_SLIPPAGE", 10)
     MT5_COMMENT:      str   = _optional("MT5_COMMENT", "signal-engine")
+    MT5_EXEC_PATH:      str   = _optional("MT5_EXEC_PATH", None)
 
     # ── Risk ───────────────────────────────────────────────────────────────
     RISK_PERCENT_PER_TRADE:   float = _optional_float("RISK_PERCENT_PER_TRADE", 1.0)
