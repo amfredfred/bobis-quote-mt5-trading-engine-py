@@ -6,15 +6,25 @@ Import `cfg` for access anywhere; it is constructed once at module load.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List
 
 from config.env import env
+from utils.lot_calculator import RiskMode
+
+
+def _parse_risk_mode(raw: str) -> RiskMode:
+    try:
+        return RiskMode(raw.lower().strip())
+    except ValueError:
+        raise ValueError(f"RISK_MODE must be 'percentage' or 'fixed', got: {raw!r}")
 
 
 @dataclass(frozen=True)
 class RiskConfig:
-    risk_percent_per_trade: float
+    risk_mode: RiskMode
+    risk_percent_per_trade: float  # used when mode=PERCENTAGE
+    risk_fixed_amount: float  # used when mode=FIXED
     max_open_trades: int
     max_daily_loss_percent: float
     max_exposure_per_symbol: int
@@ -60,7 +70,9 @@ class AppConfig:
 def _build() -> AppConfig:
     return AppConfig(
         risk=RiskConfig(
+            risk_mode=_parse_risk_mode(env.RISK_MODE),
             risk_percent_per_trade=env.RISK_PERCENT_PER_TRADE,
+            risk_fixed_amount=env.RISK_FIXED_AMOUNT,
             max_open_trades=env.MAX_OPEN_TRADES,
             max_daily_loss_percent=env.MAX_DAILY_LOSS_PERCENT,
             max_exposure_per_symbol=env.MAX_EXPOSURE_PER_SYMBOL,
@@ -79,7 +91,7 @@ def _build() -> AppConfig:
             login=env.MT5_LOGIN,
             password=env.MT5_PASSWORD,
             server=env.MT5_SERVER,
-            path=env.MT5_EXEC_PATH,
+            path=env.MT5_EXEC_PATH
         ),
         signal=SignalConfig(
             ws_url=env.SIGNAL_ENGINE_WS_URL,

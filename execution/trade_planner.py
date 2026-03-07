@@ -11,7 +11,7 @@ from config.config import RiskConfig, ExecutionConfig
 from interfaces.position import AccountInfo, SymbolInfo
 from interfaces.signal_interface import InboundSignal, SignalDirection
 from interfaces.trade import OrderSide, TradePlan
-from utils.lot_calculator import calculate_lot_size
+from utils.lot_calculator import RiskMode, calculate_lot_size
 from utils.time_utils import now_ms
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,9 @@ class TradePlanner:
 
         calc = calculate_lot_size(
             account_balance=account_info.balance,
+            risk_mode=self._risk.risk_mode,
             risk_percent=self._risk.risk_percent_per_trade,
+            risk_fixed=self._risk.risk_fixed_amount,
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,
             symbol_info=symbol_info,
@@ -45,10 +47,13 @@ class TradePlanner:
         )
 
         tp1_frac = self._exec.tp1_partial_close_percent / 100.0
-        tp1_raw = calc.lot_size * tp1_frac
-        tp1_lot = _floor_to_step(tp1_raw, symbol_info.lot_step)
+        tp1_lot = _floor_to_step(calc.lot_size * tp1_frac, symbol_info.lot_step)
         tp2_lot = _floor_to_step(calc.lot_size - tp1_lot, symbol_info.lot_step)
-        risk_pct = (calc.risk_amount / account_info.balance) * 100.0
+        risk_pct = (
+            (calc.risk_amount / account_info.balance * 100.0)
+            if account_info.balance
+            else 0.0
+        )
 
         plan = TradePlan(
             signal_id=signal.id,
@@ -74,16 +79,16 @@ class TradePlanner:
                 "signal_id": signal.id,
                 "symbol": signal.symbol,
                 "side": side.value,
+                "risk_mode": self._risk.risk_mode.value,
+                "risk_amount": round(calc.risk_amount, 2),
+                "risk_pct": round(risk_pct, 2),
                 "lot_size": calc.lot_size,
                 "tp1_lots": tp1_lot,
                 "tp2_lots": tp2_lot,
-                "risk_amount": round(calc.risk_amount, 2),
-                "risk_pct": round(risk_pct, 2),
             },
         )
         return plan
 
 
 def _floor_to_step(value: float, step: float) -> float:
-    """Floor *value* to the nearest *step*."""
     return round(math.floor(value / step) * step, 2)
