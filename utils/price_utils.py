@@ -5,17 +5,28 @@ from __future__ import annotations
 import math
 
 
-def pip_size(symbol: str) -> float:
-    """
-    Returns the size of one pip for the given symbol.
+# In price_utils.py
 
-    Convention:
-      JPY pairs  → 0.01  (2nd decimal)
-      All others → 0.0001 (4th decimal)
+
+def pip_size(point: float, digits: int) -> float:
     """
-    if "JPY" in symbol.upper():
-        return 0.01
-    return 0.0001
+    Return the true pip size from broker-provided symbol metadata.
+
+    Brokers sometimes quote prices with sub-pip precision (an extra decimal
+    place), which shifts the pip one digit to the left:
+
+        digits=5  →  0.00001 point  →  0.0001 pip  (standard forex)
+        digits=3  →  0.001   point  →  0.01   pip  (JPY pairs)
+        digits=4  →  0.0001  point  →  0.0001 pip  (4-digit forex)
+        digits=2  →  0.01    point  →  0.01   pip  (JPY / metals)
+
+    Odd digit counts (5, 3) indicate sub-pip quoting — multiply point by 10
+    to step back to the conventional pip. Even digit counts are already at
+    pip precision, so point is returned as-is.
+    """
+    if digits in (5, 3):
+        return point * 10
+    return point
 
 
 def price_to_pips(price_diff: float, symbol: str) -> float:

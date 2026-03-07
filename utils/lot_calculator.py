@@ -59,7 +59,7 @@ def calculate_lot_size(
         risk_amount = account_balance * (risk_percent / 100.0)
 
     # ── Step 2: pip distance to stop ──────────────────────────────────────
-    pip = pip_size(symbol_info.symbol)
+    pip = pip_size(symbol_info.point, symbol_info.digits)
     risk_pips = abs(entry_price - stop_loss) / pip
 
     if risk_pips == 0:
