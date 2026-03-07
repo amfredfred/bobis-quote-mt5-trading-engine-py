@@ -59,8 +59,6 @@ class Env:
     MT5_EXEC_PATH: str = _optional("MT5_EXEC_PATH", None)
 
     # ── Risk mode ──────────────────────────────────────────────────────────
-    # RISK_MODE = "percentage"  →  risk RISK_PERCENT_PER_TRADE % of balance
-    # RISK_MODE = "fixed"       →  risk exactly RISK_FIXED_AMOUNT per trade
     RISK_MODE: str = _optional("RISK_MODE", "percentage")
     RISK_PERCENT_PER_TRADE: float = _optional_float("RISK_PERCENT_PER_TRADE", 1.0)
     RISK_FIXED_AMOUNT: float = _optional_float("RISK_FIXED_AMOUNT", 100.0)
@@ -78,6 +76,18 @@ class Env:
         "TP1_PARTIAL_CLOSE_PERCENT", 50.0
     )
     MOVE_SL_TO_BE_ON_TP1: bool = _optional_bool("MOVE_SL_TO_BE_ON_TP1", True)
+
+    # ── Live trading protections ───────────────────────────────────────────
+    # [1] Max acceptable slippage AFTER a fill — warns and cancels if exceeded
+    MAX_ENTRY_SLIPPAGE_PIPS: float = _optional_float("MAX_ENTRY_SLIPPAGE_PIPS", 3.0)
+
+    # [2] Spread surcharge — adds N × spread to the SL distance before sizing
+    #     0.0 = disabled (demo behaviour)  |  1.0 = add full spread to risk
+    SPREAD_RISK_MULTIPLIER: float = _optional_float("SPREAD_RISK_MULTIPLIER", 1.0)
+
+    # [3] Order retry on requote/rejection
+    ORDER_RETRY_COUNT: int = _optional_int("ORDER_RETRY_COUNT", 2)
+    ORDER_RETRY_DELAY_SEC: float = _optional_float("ORDER_RETRY_DELAY_SEC", 0.5)
 
     # ── Position Manager ───────────────────────────────────────────────────
     POSITION_POLL_INTERVAL_SEC: float = _optional_float(

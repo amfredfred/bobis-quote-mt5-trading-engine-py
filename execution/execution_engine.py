@@ -5,26 +5,30 @@ Orchestrates the full execution pipeline for a triggered signal:
     2. Risk check
     3. Build TradePlan
     4. Execute order via OrderManager
-    5. Persist Trade in PositionStore
-    6. Emit TRADE_OPENED
+       - includes retry, slippage check, partial fill detection
+    5. Recalculate TP1/TP2 lot split from ACTUAL filled volume  [4]
+    6. Persist Trade in PositionStore + disk
+    7. Emit TRADE_OPENED
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 
 from brokers.mt5.mt5_positions import Mt5Positions
 from config.config import ExecutionConfig
 from core.event_bus import EventBus
 from core.events import Events
-from .order_manager import OrderManager
-from .trade_planner import TradePlanner
+from execution.order_manager import OrderManager
+from execution.trade_planner import TradePlanner
 from infrastructure.metrics import metrics
 from positions.position_store import PositionStore
 from risk.risk_engine import RiskEngine
 from interfaces.signal_interface import InboundSignal
 from interfaces.trade import Trade, TradeStatus
+from utils.price_utils import normalise_lots
 from utils.time_utils import now_ms
 
 logger = logging.getLogger(__name__)
@@ -51,7 +55,6 @@ class ExecutionEngine:
         self._daily_loss_pct: float = 0.0
 
     def update_daily_loss(self, loss_pct: float) -> None:
-        """Called by bootstrap when daily P&L is updated."""
         self._daily_loss_pct = loss_pct
 
     def execute(self, signal: InboundSignal) -> Trade | None:
@@ -101,14 +104,45 @@ class ExecutionEngine:
 
         # ── 4. Execute order ───────────────────────────────────────────────
         try:
-            ticket, executed_price = self._orders.execute_market_order(plan)
+            ticket, executed_price, filled_volume = self._orders.execute_market_order(
+                plan
+            )
         except Exception as exc:
             logger.exception("ExecutionEngine: order execution failed")
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
             metrics.increment("orders.rejected")
             return None
 
-        # ── 5. Create Trade record ─────────────────────────────────────────
+        # ── 5. Recalculate TP lots from actual filled volume  [4] ──────────
+        # On a live broker, filled_volume may be less than plan.lot_size.
+        # Recompute the TP1/TP2 split so position manager closes correct amounts.
+        tp1_lot, tp2_lot = _split_lots(
+            filled_volume,
+            self._cfg.tp1_partial_close_percent,
+            symbol_info.lot_step,
+        )
+
+        if filled_volume != plan.lot_size:
+            logger.info(
+                "Lot split recalculated from actual fill",
+                extra={
+                    "planned_lots": plan.lot_size,
+                    "filled_lots": filled_volume,
+                    "tp1_lots": tp1_lot,
+                    "tp2_lots": tp2_lot,
+                },
+            )
+            # Patch the plan with the corrected split
+            from dataclasses import replace
+
+            plan = replace(
+                plan,
+                lot_size=filled_volume,
+                tp1_lot_size=tp1_lot,
+                tp2_lot_size=tp2_lot,
+            )
+
+        # ── 6. Create Trade record ─────────────────────────────────────────
         ts = now_ms()
         trade = Trade(
             id=str(uuid.uuid4()),
@@ -119,8 +153,8 @@ class ExecutionEngine:
             plan=plan,
             entry_ticket=ticket,
             entry_price=executed_price,
-            entry_lots=plan.lot_size,
-            current_lots=plan.lot_size,
+            entry_lots=filled_volume,
+            current_lots=filled_volume,
             stop_loss=plan.stop_loss,
             tp1=plan.tp1,
             tp2=plan.tp2,
@@ -131,7 +165,7 @@ class ExecutionEngine:
 
         self._store.add(trade)
 
-        # ── 6. Emit ────────────────────────────────────────────────────────
+        # ── 7. Emit ────────────────────────────────────────────────────────
         self._bus.emit(Events.TRADE_OPENED, trade)
         metrics.increment("trades.opened")
         metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
@@ -143,7 +177,28 @@ class ExecutionEngine:
                 "signal_id": signal.id,
                 "ticket": ticket,
                 "entry_price": executed_price,
-                "lots": plan.lot_size,
+                "planned_lots": (
+                    plan.lot_size
+                    if filled_volume == plan.lot_size
+                    else f"{plan.lot_size} (plan)"
+                ),
+                "filled_lots": filled_volume,
+                "tp1_lots": tp1_lot,
+                "tp2_lots": tp2_lot,
             },
         )
         return trade
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _split_lots(
+    total: float,
+    tp1_pct: float,
+    lot_step: float,
+) -> tuple[float, float]:
+    """Split *total* lots into (tp1, tp2) floored to lot_step."""
+    tp1 = math.floor(total * (tp1_pct / 100.0) / lot_step) * lot_step
+    tp2 = math.floor((total - tp1) / lot_step) * lot_step
+    return round(tp1, 2), round(tp2, 2)
