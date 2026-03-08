@@ -43,6 +43,7 @@ class ExecutionConfig:
     spread_risk_multiplier: float
     order_retry_count: int
     max_entry_slippage_pips: int
+    order_retry_delay_sec:int
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ def _build() -> AppConfig:
             spread_risk_multiplier=env.SPREAD_RISK_MULTIPLIER,
             order_retry_count=env.ORDER_RETRY_COUNT,
             max_entry_slippage_pips=env.MAX_ENTRY_SLIPPAGE_PIPS,
+            order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC
         ),
         mt5=Mt5Config(
             login=env.MT5_LOGIN,

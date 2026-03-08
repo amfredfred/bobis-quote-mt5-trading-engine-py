@@ -23,6 +23,7 @@ class PositionStore:
     # ── Write ─────────────────────────────────────────────────────────────
 
     def add(self, trade: Trade) -> None:
+        print("===================================ADDING")
         with self._lock:
             self._trades[trade.id] = copy.copy(trade)
 

@@ -74,6 +74,7 @@ def max_symbol_exposure_rule(
         if t.symbol == signal.symbol
         and t.status in (TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED)
     ]
+
     if len(symbol_trades) >= config.max_exposure_per_symbol:
         return RuleResult(
             approved=False,

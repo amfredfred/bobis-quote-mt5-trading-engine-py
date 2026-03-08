@@ -80,6 +80,7 @@ class ExecutionEngine:
 
         # ── 2. Risk check ──────────────────────────────────────────────────
         open_trades = self._store.get_open_trades()
+        print(f"TOPPPP========= {open_trades}")
         decision = self._risk.evaluate(signal, open_trades, self._daily_loss_pct)
 
         if not decision.approved:
@@ -112,7 +113,7 @@ class ExecutionEngine:
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
             metrics.increment("orders.rejected")
             return None
-
+        
         # ── 5. Recalculate TP lots from actual filled volume  [4] ──────────
         # On a live broker, filled_volume may be less than plan.lot_size.
         # Recompute the TP1/TP2 split so position manager closes correct amounts.
@@ -162,6 +163,8 @@ class ExecutionEngine:
             created_at=ts,
             updated_at=ts,
         )
+        
+        print(f"TRade: {trade}")
 
         self._store.add(trade)
 

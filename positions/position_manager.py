@@ -1,10 +1,19 @@
 """
 Polls MT5 positions on a timer to manage the full trade lifecycle:
 
+  - Reconcile on startup after reboot (trades closed while engine was down)
   - Partial close at TP1 + optional SL to breakeven
   - Full close at TP2
   - Detect SL hits (position absent from MT5)
   - Persist all state changes
+
+Reboot recovery
+---------------
+On start(), before the first normal poll, reconcile() is called once.
+It compares every OPEN/PARTIALLY_CLOSED trade in the store against MT5.
+Any trade whose ticket is no longer in MT5 is closed immediately with
+close_reason=CLOSED_WHILE_DOWN so the store, disk, and daily stats are
+all accurate before the engine resumes normal operation.
 """
 
 from __future__ import annotations
@@ -51,7 +60,7 @@ class PositionManager:
         self._stopped = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self) -> None:
         self._stopped.clear()
@@ -70,7 +79,91 @@ class PositionManager:
         if self._thread:
             self._thread.join(timeout=10)
 
-    # ── Poll loop ─────────────────────────────────────────────────────────
+    # ── Reboot reconciliation ─────────────────────────────────────────────────
+
+    def reconcile(self) -> None:
+        """
+        Called once at startup after hydration.
+
+        Compares every open trade in the store against live MT5 positions.
+        Trades whose tickets are gone from MT5 were closed while the engine
+        was down — mark them CLOSED so the store and disk are accurate before
+        normal polling begins.
+
+        This prevents:
+          - Stale OPEN trades blocking the max_open_trades risk rule
+          - Daily loss / stats being calculated from an incomplete picture
+          - The position manager trying to manage a position that no longer exists
+        """
+        open_trades = self._store.get_open_trades()
+        if not open_trades:
+            logger.info("PositionManager.reconcile: no open trades to reconcile")
+            return
+
+        try:
+            broker_positions = self._mt5_pos.get_open_positions(self._cfg.magic)
+            print(f"broker_positions: {len(broker_positions)}")
+        except Exception:
+            logger.warning(
+                "PositionManager.reconcile: cannot fetch MT5 positions — "
+                "skipping reconciliation, trades will be checked on first poll"
+            )
+            return
+
+        broker_tickets = {p.ticket for p in broker_positions}
+        stale_count = 0
+
+        for trade in open_trades:
+            if trade.entry_ticket is None:
+                continue
+
+            if trade.entry_ticket not in broker_tickets:
+                # Position is gone — closed while engine was down
+                self._close_stale(trade)
+                stale_count += 1
+
+        logger.info(
+            "PositionManager.reconcile complete",
+            extra={
+                "open_in_store": len(open_trades),
+                "live_in_mt5": len(broker_tickets),
+                "stale_closed": stale_count,
+                "still_open": len(open_trades) - stale_count,
+            },
+        )
+
+    def _close_stale(self, trade: Trade) -> None:
+        """
+        Mark a trade as closed because it was no longer in MT5 on startup.
+
+        We don't know the exact close price or reason (SL / TP / manual close),
+        so we log it clearly for manual review. The close_reason is set to
+        CLOSED_WHILE_DOWN so it can be filtered separately in reports.
+        """
+        logger.warning(
+            "Stale trade detected — closed while engine was down",
+            extra={
+                "trade_id": trade.id,
+                "symbol": trade.symbol,
+                "ticket": trade.entry_ticket,
+                "status_was": trade.status.value,
+                "opened_at": trade.opened_at,
+            },
+        )
+
+        updated = self._store.update(
+            trade.id,
+            status=TradeStatus.CLOSED,
+            close_reason=CloseReason.CLOSED_WHILE_DOWN,
+            closed_at=now_ms(),
+        )
+        if updated:
+            self._repo.save(updated)
+            self._bus.emit(Events.TRADE_CLOSED, updated)
+            metrics.increment("trades.closed_while_down")
+            metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
+
+    # ── Poll loop ─────────────────────────────────────────────────────────────
 
     def _loop(self) -> None:
         while not self._stopped.is_set():
@@ -104,34 +197,27 @@ class PositionManager:
 
             broker_pos = broker_by_ticket[trade.entry_ticket]
             current = broker_pos.current_price
-
             is_buy = trade.side.value == "BUY"
 
-            # TP1 check
             if not trade.tp1_hit:
-                tp1_reached = current >= trade.tp1 if is_buy else current <= trade.tp1
-                if tp1_reached:
+                if current >= trade.tp1 if is_buy else current <= trade.tp1:
                     self._handle_tp1(trade, current, broker_pos)
                     continue
 
-            # TP2 check
             if trade.tp1_hit and not trade.tp2_hit:
-                tp2_reached = current >= trade.tp2 if is_buy else current <= trade.tp2
-                if tp2_reached:
+                if current >= trade.tp2 if is_buy else current <= trade.tp2:
                     self._handle_tp2(trade, current)
 
-    # ── Handlers ─────────────────────────────────────────────────────────
+    # ── Trade lifecycle handlers ──────────────────────────────────────────────
 
     def _handle_tp1(self, trade: Trade, price: float, broker_pos) -> None:
         logger.info("TP1 hit", extra={"trade_id": trade.id, "price": price})
-
         try:
             side_type = (
                 Mt5OrderType.BUY if trade.side.value == "BUY" else Mt5OrderType.SELL
             )
             tick = self._mt5_pos.get_current_tick(trade.symbol)
             close_price = tick.bid if trade.side.value == "BUY" else tick.ask
-
             self._mt5_orders.close_position(
                 ticket=trade.entry_ticket,
                 symbol=trade.symbol,
@@ -142,7 +228,6 @@ class PositionManager:
                 magic=self._cfg.magic,
                 comment=f"TP1 {self._cfg.comment}",
             )
-
             if self._cfg.move_sl_to_be_on_tp1:
                 self._mt5_orders.modify_position(
                     ticket=trade.entry_ticket,
@@ -172,13 +257,11 @@ class PositionManager:
 
     def _handle_tp2(self, trade: Trade, price: float) -> None:
         logger.info("TP2 hit", extra={"trade_id": trade.id, "price": price})
-
         realized_rr = (
             abs(price - trade.entry_price) / abs(trade.entry_price - trade.stop_loss)
             if trade.entry_price and trade.stop_loss != trade.entry_price
             else 0.0
         )
-
         updated = self._store.update(
             trade.id,
             tp2_hit=True,
@@ -197,21 +280,16 @@ class PositionManager:
             metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
     def _handle_position_gone(self, trade: Trade) -> None:
-        """Position is no longer in MT5 — assume SL hit unless TP2 already marked."""
+        if trade.tp2_hit:
+            return
         logger.info(
             "Position gone from broker",
             extra={"trade_id": trade.id, "ticket": trade.entry_ticket},
         )
-
-        if trade.tp2_hit:
-            return  # already handled
-
-        close_reason = CloseReason.SL_HIT
-
         updated = self._store.update(
             trade.id,
             status=TradeStatus.CLOSED,
-            close_reason=close_reason,
+            close_reason=CloseReason.SL_HIT,
             closed_at=now_ms(),
             sl_hit=True,
             sl_hit_at=now_ms(),

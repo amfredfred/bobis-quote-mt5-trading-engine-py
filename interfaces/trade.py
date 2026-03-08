@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .signal_interface import InboundSignal
+    from interfaces.signal_interface import InboundSignal
 
 
 class OrderSide(str, Enum):
@@ -32,6 +32,7 @@ class CloseReason(str, Enum):
     INVALIDATED = "INVALIDATED"
     EXPIRED = "EXPIRED"
     ERROR = "ERROR"
+    CLOSED_WHILE_DOWN = "CLOSED_WHILE_DOWN"
 
 
 @dataclass

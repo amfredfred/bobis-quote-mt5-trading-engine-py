@@ -39,6 +39,7 @@ class RiskEngine:
         open_trades: List[Trade],
         daily_loss_pct: float,
     ) -> RiskDecision:
+
         for rule in self._rules:
             result = rule(signal, open_trades, self._config, daily_loss_pct)
             if not result.approved:

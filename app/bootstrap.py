@@ -47,6 +47,12 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
         ) from exc
 
     container.event_bus.emit(Events.BROKER_CONNECTED)
+
+    # ── Reconcile open trades against live MT5 positions ──────────────────
+    # Trades that were closed by the broker while the engine was down are
+    # marked CLOSED_WHILE_DOWN before normal polling begins.
+    container.position_manager.reconcile()
+
     logger.info(
         "MT5 connected and verified",
         extra={

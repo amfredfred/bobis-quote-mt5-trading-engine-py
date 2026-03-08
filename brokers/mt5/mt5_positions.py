@@ -126,6 +126,8 @@ class Mt5Positions:
         if magic is not None:
             raw = [p for p in raw if p.magic == magic]
 
+        print(f"raw ============ {raw}")
+
         return [
             Position(
                 ticket=p.ticket,
