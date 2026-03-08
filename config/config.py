@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List
-
+from utils.symbol_utils import normalise_symbol
 from config.env import env
 from utils.lot_calculator import RiskMode
 from zoneinfo import ZoneInfo
+
 
 def _parse_risk_mode(raw: str) -> RiskMode:
     try:
@@ -43,7 +44,7 @@ class ExecutionConfig:
     spread_risk_multiplier: float
     order_retry_count: int
     max_entry_slippage_pips: int
-    order_retry_delay_sec:int
+    order_retry_delay_sec: int
     signal_throttle_sec: int
 
 
@@ -106,7 +107,7 @@ def _build() -> AppConfig:
         ),
         signal=SignalConfig(
             ws_url=env.SIGNAL_ENGINE_WS_URL,
-            symbols = [s.strip().replace("/", "").replace("-", "").upper() for s in env.SIGNAL_ENGINE_SYMBOLS.split(",")],
+            symbols=[normalise_symbol(s) for s in env.SIGNAL_ENGINE_SYMBOLS.split(",")],
         ),
         storage_path=env.STORAGE_PATH,
         log_level=env.LOG_LEVEL,
