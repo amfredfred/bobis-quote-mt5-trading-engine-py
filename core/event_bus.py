@@ -15,15 +15,14 @@ import logging
 from collections import defaultdict
 from typing import Any, Callable, Dict, List
 
-logger = logging.getLogger("event_bus")
-
+logger = logging.getLogger("EventBus")
 Listener = Callable[..., None]
 
 
 class EventBus:
     def __init__(self) -> None:
         self._listeners: Dict[str, List[Listener]] = defaultdict(list)
-        self._wildcard:  List[Callable[[str, Any], None]] = []
+        self._wildcard: List[Callable[[str, Any], None]] = []
 
     # ── Registration ──────────────────────────────────────────────────────
 
@@ -33,9 +32,11 @@ class EventBus:
 
     def once(self, event: str, listener: Listener) -> None:
         """Subscribe *listener* to fire once, then auto-remove."""
+
         def _wrapper(payload: Any) -> None:
             listener(payload)
             self._listeners[event].remove(_wrapper)
+
         self._listeners[event].append(_wrapper)
 
     def off(self, event: str, listener: Listener) -> None:
