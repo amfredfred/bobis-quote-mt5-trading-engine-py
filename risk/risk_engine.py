@@ -39,10 +39,16 @@ class RiskEngine:
         open_trades: List[Trade],
         daily_loss_pct: float,
         effective_open: int = 0,
+        effective_symbol: int = 0,
     ) -> RiskDecision:
         for rule in self._rules:
             result = rule(
-                signal, open_trades, self._config, daily_loss_pct, effective_open
+                signal,
+                open_trades,
+                self._config,
+                daily_loss_pct,
+                effective_open,
+                effective_symbol,
             )
             if not result.approved:
                 logger.warning(

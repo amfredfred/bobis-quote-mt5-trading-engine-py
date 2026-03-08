@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 import uuid
 
 from brokers.mt5.mt5_positions import Mt5Positions
@@ -30,6 +31,7 @@ from risk.risk_engine import RiskEngine
 from storage.trade_repository import TradeRepository
 from interfaces.signal_interface import InboundSignal
 from interfaces.trade import Trade, TradeStatus
+from utils.price_utils import normalise_lots
 from utils.time_utils import now_ms
 
 logger = logging.getLogger(__name__)
@@ -55,15 +57,44 @@ class ExecutionEngine:
         self._repo = trade_repo
         self._bus = event_bus
         self._cfg = exec_config
-        self._pending = 0  # orders approved but not yet in store
+        self._pending: dict[str, int] = {}
         self._pending_lock = threading.Lock()
-        self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
+        self._last_executed: dict[str, float] = {}
+        self._executing = threading.Lock()  # only one execution at a time
+        self._daily_loss_pct: float = 0.0
 
     def update_daily_loss(self, loss_pct: float) -> None:
         """Called by PositionManager on each poll cycle."""
         self._daily_loss_pct = loss_pct
 
+    def _pending_total(self) -> int:
+        return sum(self._pending.values())
+
+    def _pending_for(self, symbol: str) -> int:
+        return self._pending.get(symbol, 0)
+
+    def _reserve(self, symbol: str) -> None:
+        self._pending[symbol] = self._pending.get(symbol, 0) + 1
+
+    def _release(self, symbol: str) -> None:
+        self._pending[symbol] = max(0, self._pending.get(symbol, 0) - 1)
+
     def execute(self, signal: InboundSignal) -> Trade | None:
+        # Drop signal immediately if another execution is in progress.
+        # Non-blocking acquire — signals are not queued, they are discarded.
+        if not self._executing.acquire(blocking=False):
+            logger.debug(
+                "ExecutionEngine: dropped signal — execution in progress",
+                extra={"signal_id": signal.id, "symbol": signal.symbol},
+            )
+            return None
+
+        try:
+            return self._execute(signal)
+        finally:
+            self._executing.release()
+
+    def _execute(self, signal: InboundSignal) -> Trade | None:
         logger.info(
             "ExecutionEngine processing signal",
             extra={
@@ -86,10 +117,31 @@ class ExecutionEngine:
 
         # ── 2. Risk check ──────────────────────────────────────────────────
         with self._pending_lock:
+            # Throttle — ignore signals for a symbol that fired too recently
+            now = time.monotonic()
+            last = self._last_executed.get(signal.symbol, 0.0)
+            if now - last < self._cfg.signal_throttle_sec:
+                logger.debug(
+                    "ExecutionEngine: throttled signal",
+                    extra={
+                        "signal_id": signal.id,
+                        "symbol": signal.symbol,
+                        "elapsed_ms": round((now - last) * 1000),
+                    },
+                )
+                return None
+
             open_trades = self._store.get_open_trades()
-            effective_open = len(open_trades) + self._pending
+            effective_open = len(open_trades) + self._pending_total()
+            effective_symbol = len(
+                [t for t in open_trades if t.symbol == signal.symbol]
+            ) + self._pending_for(signal.symbol)
             decision = self._risk.evaluate(
-                signal, open_trades, self._daily_loss_pct, effective_open
+                signal,
+                open_trades,
+                self._daily_loss_pct,
+                effective_open,
+                effective_symbol,
             )
 
             if not decision.approved:
@@ -98,8 +150,9 @@ class ExecutionEngine:
                 )
                 return None
 
-            # Reserve a slot immediately — before the order hits MT5
-            self._pending += 1
+            # Reserve slot and stamp time before releasing lock
+            self._reserve(signal.symbol)
+            self._last_executed[signal.symbol] = now
 
         self._bus.emit(Events.RISK_APPROVED, {"signal": signal})
 
@@ -122,7 +175,7 @@ class ExecutionEngine:
             )
         except Exception as exc:
             with self._pending_lock:
-                self._pending -= 1
+                self._release(signal.symbol)
             logger.exception("ExecutionEngine: order execution failed")
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
             metrics.increment("orders.rejected")
@@ -160,7 +213,7 @@ class ExecutionEngine:
         # ── 6. Create Trade record ─────────────────────────────────────────
         ts = now_ms()
         trade = Trade(
-            id=f"SIG_{signal.symbol}_{ticket}_{plan.side}",
+            id=str(uuid.uuid4()),
             signal_id=signal.id,
             symbol=signal.symbol,
             side=plan.side,
@@ -181,7 +234,7 @@ class ExecutionEngine:
         self._store.add(trade)
         self._repo.save(trade)
         with self._pending_lock:
-            self._pending -= 1
+            self._release(signal.symbol)
 
         # ── 7. Emit ────────────────────────────────────────────────────────
         self._bus.emit(Events.TRADE_OPENED, trade)

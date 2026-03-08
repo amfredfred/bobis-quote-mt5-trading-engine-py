@@ -12,6 +12,7 @@ from typing import List, Optional
 from brokers.mt5.mt5_client import Mt5Client
 from brokers.mt5.mt5_types import Mt5PositionType
 from interfaces.position import AccountInfo, Position, PositionSide, SymbolInfo
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -145,49 +146,40 @@ class Mt5Positions:
         return next((p for p in positions if p.ticket == ticket), None)
 
     def get_daily_loss_pct(self, magic: int) -> float:
-        """
-        Calculate today's realised loss as a percentage of current balance.
-        Queries MT5 deal history directly — no local storage needed.
-        Uses broker server time (not local UTC) so the day boundary matches
-        what the broker considers "today".
-        Returns a positive number representing loss percentage (e.g. 2.5 = 2.5%).
-        Returns 0.0 if no closed deals today or on any error.
-        """
         self._client.ensure_connected()
         try:
-            from datetime import datetime, timezone, timedelta
-
             offset_hours = self._client.broker_utc_offset_hours
             now_utc = datetime.now(timezone.utc)
-
-            # Convert to broker local time, find broker midnight, convert back to UTC
-            now_broker = now_utc + timedelta(hours=offset_hours)
-            broker_midnight = now_broker.replace(
-                hour=0, minute=0, second=0, microsecond=0
+            now_broker = (now_utc + timedelta(hours=offset_hours)).replace(tzinfo=None)
+            from_dt = datetime(
+                now_broker.year, now_broker.month, now_broker.day, 0, 0, 0
             )
-            broker_today_utc = broker_midnight - timedelta(hours=offset_hours)
+            to_dt = from_dt + timedelta(days=1)
 
-            deals = self._mt5.history_deals_get(broker_today_utc, now_utc) or []
-            logger.debug(
-                "get_daily_loss_pct query window",
-                extra={
-                    "broker_utc_offset": offset_hours,
-                    "broker_today_utc": broker_today_utc.isoformat(),
-                    "now_utc": now_utc.isoformat(),
-                    "deals_found": len(deals),
-                },
-            )
+            deals = self._mt5.history_deals_get(from_dt, to_dt) or []
+
             daily_pnl = sum(
-                d.profit
+                d.profit + d.swap + d.commission
                 for d in deals
-                if d.magic == magic and d.entry == 1  # entry=1 means deal out (close)
+                if d.magic == magic and d.entry == self._client.mt5.DEAL_ENTRY_OUT
             )
+            balance_ops = sum(
+                d.profit for d in deals if d.type == self._client.mt5.DEAL_TYPE_BALANCE
+            )
+
             if daily_pnl >= 0:
                 return 0.0
+
             account = self._mt5.account_info()
             if not account or account.balance <= 0:
                 return 0.0
-            return abs(daily_pnl) / account.balance * 100
+
+            starting_balance = account.balance - daily_pnl - balance_ops
+            if starting_balance <= 0:
+                return 0.0
+
+            return (abs(daily_pnl) / starting_balance) * 100
+
         except Exception:
             logger.warning(
                 "Mt5Positions.get_daily_loss_pct: failed to calculate daily loss"

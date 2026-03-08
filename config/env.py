@@ -105,5 +105,6 @@ class Env:
     LOG_LEVEL: str = _optional("LOG_LEVEL", "INFO")
     STORAGE_PATH: str = _optional("STORAGE_PATH", "./data")
 
+    SIGNAL_THROTTLE_SEC: str = _optional_int("SIGNAL_THROTTLE_SEC", 5)
 
 env = Env()

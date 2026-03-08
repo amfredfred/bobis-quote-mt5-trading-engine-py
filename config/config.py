@@ -44,6 +44,7 @@ class ExecutionConfig:
     order_retry_count: int
     max_entry_slippage_pips: int
     order_retry_delay_sec:int
+    signal_throttle_sec: int
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ def _build() -> AppConfig:
             order_retry_count=env.ORDER_RETRY_COUNT,
             max_entry_slippage_pips=env.MAX_ENTRY_SLIPPAGE_PIPS,
             order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC,
+            signal_throttle_sec=env.SIGNAL_THROTTLE_SEC,
         ),
         mt5=Mt5Config(
             login=env.MT5_LOGIN,
@@ -104,12 +106,12 @@ def _build() -> AppConfig:
         ),
         signal=SignalConfig(
             ws_url=env.SIGNAL_ENGINE_WS_URL,
-            symbols=[s.strip() for s in env.SIGNAL_ENGINE_SYMBOLS.split(",")],
+            symbols = [s.strip().replace("/", "").replace("-", "").upper() for s in env.SIGNAL_ENGINE_SYMBOLS.split(",")],
         ),
         storage_path=env.STORAGE_PATH,
         log_level=env.LOG_LEVEL,
         position_poll_interval=env.POSITION_POLL_INTERVAL_SEC,
-        engine_timezone=ZoneInfo(env.ENGINE_TIMEZONE)
+        engine_timezone=ZoneInfo(env.ENGINE_TIMEZONE),
     )
 
 
