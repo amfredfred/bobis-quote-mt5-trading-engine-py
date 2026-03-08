@@ -83,7 +83,15 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 
     container.event_bus.on_any(on_any_event)
 
+    # ── Monitoring server — built here so container is fully available ────
+    from infrastructure.monitoring_server import MonitoringServer
+
+    container.monitoring_server = MonitoringServer(
+        container, config, port=config.monitoring_port
+    )
+
     # ── Start services ────────────────────────────────────────────────────
+    container.monitoring_server.start()
     container.signal_queue.start()
     container.position_manager.start()
     container.signal_consumer.start()
@@ -106,5 +114,6 @@ def shutdown(container: AppContainer) -> None:
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()
+    container.monitoring_server.stop()
     container.mt5_client.disconnect()
     logger.info("Shutdown complete")

@@ -27,6 +27,8 @@ from storage.trade_repository import TradeRepository
 from strategies.signal_adapter import PassthroughAdapter
 from strategies.strategy_router import StrategyRouter
 
+from infrastructure.monitoring_server import MonitoringServer
+
 
 @dataclass
 class AppContainer:
@@ -40,6 +42,7 @@ class AppContainer:
     position_store: PositionStore
     trade_repo: TradeRepository
     strategy_router: StrategyRouter
+    monitoring_server: "MonitoringServer | None" = None
 
 
 def build_container(config: AppConfig) -> AppContainer:
