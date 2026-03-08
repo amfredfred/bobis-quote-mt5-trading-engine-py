@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from config.config import RiskConfig
 from infrastructure.metrics import metrics
-from .risk_rules import ALL_RULES, RiskRule
+from risk.risk_rules import ALL_RULES, RiskRule
 from interfaces.signal_interface import InboundSignal
 from interfaces.trade import Trade
 
@@ -38,10 +38,12 @@ class RiskEngine:
         signal: InboundSignal,
         open_trades: List[Trade],
         daily_loss_pct: float,
+        effective_open: int = 0,
     ) -> RiskDecision:
-
         for rule in self._rules:
-            result = rule(signal, open_trades, self._config, daily_loss_pct)
+            result = rule(
+                signal, open_trades, self._config, daily_loss_pct, effective_open
+            )
             if not result.approved:
                 logger.warning(
                     "Risk rejected",

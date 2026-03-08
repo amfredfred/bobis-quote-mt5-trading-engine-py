@@ -2,7 +2,7 @@
 Thread-safe in-memory store for Trade objects.
 
 All mutations return a fresh copy so callers never hold stale references.
-Persistence is handled externally by TradeRepository.
+MT5 is the source of truth — no disk persistence needed.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ class PositionStore:
     # ── Write ─────────────────────────────────────────────────────────────
 
     def add(self, trade: Trade) -> None:
-        print("===================================ADDING")
         with self._lock:
             self._trades[trade.id] = copy.copy(trade)
 
@@ -38,6 +37,11 @@ class PositionStore:
             trade.updated_at = now_ms()
             self._trades[trade_id] = trade
             return copy.copy(trade)
+
+    def remove(self, trade_id: str) -> None:
+        """Remove a trade from the store. Called when a trade closes."""
+        with self._lock:
+            self._trades.pop(trade_id, None)
 
     def hydrate(self, trades: List[Trade]) -> None:
         """Bulk-load on startup from persistent storage."""

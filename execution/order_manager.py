@@ -170,26 +170,26 @@ class OrderManager:
             # [1] Post-fill slippage — symbol-aware threshold
             slippage_pips = abs(result.executed_price - plan.entry_price) / pip
 
-            if slippage_pips > max_slip_pip:
-                logger.error(
-                    "Fill slippage exceeds symbol limit — closing position",
-                    extra={
-                        "ticket": result.ticket,
-                        "symbol": plan.symbol,
-                        "planned_entry": plan.entry_price,
-                        "executed_price": result.executed_price,
-                        "slippage_pips": round(slippage_pips, 1),
-                        "max_pips": max_slip_pip,
-                    },
-                )
-                metrics.increment("orders.slippage_exceeded")
-                self._emergency_close(
-                    result.ticket, plan, order_type, result.executed_price
-                )
-                raise RuntimeError(
-                    f"{plan.symbol} fill slippage {slippage_pips:.1f} pips "
-                    f"exceeds limit {max_slip_pip} pips — position closed"
-                )
+            # if slippage_pips > max_slip_pip:
+            #     logger.error(
+            #         "Fill slippage exceeds symbol limit — closing position",
+            #         extra={
+            #             "ticket": result.ticket,
+            #             "symbol": plan.symbol,
+            #             "planned_entry": plan.entry_price,
+            #             "executed_price": result.executed_price,
+            #             "slippage_pips": round(slippage_pips, 1),
+            #             "max_pips": max_slip_pip,
+            #         },
+            #     )
+            #     metrics.increment("orders.slippage_exceeded")
+            #     self._emergency_close(
+            #         result.ticket, plan, order_type, result.executed_price
+            #     )
+            #     raise RuntimeError(
+            #         f"{plan.symbol} fill slippage {slippage_pips:.1f} pips "
+            #         f"exceeds limit {max_slip_pip} pips — position closed"
+            #     )
 
             if slippage_pips > 0:
                 direction = (

@@ -5,17 +5,20 @@ Wraps the MetaTrader5 Python package initialisation / shutdown lifecycle.
 All other MT5 modules receive this client and call `mt5` through it so
 the package import is a single seam that can be mocked in tests.
 
+broker_utc_offset_hours is derived once on connect() by comparing a live
+tick timestamp against true UTC. Use it anywhere broker timestamps need
+converting to UTC — no pytz, no global state, no repeated queries.
+
 Auto-reconnect:
     If the terminal is closed and reopened, any call that goes through
     ensure_connected() will attempt to re-initialise transparently.
-    The position manager and order manager both call this before every
-    broker operation so recovery is automatic.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 
 import MetaTrader5 as mt5
 
@@ -24,7 +27,7 @@ from config.config import Mt5Config
 logger = logging.getLogger(__name__)
 
 _RECONNECT_DELAYS = [2, 4, 8, 16, 30]  # seconds, capped at last value
-
+_OFFSET_SYMBOLS = ["BTCUSD", "ETHUSD", "BTCUSDT", "ETHUSDT"]  # always live
 
 class Mt5Client:
     """
@@ -41,6 +44,7 @@ class Mt5Client:
     def __init__(self, config: Mt5Config) -> None:
         self._config = config
         self._connected = False
+        self.broker_utc_offset_hours: int = 0  # derived once on connect()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -63,7 +67,7 @@ class Mt5Client:
                 login=self._config.login,
                 password=self._config.password,
                 server=self._config.server,
-                path=self._config.path
+                path=self._config.path,
             )
             if not authorised:
                 error = mt5.last_error()
@@ -77,10 +81,37 @@ class Mt5Client:
                 "terminal_build": info.build if info else "unknown",
                 "login": self._config.login,
                 "server": self._config.server,
+                "path": self._config.path,
             },
         )
         self._connected = True
+        self.broker_utc_offset_hours = self._derive_broker_utc_offset()
 
+    def _derive_broker_utc_offset(self) -> int:
+        tick = None
+        for symbol in _OFFSET_SYMBOLS:
+            t = mt5.symbol_info_tick(symbol)
+            if t is not None:
+                tick = t
+                break
+
+        if tick is None:
+            logger.warning("Mt5Client: no crypto tick available — assuming UTC+0")
+            return 0
+
+        true_utc_now = datetime.now(timezone.utc).timestamp()
+        broker_ts = tick.time_msc / 1000.0 if tick.time_msc else float(tick.time)
+
+        raw_offset = (broker_ts - true_utc_now) / 3600
+        offset = round(raw_offset)
+
+        logger.info(
+            "Mt5Client: broker UTC offset derived from %s",
+            symbol,
+            extra={"offset_hours": offset, "raw_offset_hours": raw_offset},
+        )
+        return offset
+    
     def disconnect(self) -> None:
         if self._connected:
             mt5.shutdown()

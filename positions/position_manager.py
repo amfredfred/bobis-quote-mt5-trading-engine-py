@@ -1,19 +1,11 @@
 """
 Polls MT5 positions on a timer to manage the full trade lifecycle:
 
-  - Reconcile on startup after reboot (trades closed while engine was down)
+  - Startup hydration from MT5 + saved trade records
   - Partial close at TP1 + optional SL to breakeven
   - Full close at TP2
-  - Detect SL hits (position absent from MT5)
-  - Persist all state changes
-
-Reboot recovery
----------------
-On start(), before the first normal poll, reconcile() is called once.
-It compares every OPEN/PARTIALLY_CLOSED trade in the store against MT5.
-Any trade whose ticket is no longer in MT5 is closed immediately with
-close_reason=CLOSED_WHILE_DOWN so the store, disk, and daily stats are
-all accurate before the engine resumes normal operation.
+  - Detect SL/manual closes (position absent from MT5)
+  - Persist plan updates, delete on close
 """
 
 from __future__ import annotations
@@ -46,6 +38,7 @@ class PositionManager:
         mt5_pos: Mt5Positions,
         mt5_orders: Mt5Orders,
         repository: TradeRepository,
+        execution_engine,  # ExecutionEngine — avoid circular import
         event_bus: EventBus,
         exec_config: ExecutionConfig,
         poll_interval: float = 5.0,
@@ -54,6 +47,7 @@ class PositionManager:
         self._mt5_pos = mt5_pos
         self._mt5_orders = mt5_orders
         self._repo = repository
+        self._execution_engine = execution_engine
         self._bus = event_bus
         self._cfg = exec_config
         self._poll_interval = poll_interval
@@ -79,89 +73,75 @@ class PositionManager:
         if self._thread:
             self._thread.join(timeout=10)
 
-    # ── Reboot reconciliation ─────────────────────────────────────────────────
+    # ── Startup hydration ─────────────────────────────────────────────────────
 
-    def reconcile(self) -> None:
+    def hydrate_from_broker(self) -> None:
         """
-        Called once at startup after hydration.
+        Called once at startup. Fetches open positions from MT5 and populates
+        the in-memory store.
 
-        Compares every open trade in the store against live MT5 positions.
-        Trades whose tickets are gone from MT5 were closed while the engine
-        was down — mark them CLOSED so the store and disk are accurate before
-        normal polling begins.
+        MT5 is the source of truth for what is open. Saved trade records in
+        data/trades/ are merged in to restore plan data (signal_id, tp1/tp2
+        levels, lot split) that MT5 doesn't store. Positions with no saved
+        record get a minimal stub — they are tracked but TP1 partial close
+        is unavailable for them.
 
-        This prevents:
-          - Stale OPEN trades blocking the max_open_trades risk rule
-          - Daily loss / stats being calculated from an incomplete picture
-          - The position manager trying to manage a position that no longer exists
+        The first _poll() cycle handles anything closed while the engine was
+        down — no separate reconciliation step needed.
         """
-        open_trades = self._store.get_open_trades()
-        if not open_trades:
-            logger.info("PositionManager.reconcile: no open trades to reconcile")
-            return
-
         try:
             broker_positions = self._mt5_pos.get_open_positions(self._cfg.magic)
-            print(f"broker_positions: {len(broker_positions)}")
         except Exception:
             logger.warning(
-                "PositionManager.reconcile: cannot fetch MT5 positions — "
-                "skipping reconciliation, trades will be checked on first poll"
+                "PositionManager.hydrate_from_broker: cannot fetch MT5 positions — "
+                "store will be empty, first poll will populate it"
             )
             return
 
-        broker_tickets = {p.ticket for p in broker_positions}
-        stale_count = 0
+        if not broker_positions:
+            logger.info("PositionManager.hydrate_from_broker: no open positions in MT5")
+            return
 
-        for trade in open_trades:
-            if trade.entry_ticket is None:
-                continue
+        # Load saved records to restore plan data MT5 doesn't store
+        saved_by_ticket: dict[int, Trade] = {}
+        try:
+            for t in self._repo.load_open_trades():
+                if t.entry_ticket is not None:
+                    saved_by_ticket[t.entry_ticket] = t
+        except Exception:
+            logger.warning(
+                "PositionManager.hydrate_from_broker: could not read saved records — "
+                "using broker data only, tp1/tp2 management unavailable for existing positions"
+            )
 
-            if trade.entry_ticket not in broker_tickets:
-                # Position is gone — closed while engine was down
-                self._close_stale(trade)
-                stale_count += 1
+        trades: list[Trade] = []
+        for pos in broker_positions:
+            if pos.ticket in saved_by_ticket:
+                trade = saved_by_ticket[pos.ticket]
+                # Sync live broker fields in case they changed while engine was down
+                trade.current_lots = pos.lots
+                trade.stop_loss = pos.stop_loss
+            else:
+                trade = _trade_stub_from_position(pos)
+                self._repo.save(trade)
+                logger.warning(
+                    "PositionManager.hydrate_from_broker: no saved record for ticket=%d "
+                    "symbol=%s — stub created and saved",
+                    pos.ticket,
+                    pos.symbol,
+                )
+            trades.append(trade)
 
+        self._store.hydrate(trades)
         logger.info(
-            "PositionManager.reconcile complete",
+            "PositionManager.hydrate_from_broker complete",
             extra={
-                "open_in_store": len(open_trades),
-                "live_in_mt5": len(broker_tickets),
-                "stale_closed": stale_count,
-                "still_open": len(open_trades) - stale_count,
+                "positions_from_mt5": len(broker_positions),
+                "matched_to_records": len(saved_by_ticket),
+                "stubs_created": len(broker_positions) - len(saved_by_ticket),
+                "store_size": len(self._store.get_open_trades()),
             },
         )
-
-    def _close_stale(self, trade: Trade) -> None:
-        """
-        Mark a trade as closed because it was no longer in MT5 on startup.
-
-        We don't know the exact close price or reason (SL / TP / manual close),
-        so we log it clearly for manual review. The close_reason is set to
-        CLOSED_WHILE_DOWN so it can be filtered separately in reports.
-        """
-        logger.warning(
-            "Stale trade detected — closed while engine was down",
-            extra={
-                "trade_id": trade.id,
-                "symbol": trade.symbol,
-                "ticket": trade.entry_ticket,
-                "status_was": trade.status.value,
-                "opened_at": trade.opened_at,
-            },
-        )
-
-        updated = self._store.update(
-            trade.id,
-            status=TradeStatus.CLOSED,
-            close_reason=CloseReason.CLOSED_WHILE_DOWN,
-            closed_at=now_ms(),
-        )
-        if updated:
-            self._repo.save(updated)
-            self._bus.emit(Events.TRADE_CLOSED, updated)
-            metrics.increment("trades.closed_while_down")
-            metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
     # ── Poll loop ─────────────────────────────────────────────────────────────
 
@@ -174,6 +154,13 @@ class PositionManager:
             self._stopped.wait(timeout=self._poll_interval)
 
     def _poll(self) -> None:
+        # Refresh daily loss cache on every poll cycle (~5s granularity is sufficient)
+        try:
+            loss_pct = self._mt5_pos.get_daily_loss_pct(self._cfg.magic)
+            self._execution_engine.update_daily_loss(loss_pct)
+        except Exception:
+            logger.warning("PositionManager: failed to refresh daily loss pct")
+
         open_trades = self._store.get_open_trades()
         if not open_trades:
             return
@@ -211,7 +198,10 @@ class PositionManager:
     # ── Trade lifecycle handlers ──────────────────────────────────────────────
 
     def _handle_tp1(self, trade: Trade, price: float, broker_pos) -> None:
-        logger.info("TP1 hit", extra={"trade_id": trade.id, "price": price})
+        logger.info(
+            "TP1 hit",
+            extra={"trade_id": trade.id, "symbol": trade.symbol, "price": price},
+        )
         try:
             side_type = (
                 Mt5OrderType.BUY if trade.side.value == "BUY" else Mt5OrderType.SELL
@@ -256,7 +246,10 @@ class PositionManager:
             metrics.increment("trades.tp1_hit")
 
     def _handle_tp2(self, trade: Trade, price: float) -> None:
-        logger.info("TP2 hit", extra={"trade_id": trade.id, "price": price})
+        logger.info(
+            "TP2 hit",
+            extra={"trade_id": trade.id, "symbol": trade.symbol, "price": price},
+        )
         realized_rr = (
             abs(price - trade.entry_price) / abs(trade.entry_price - trade.stop_loss)
             if trade.entry_price and trade.stop_loss != trade.entry_price
@@ -273,7 +266,8 @@ class PositionManager:
             realized_rr=realized_rr,
         )
         if updated:
-            self._repo.save(updated)
+            self._store.remove(updated.id)
+            self._repo.delete(updated.id)
             self._bus.emit(Events.TRADE_TP2_HIT, updated)
             self._bus.emit(Events.TRADE_CLOSED, updated)
             metrics.increment("trades.tp2_hit")
@@ -284,7 +278,11 @@ class PositionManager:
             return
         logger.info(
             "Position gone from broker",
-            extra={"trade_id": trade.id, "ticket": trade.entry_ticket},
+            extra={
+                "trade_id": trade.id,
+                "symbol": trade.symbol,
+                "ticket": trade.entry_ticket,
+            },
         )
         updated = self._store.update(
             trade.id,
@@ -295,8 +293,64 @@ class PositionManager:
             sl_hit_at=now_ms(),
         )
         if updated:
-            self._repo.save(updated)
+            self._store.remove(updated.id)
+            self._repo.delete(updated.id)
             self._bus.emit(Events.TRADE_SL_HIT, updated)
             self._bus.emit(Events.TRADE_CLOSED, updated)
             metrics.increment("trades.sl_hit")
             metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+
+def _trade_stub_from_position(pos) -> Trade:
+    """
+    Build a minimal Trade from an MT5 Position.
+    Used when a broker position has no matching saved record —
+    e.g. manually opened trades or records lost to a storage failure.
+
+    tp1_lot_size=0.0 disables partial close for stubs.
+    The position is still tracked and SL hits are detected normally.
+    """
+    from interfaces.trade import OrderSide, TradePlan
+
+    ts = now_ms()
+    side = OrderSide.BUY if pos.side == PositionSide.BUY else OrderSide.SELL
+
+    plan = TradePlan(
+        signal_id="unknown",
+        symbol=pos.symbol,
+        side=side,
+        entry_price=pos.open_price,
+        stop_loss=pos.stop_loss,
+        tp1=pos.take_profit,
+        tp2=pos.take_profit,
+        lot_size=pos.lots,
+        tp1_lot_size=0.0,
+        tp2_lot_size=pos.lots,
+        risk_amount=0.0,
+        risk_percent=0.0,
+        risk_reward_ratio=0.0,
+        planned_at=ts,
+        signal=None,
+    )
+
+    return Trade(
+        id=f"STUB_{pos.symbol}_{pos.ticket}_{side.value}",
+        signal_id="unknown",
+        symbol=pos.symbol,
+        side=side,
+        status=TradeStatus.OPEN,
+        plan=plan,
+        entry_ticket=pos.ticket,
+        entry_price=pos.open_price,
+        entry_lots=pos.lots,
+        current_lots=pos.lots,
+        stop_loss=pos.stop_loss,
+        tp1=pos.take_profit,
+        tp2=pos.take_profit,
+        opened_at=pos.open_time,
+        created_at=ts,
+        updated_at=ts,
+    )

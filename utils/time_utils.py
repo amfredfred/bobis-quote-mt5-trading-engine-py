@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime
+from config.config import cfg
 
 
 def now_ms() -> int:
@@ -18,17 +19,17 @@ def now_sec() -> int:
 
 def ms_to_dt(ts_ms: int) -> datetime:
     """Convert a millisecond timestamp to a UTC datetime."""
-    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+    return datetime.fromtimestamp(ts_ms / 1000, tz=cfg.engine_timezone)
 
 
 def today_key() -> str:
     """Return today's date as 'YYYY-MM-DD' (UTC)."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(tz=cfg.engine_timezone).strftime("%Y-%m-%d")
 
 
 def today_start_ms() -> int:
     """Unix ms for 00:00:00 UTC today."""
-    d = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    d = datetime.now(tz=cfg.engine_timezone).replace(hour=0, minute=0, second=0, microsecond=0)
     return int(d.timestamp() * 1000)
 
 

@@ -17,6 +17,7 @@ class Mt5OrderFilling:
     IOC = 1  # mt5.ORDER_FILLING_IOC
     RETURN = 2  # mt5.ORDER_FILLING_RETURN
 
+
 @dataclass(frozen=True)
 class Position:
     """A live position as reported by MT5."""
@@ -30,7 +31,6 @@ class Position:
     stop_loss: float
     take_profit: float
     swap: float
-    commission: float
     profit: float
     open_time: int  # Unix ms
     comment: str

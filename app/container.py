@@ -22,7 +22,6 @@ from positions.position_store import PositionStore
 from risk.risk_engine import RiskEngine
 from signals.signal_consumer import SignalConsumer
 from signals.signal_validator import SignalValidator
-from storage.account_repository import AccountRepository
 from storage.trade_repository import TradeRepository
 from strategies.signal_adapter import PassthroughAdapter
 from strategies.strategy_router import StrategyRouter
@@ -36,9 +35,8 @@ class AppContainer:
     position_manager: PositionManager
     mt5_client: Mt5Client
     mt5_positions: Mt5Positions
-    trade_repo: TradeRepository
-    account_repo: AccountRepository
     position_store: PositionStore
+    trade_repo: TradeRepository
     strategy_router: StrategyRouter
 
 
@@ -53,7 +51,6 @@ def build_container(config: AppConfig) -> AppContainer:
 
     # ── Storage ───────────────────────────────────────────────────────────
     trade_repo = TradeRepository(config.storage_path)
-    account_repo = AccountRepository(config.storage_path)
     position_store = PositionStore()
 
     # ── Risk + execution ──────────────────────────────────────────────────
@@ -67,6 +64,7 @@ def build_container(config: AppConfig) -> AppContainer:
         order_manager=order_manager,
         mt5_positions=mt5_positions,
         position_store=position_store,
+        trade_repo=trade_repo,
         event_bus=event_bus,
         exec_config=config.execution,
     )
@@ -77,6 +75,7 @@ def build_container(config: AppConfig) -> AppContainer:
         mt5_pos=mt5_positions,
         mt5_orders=mt5_orders,
         repository=trade_repo,
+        execution_engine=execution_engine,
         event_bus=event_bus,
         exec_config=config.execution,
         poll_interval=config.position_poll_interval,
@@ -103,7 +102,6 @@ def build_container(config: AppConfig) -> AppContainer:
         mt5_client=mt5_client,
         mt5_positions=mt5_positions,
         trade_repo=trade_repo,
-        account_repo=account_repo,
         position_store=position_store,
         strategy_router=strategy_router,
     )

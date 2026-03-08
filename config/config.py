@@ -11,7 +11,7 @@ from typing import List
 
 from config.env import env
 from utils.lot_calculator import RiskMode
-
+from zoneinfo import ZoneInfo
 
 def _parse_risk_mode(raw: str) -> RiskMode:
     try:
@@ -69,6 +69,7 @@ class AppConfig:
     storage_path: str
     log_level: str
     position_poll_interval: float
+    engine_timezone: ZoneInfo
 
 
 def _build() -> AppConfig:
@@ -93,7 +94,7 @@ def _build() -> AppConfig:
             spread_risk_multiplier=env.SPREAD_RISK_MULTIPLIER,
             order_retry_count=env.ORDER_RETRY_COUNT,
             max_entry_slippage_pips=env.MAX_ENTRY_SLIPPAGE_PIPS,
-            order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC
+            order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC,
         ),
         mt5=Mt5Config(
             login=env.MT5_LOGIN,
@@ -108,6 +109,7 @@ def _build() -> AppConfig:
         storage_path=env.STORAGE_PATH,
         log_level=env.LOG_LEVEL,
         position_poll_interval=env.POSITION_POLL_INTERVAL_SEC,
+        engine_timezone=ZoneInfo(env.ENGINE_TIMEZONE)
     )
 
 

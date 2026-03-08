@@ -2,6 +2,11 @@
 JSON-file trade persistence.
 
 One file per trade: <storage_path>/trades/<id>.json
+
+Purpose: scratchpad for plan data MT5 doesn't store (signal_id, tp1/tp2
+levels, lot split, risk sizing). Files exist only while the trade is open.
+Delete on close — never accumulate closed trades.
+
 Swap for SQLite or Postgres without changing consumers.
 """
 
@@ -29,6 +34,16 @@ class TradeRepository:
         path = self._file_path(trade.id)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(trade.to_dict(), f, indent=2)
+
+    def delete(self, trade_id: str) -> None:
+        """Remove the trade file. Called when a trade closes — we don't keep closed records."""
+        path = self._file_path(trade_id)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                logger.debug("TradeRepository: deleted %s", trade_id)
+        except Exception:
+            logger.exception("TradeRepository: failed to delete trade %s", trade_id)
 
     def load(self, trade_id: str) -> Optional[Trade]:
         path = self._file_path(trade_id)
@@ -74,20 +89,12 @@ class TradeRepository:
     def _from_dict(d: dict) -> Optional[Trade]:
         """
         Reconstruct a Trade from its persisted dict.
-
-        The plan.signal field is not re-inflated (signal data lives in
-        the signal engine).  plan.signal is set to None on reload.
+        plan.signal is not re-inflated — signal data lives in the signal engine.
         """
         from interfaces.trade import OrderSide, TradePlan, CloseReason, TradeStatus
-        from interfaces.signal_interface import SignalDirection, InboundSignal
-        import dataclasses
 
         try:
             plan_d = d.get("plan", {})
-
-            # Minimal stub signal so TradePlan.signal is not None
-            # Full signal data is available from the signal engine if needed.
-            stub_signal = None
 
             plan = TradePlan(
                 signal_id=plan_d.get("signalId", d["signalId"]),
@@ -104,7 +111,7 @@ class TradeRepository:
                 risk_percent=plan_d.get("riskPercent", 0.0),
                 risk_reward_ratio=plan_d.get("riskRewardRatio", 0.0),
                 planned_at=0,
-                signal=stub_signal,
+                signal=None,
             )
 
             return Trade(

@@ -52,7 +52,6 @@ def main() -> None:
 
     # ── Initialise storage ────────────────────────────────────────────────
     container.trade_repo.init()
-    container.account_repo.init()
 
     # ── Bootstrap ─────────────────────────────────────────────────────────
     try:

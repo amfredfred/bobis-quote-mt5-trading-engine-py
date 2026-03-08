@@ -69,50 +69,41 @@ class Mt5Positions:
             currency_base=info.currency_base,
             currency_profit=info.currency_profit,
             currency_margin=info.currency_margin,
-
             # Price precision
             digits=info.digits,
             point=info.point,
             tick_size=info.trade_tick_size,
             tick_value=info.trade_tick_value,
-
             # Contract
             contract_size=info.trade_contract_size,
             lot_min=info.volume_min,
             lot_max=info.volume_max,
             lot_step=info.volume_step,
-
             # Quote
             ask=ask,
             bid=bid,
             spread=info.spread,
             spread_float=bool(info.spread_float),
-
             # Margin
             margin_initial=info.margin_initial,
             margin_maintenance=info.margin_maintenance,
             margin_hedged=info.margin_hedged,
-
             # Execution
             filling_mode=info.filling_mode,
             execution_mode=info.trade_exemode,
             trade_mode=info.trade_mode,
-
             # Swap
             swap_mode=info.swap_mode,
             swap_long=info.swap_long,
             swap_short=info.swap_short,
             swap_rollover3days=info.swap_rollover3days,
-
             # Stops
             stops_level=info.trade_stops_level,
             freeze_level=info.trade_freeze_level,
-
             # Volume (redundant with lot_* but kept for clarity)
             volume_min=info.volume_min,
             volume_max=info.volume_max,
             volume_step=info.volume_step,
-
             # Optional
             expiration_mode=info.expiration_mode,
             order_mode=info.order_mode,
@@ -125,8 +116,6 @@ class Mt5Positions:
         raw = self._mt5.positions_get() or []
         if magic is not None:
             raw = [p for p in raw if p.magic == magic]
-
-        print(f"raw ============ {raw}")
 
         return [
             Position(
@@ -143,7 +132,6 @@ class Mt5Positions:
                 stop_loss=p.sl,
                 take_profit=p.tp,
                 swap=p.swap,
-                commission=p.commission,
                 profit=p.profit,
                 open_time=int(p.time * 1000),
                 comment=p.comment,
@@ -155,6 +143,56 @@ class Mt5Positions:
     def get_position_by_ticket(self, ticket: int) -> Optional[Position]:
         positions = self.get_open_positions()
         return next((p for p in positions if p.ticket == ticket), None)
+
+    def get_daily_loss_pct(self, magic: int) -> float:
+        """
+        Calculate today's realised loss as a percentage of current balance.
+        Queries MT5 deal history directly — no local storage needed.
+        Uses broker server time (not local UTC) so the day boundary matches
+        what the broker considers "today".
+        Returns a positive number representing loss percentage (e.g. 2.5 = 2.5%).
+        Returns 0.0 if no closed deals today or on any error.
+        """
+        self._client.ensure_connected()
+        try:
+            from datetime import datetime, timezone, timedelta
+
+            offset_hours = self._client.broker_utc_offset_hours
+            now_utc = datetime.now(timezone.utc)
+
+            # Convert to broker local time, find broker midnight, convert back to UTC
+            now_broker = now_utc + timedelta(hours=offset_hours)
+            broker_midnight = now_broker.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            broker_today_utc = broker_midnight - timedelta(hours=offset_hours)
+
+            deals = self._mt5.history_deals_get(broker_today_utc, now_utc) or []
+            logger.debug(
+                "get_daily_loss_pct query window",
+                extra={
+                    "broker_utc_offset": offset_hours,
+                    "broker_today_utc": broker_today_utc.isoformat(),
+                    "now_utc": now_utc.isoformat(),
+                    "deals_found": len(deals),
+                },
+            )
+            daily_pnl = sum(
+                d.profit
+                for d in deals
+                if d.magic == magic and d.entry == 1  # entry=1 means deal out (close)
+            )
+            if daily_pnl >= 0:
+                return 0.0
+            account = self._mt5.account_info()
+            if not account or account.balance <= 0:
+                return 0.0
+            return abs(daily_pnl) / account.balance * 100
+        except Exception:
+            logger.warning(
+                "Mt5Positions.get_daily_loss_pct: failed to calculate daily loss"
+            )
+            return 0.0
 
     def get_current_tick(self, symbol: str):
         self._client.ensure_connected()

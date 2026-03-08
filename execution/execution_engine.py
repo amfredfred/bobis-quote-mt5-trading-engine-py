@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import uuid
 
 from brokers.mt5.mt5_positions import Mt5Positions
@@ -26,9 +27,9 @@ from execution.trade_planner import TradePlanner
 from infrastructure.metrics import metrics
 from positions.position_store import PositionStore
 from risk.risk_engine import RiskEngine
+from storage.trade_repository import TradeRepository
 from interfaces.signal_interface import InboundSignal
 from interfaces.trade import Trade, TradeStatus
-from utils.price_utils import normalise_lots
 from utils.time_utils import now_ms
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class ExecutionEngine:
         order_manager: OrderManager,
         mt5_positions: Mt5Positions,
         position_store: PositionStore,
+        trade_repo: TradeRepository,
         event_bus: EventBus,
         exec_config: ExecutionConfig,
     ) -> None:
@@ -50,11 +52,15 @@ class ExecutionEngine:
         self._orders = order_manager
         self._mt5_positions = mt5_positions
         self._store = position_store
+        self._repo = trade_repo
         self._bus = event_bus
         self._cfg = exec_config
-        self._daily_loss_pct: float = 0.0
+        self._pending = 0  # orders approved but not yet in store
+        self._pending_lock = threading.Lock()
+        self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
 
     def update_daily_loss(self, loss_pct: float) -> None:
+        """Called by PositionManager on each poll cycle."""
         self._daily_loss_pct = loss_pct
 
     def execute(self, signal: InboundSignal) -> Trade | None:
@@ -71,7 +77,7 @@ class ExecutionEngine:
         try:
             account_info = self._mt5_positions.get_account_info()
             symbol_info = self._mt5_positions.get_symbol_info(signal.symbol)
-        except Exception as e:
+        except Exception:
             logger.exception("ExecutionEngine: failed to fetch broker state")
             self._bus.emit(
                 Events.TRADE_ERROR, {"signal": signal, "reason": "broker_unavailable"}
@@ -79,15 +85,21 @@ class ExecutionEngine:
             return None
 
         # ── 2. Risk check ──────────────────────────────────────────────────
-        open_trades = self._store.get_open_trades()
-        print(f"TOPPPP========= {open_trades}")
-        decision = self._risk.evaluate(signal, open_trades, self._daily_loss_pct)
-
-        if not decision.approved:
-            self._bus.emit(
-                Events.RISK_REJECTED, {"signal": signal, "reason": decision.reason}
+        with self._pending_lock:
+            open_trades = self._store.get_open_trades()
+            effective_open = len(open_trades) + self._pending
+            decision = self._risk.evaluate(
+                signal, open_trades, self._daily_loss_pct, effective_open
             )
-            return None
+
+            if not decision.approved:
+                self._bus.emit(
+                    Events.RISK_REJECTED, {"signal": signal, "reason": decision.reason}
+                )
+                return None
+
+            # Reserve a slot immediately — before the order hits MT5
+            self._pending += 1
 
         self._bus.emit(Events.RISK_APPROVED, {"signal": signal})
 
@@ -109,11 +121,13 @@ class ExecutionEngine:
                 plan, symbol_info
             )
         except Exception as exc:
+            with self._pending_lock:
+                self._pending -= 1
             logger.exception("ExecutionEngine: order execution failed")
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
             metrics.increment("orders.rejected")
             return None
-        
+
         # ── 5. Recalculate TP lots from actual filled volume  [4] ──────────
         # On a live broker, filled_volume may be less than plan.lot_size.
         # Recompute the TP1/TP2 split so position manager closes correct amounts.
@@ -146,7 +160,7 @@ class ExecutionEngine:
         # ── 6. Create Trade record ─────────────────────────────────────────
         ts = now_ms()
         trade = Trade(
-            id=str(uuid.uuid4()),
+            id=f"SIG_{signal.symbol}_{ticket}_{plan.side}",
             signal_id=signal.id,
             symbol=signal.symbol,
             side=plan.side,
@@ -163,10 +177,11 @@ class ExecutionEngine:
             created_at=ts,
             updated_at=ts,
         )
-        
-        print(f"TRade: {trade}")
 
         self._store.add(trade)
+        self._repo.save(trade)
+        with self._pending_lock:
+            self._pending -= 1
 
         # ── 7. Emit ────────────────────────────────────────────────────────
         self._bus.emit(Events.TRADE_OPENED, trade)

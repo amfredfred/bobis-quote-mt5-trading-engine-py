@@ -2,7 +2,11 @@
 Individual risk rules.
 
 Each rule is a callable with signature:
-    rule(signal, open_trades, config, daily_loss_pct) -> RuleResult
+    rule(signal, open_trades, config, daily_loss_pct, effective_open) -> RuleResult
+
+effective_open = len(open_trades) + pending orders approved but not yet in store.
+This prevents the race condition where rapid signals all pass max_open_trades
+before any order has filled and been added to the store.
 
 Rules are composable: add new ones to ALL_RULES without touching risk_engine.py.
 """
@@ -12,9 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, List
 
+from config.config import RiskConfig
 from interfaces.signal_interface import InboundSignal
 from interfaces.trade import Trade, TradeStatus
-from config.config import RiskConfig
 
 
 @dataclass(frozen=True)
@@ -23,7 +27,7 @@ class RuleResult:
     reason: str = ""
 
 
-RiskRule = Callable[[InboundSignal, List[Trade], RiskConfig, float], RuleResult]
+RiskRule = Callable[[InboundSignal, List[Trade], RiskConfig, float, int], RuleResult]
 
 
 # ── Rules ─────────────────────────────────────────────────────────────────────
@@ -34,6 +38,7 @@ def min_rr_rule(
     open_trades: List[Trade],
     config: RiskConfig,
     daily_loss_pct: float,
+    effective_open: int,
 ) -> RuleResult:
     if signal.risk_reward_ratio < config.min_rr_ratio:
         return RuleResult(
@@ -48,16 +53,13 @@ def max_open_trades_rule(
     open_trades: List[Trade],
     config: RiskConfig,
     daily_loss_pct: float,
+    effective_open: int,
 ) -> RuleResult:
-    active = [
-        t
-        for t in open_trades
-        if t.status in (TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED)
-    ]
-    if len(active) >= config.max_open_trades:
+    # effective_open already includes pending orders not yet in the store
+    if effective_open >= config.max_open_trades:
         return RuleResult(
             approved=False,
-            reason=f"Max open trades reached ({len(active)}/{config.max_open_trades})",
+            reason=f"Max open trades reached ({effective_open}/{config.max_open_trades})",
         )
     return RuleResult(approved=True)
 
@@ -67,6 +69,7 @@ def max_symbol_exposure_rule(
     open_trades: List[Trade],
     config: RiskConfig,
     daily_loss_pct: float,
+    effective_open: int,
 ) -> RuleResult:
     symbol_trades = [
         t
@@ -74,7 +77,6 @@ def max_symbol_exposure_rule(
         if t.symbol == signal.symbol
         and t.status in (TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED)
     ]
-
     if len(symbol_trades) >= config.max_exposure_per_symbol:
         return RuleResult(
             approved=False,
@@ -91,12 +93,13 @@ def duplicate_signal_rule(
     open_trades: List[Trade],
     config: RiskConfig,
     daily_loss_pct: float,
+    effective_open: int,
 ) -> RuleResult:
     duplicate = next((t for t in open_trades if t.signal_id == signal.id), None)
     if duplicate:
         return RuleResult(
             approved=False,
-            reason=f"Duplicate signal: trade {duplicate.id} already exists for signal {signal.id}",
+            reason=f"Duplicate signal: trade {duplicate.id} already open for signal {signal.id}",
         )
     return RuleResult(approved=True)
 
@@ -106,6 +109,7 @@ def daily_loss_limit_rule(
     open_trades: List[Trade],
     config: RiskConfig,
     daily_loss_pct: float,
+    effective_open: int,
 ) -> RuleResult:
     if daily_loss_pct >= config.max_daily_loss_percent:
         return RuleResult(

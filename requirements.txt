@@ -1,3 +1,8 @@
 MetaTrader5>=5.0.45
 websocket-client>=1.8.0
 python-dotenv>=1.0.1
+metatrader5==5.0.5640
+numpy==2.4.2
+python-dotenv==1.2.2
+tzdata==2025.3
+websocket-client==1.9.0

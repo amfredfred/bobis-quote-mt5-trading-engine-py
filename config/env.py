@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
+
 
 def _optional(key: str, fallback: str) -> str:
     return os.environ.get(key, fallback)
@@ -70,6 +72,11 @@ class Env:
     MIN_RR_RATIO: float = _optional_float("MIN_RR_RATIO", 1.5)
     MAX_LOT_SIZE: float = _optional_float("MAX_LOT_SIZE", 10.0)
     MIN_LOT_SIZE: float = _optional_float("MIN_LOT_SIZE", 0.01)
+
+    # ─────────────────────────────────────────
+    # TIMEZONE
+    # ─────────────────────────────────────────
+    ENGINE_TIMEZONE: str = _optional("ENGINE_TIMEZONE", "Africa/Lagos")
 
     # ── Execution ──────────────────────────────────────────────────────────
     TP1_PARTIAL_CLOSE_PERCENT: float = _optional_float(

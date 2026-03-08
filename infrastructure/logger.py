@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import Any
+from config.config import cfg
 
 # ── ANSI colour codes ──────────────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ class _PrettyFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         # ── Timestamp ──────────────────────────────────────────────────────
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        ts = datetime.now(tz=cfg.engine_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
         # ── Level ──────────────────────────────────────────────────────────
         level = record.levelname
