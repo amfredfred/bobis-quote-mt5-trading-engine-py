@@ -40,6 +40,9 @@ class ExecutionConfig:
     slippage: int
     magic: int
     comment: str
+    spread_risk_multiplier: float
+    order_retry_count: int
+    max_entry_slippage_pips: int
 
 
 @dataclass(frozen=True)
@@ -86,12 +89,15 @@ def _build() -> AppConfig:
             slippage=env.MT5_SLIPPAGE,
             magic=env.MT5_MAGIC,
             comment=env.MT5_COMMENT,
+            spread_risk_multiplier=env.SPREAD_RISK_MULTIPLIER,
+            order_retry_count=env.ORDER_RETRY_COUNT,
+            max_entry_slippage_pips=env.MAX_ENTRY_SLIPPAGE_PIPS,
         ),
         mt5=Mt5Config(
             login=env.MT5_LOGIN,
             password=env.MT5_PASSWORD,
             server=env.MT5_SERVER,
-            path=env.MT5_EXEC_PATH
+            path=env.MT5_EXEC_PATH,
         ),
         signal=SignalConfig(
             ws_url=env.SIGNAL_ENGINE_WS_URL,

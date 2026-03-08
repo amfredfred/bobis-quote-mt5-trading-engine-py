@@ -37,7 +37,7 @@ class Mt5TradeAction(IntEnum):
 # MT5 return codes
 MT5_RETCODE_DONE    = 10009
 MT5_RETCODE_PLACED  = 10008
-
+MT5_RETCODE_INVALID_STOPS = 10016
 
 @dataclass(frozen=True)
 class OrderResult:

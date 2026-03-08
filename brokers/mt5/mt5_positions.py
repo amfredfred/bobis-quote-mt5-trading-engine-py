@@ -63,18 +63,59 @@ class Mt5Positions:
         bid = tick.bid if tick else 0.0
 
         return SymbolInfo(
+            # Identity
             symbol=info.name,
+            description=info.description,
+            currency_base=info.currency_base,
+            currency_profit=info.currency_profit,
+            currency_margin=info.currency_margin,
+
+            # Price precision
             digits=info.digits,
             point=info.point,
             tick_size=info.trade_tick_size,
             tick_value=info.trade_tick_value,
+
+            # Contract
             contract_size=info.trade_contract_size,
             lot_min=info.volume_min,
             lot_max=info.volume_max,
             lot_step=info.volume_step,
-            spread=info.spread,
+
+            # Quote
             ask=ask,
             bid=bid,
+            spread=info.spread,
+            spread_float=bool(info.spread_float),
+
+            # Margin
+            margin_initial=info.margin_initial,
+            margin_maintenance=info.margin_maintenance,
+            margin_hedged=info.margin_hedged,
+
+            # Execution
+            filling_mode=info.filling_mode,
+            execution_mode=info.trade_exemode,
+            trade_mode=info.trade_mode,
+
+            # Swap
+            swap_mode=info.swap_mode,
+            swap_long=info.swap_long,
+            swap_short=info.swap_short,
+            swap_rollover3days=info.swap_rollover3days,
+
+            # Stops
+            stops_level=info.trade_stops_level,
+            freeze_level=info.trade_freeze_level,
+
+            # Volume (redundant with lot_* but kept for clarity)
+            volume_min=info.volume_min,
+            volume_max=info.volume_max,
+            volume_step=info.volume_step,
+
+            # Optional
+            expiration_mode=info.expiration_mode,
+            order_mode=info.order_mode,
         )
 
     # ── Positions ─────────────────────────────────────────────────────────

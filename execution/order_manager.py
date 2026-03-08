@@ -29,6 +29,7 @@ _RETRYABLE_RETCODES = {
     10006,  # TRADE_RETCODE_REJECT
     10007,  # TRADE_RETCODE_CANCEL
     10018,  # TRADE_RETCODE_MARKET_CLOSED
+    10016,  # TRADE_RETCODE_INVALID_STOPS
 }
 
 
@@ -61,6 +62,7 @@ class OrderManager:
         order_type = (
             Mt5OrderType.BUY if plan.side == OrderSide.BUY else Mt5OrderType.SELL
         )
+
         pip = pip_size(symbol_info.point, symbol_info.digits)
         last_error: Exception | None = None
         max_attempts = 1 + self._cfg.order_retry_count
@@ -84,6 +86,7 @@ class OrderManager:
                     slippage=self._cfg.slippage,
                     magic=self._cfg.magic,
                     comment=self._cfg.comment,
+                    filling_mode=symbol_info.order_filling_mode,
                 )
             except RuntimeError as exc:
                 retcode = _extract_retcode(exc)

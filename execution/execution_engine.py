@@ -71,7 +71,7 @@ class ExecutionEngine:
         try:
             account_info = self._mt5_positions.get_account_info()
             symbol_info = self._mt5_positions.get_symbol_info(signal.symbol)
-        except Exception:
+        except Exception as e:
             logger.exception("ExecutionEngine: failed to fetch broker state")
             self._bus.emit(
                 Events.TRADE_ERROR, {"signal": signal, "reason": "broker_unavailable"}
@@ -105,7 +105,7 @@ class ExecutionEngine:
         # ── 4. Execute order ───────────────────────────────────────────────
         try:
             ticket, executed_price, filled_volume = self._orders.execute_market_order(
-                plan
+                plan, symbol_info
             )
         except Exception as exc:
             logger.exception("ExecutionEngine: order execution failed")
