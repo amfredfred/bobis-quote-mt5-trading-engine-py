@@ -43,7 +43,7 @@ class Mt5Orders:
         slippage: int,
         magic: int,
         comment: str,
-        filling_mode: str,
+        filling_mode: int,
     ) -> OrderResult:
         self._client.ensure_connected()
 
@@ -140,6 +140,7 @@ class Mt5Orders:
         slippage: int,
         magic: int,
         comment: str,
+        filling_mode: int,
     ) -> OrderResult:
         self._client.ensure_connected()
 
@@ -155,7 +156,7 @@ class Mt5Orders:
             "deviation": slippage,
             "magic": magic,
             "comment": comment,
-            "type_filling": self._mt5.ORDER_FILLING_IOC,
+            "type_filling": filling_mode,
         }
 
         result = self._mt5.order_send(request)

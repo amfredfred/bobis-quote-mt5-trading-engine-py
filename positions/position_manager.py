@@ -53,6 +53,8 @@ class PositionManager:
         self._poll_interval = poll_interval
         self._stopped = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._stub_miss_count: dict[str, int] = {}  # trade_id → consecutive poll misses
+        self._stub_miss_limit = 3  # evict stub after this many consecutive misses
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -154,16 +156,12 @@ class PositionManager:
             self._stopped.wait(timeout=self._poll_interval)
 
     def _poll(self) -> None:
-        # Refresh daily loss cache on every poll cycle (~5s granularity is sufficient)
+        # Refresh daily loss cache on every poll cycle
         try:
             loss_pct = self._mt5_pos.get_daily_loss_pct(self._cfg.magic)
             self._execution_engine.update_daily_loss(loss_pct)
         except Exception:
             logger.warning("PositionManager: failed to refresh daily loss pct")
-
-        open_trades = self._store.get_open_trades()
-        if not open_trades:
-            return
 
         try:
             broker_positions = self._mt5_pos.get_open_positions(self._cfg.magic)
@@ -173,14 +171,58 @@ class PositionManager:
 
         broker_tickets = {p.ticket for p in broker_positions}
         broker_by_ticket = {p.ticket: p for p in broker_positions}
+        store_trades = self._store.get_open_trades()
+        store_tickets = {t.entry_ticket for t in store_trades if t.entry_ticket}
 
+        # ── Reconcile: positions in MT5 but missing from store ────────────
+        for pos in broker_positions:
+            if pos.ticket not in store_tickets:
+                # Opened externally or store/repo drifted — add stub immediately
+                saved = self._repo.load_by_ticket(pos.ticket)
+                trade = saved if saved else _trade_stub_from_position(pos)
+                if not saved:
+                    self._repo.save(trade)
+                    logger.warning(
+                        "PositionManager._poll: ticket=%d %s not in store — stub added",
+                        pos.ticket,
+                        pos.symbol,
+                    )
+                self._store.add(trade)
+
+        # ── Refresh store_trades after reconcile ──────────────────────────
+        open_trades = self._store.get_open_trades()
+
+        # ── Lifecycle management ──────────────────────────────────────────
         for trade in open_trades:
             if trade.entry_ticket is None:
                 continue
 
             if trade.entry_ticket not in broker_tickets:
+                if trade.id.startswith("STUB_"):
+                    misses = self._stub_miss_count.get(trade.id, 0) + 1
+                    self._stub_miss_count[trade.id] = misses
+                    if misses < self._stub_miss_limit:
+                        logger.warning(
+                            "PositionManager: STUB ticket=%s not in broker — miss %d/%d, will reconcile",
+                            trade.entry_ticket,
+                            misses,
+                            self._stub_miss_limit,
+                            extra={"trade_id": trade.id},
+                        )
+                        continue
+                    # Confirmed gone after consecutive misses — treat as closed
+                    logger.warning(
+                        "PositionManager: STUB ticket=%s absent for %d consecutive polls — treating as closed",
+                        trade.entry_ticket,
+                        misses,
+                        extra={"trade_id": trade.id},
+                    )
+                    self._stub_miss_count.pop(trade.id, None)
                 self._handle_position_gone(trade)
                 continue
+
+            # Position is present in broker — reset miss counter if it was accumulating
+            self._stub_miss_count.pop(trade.id, None)
 
             broker_pos = broker_by_ticket[trade.entry_ticket]
             current = broker_pos.current_price
@@ -202,10 +244,12 @@ class PositionManager:
             "TP1 hit",
             extra={"trade_id": trade.id, "symbol": trade.symbol, "price": price},
         )
+        mt5_close_ok = False
         try:
             side_type = (
                 Mt5OrderType.BUY if trade.side.value == "BUY" else Mt5OrderType.SELL
             )
+            symbol_info = self._mt5_pos.get_symbol_info(trade.symbol)
             tick = self._mt5_pos.get_current_tick(trade.symbol)
             close_price = tick.bid if trade.side.value == "BUY" else tick.ask
             self._mt5_orders.close_position(
@@ -217,7 +261,9 @@ class PositionManager:
                 slippage=self._cfg.slippage,
                 magic=self._cfg.magic,
                 comment=f"TP1 {self._cfg.comment}",
+                filling_mode=symbol_info.order_filling_mode,
             )
+            mt5_close_ok = True
             if self._cfg.move_sl_to_be_on_tp1:
                 self._mt5_orders.modify_position(
                     ticket=trade.entry_ticket,
@@ -228,6 +274,14 @@ class PositionManager:
             logger.exception(
                 "PositionManager: TP1 action failed", extra={"trade_id": trade.id}
             )
+
+        if not mt5_close_ok:
+            # Do not update store — TP1 will be retried next poll cycle
+            logger.warning(
+                "PositionManager: TP1 close failed — will retry next poll",
+                extra={"trade_id": trade.id},
+            )
+            return
 
         new_sl = (
             trade.entry_price if self._cfg.move_sl_to_be_on_tp1 else trade.stop_loss
@@ -276,28 +330,35 @@ class PositionManager:
     def _handle_position_gone(self, trade: Trade) -> None:
         if trade.tp2_hit:
             return
+
+        is_stub = trade.id.startswith("STUB_")
+        close_reason = CloseReason.CLOSED_WHILE_DOWN if is_stub else CloseReason.SL_HIT
+
         logger.info(
             "Position gone from broker",
             extra={
                 "trade_id": trade.id,
                 "symbol": trade.symbol,
                 "ticket": trade.entry_ticket,
+                "close_reason": close_reason.value,
             },
         )
         updated = self._store.update(
             trade.id,
             status=TradeStatus.CLOSED,
-            close_reason=CloseReason.SL_HIT,
+            close_reason=close_reason,
             closed_at=now_ms(),
-            sl_hit=True,
-            sl_hit_at=now_ms(),
+            sl_hit=not is_stub,
+            sl_hit_at=now_ms() if not is_stub else None,
         )
         if updated:
             self._store.remove(updated.id)
             self._repo.delete(updated.id)
-            self._bus.emit(Events.TRADE_SL_HIT, updated)
+            if not is_stub:
+                self._bus.emit(Events.TRADE_SL_HIT, updated)
             self._bus.emit(Events.TRADE_CLOSED, updated)
-            metrics.increment("trades.sl_hit")
+            metrics.increment("trades.sl_hit" if not is_stub else "trades.stub_closed")
+            metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
             metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
 

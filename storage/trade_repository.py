@@ -45,6 +45,13 @@ class TradeRepository:
         except Exception:
             logger.exception("TradeRepository: failed to delete trade %s", trade_id)
 
+    def load_by_ticket(self, ticket: int) -> Optional[Trade]:
+        """Find a saved trade by MT5 ticket. Returns None if not found."""
+        for trade in self.load_open_trades():
+            if trade.entry_ticket == ticket:
+                return trade
+        return None
+
     def load(self, trade_id: str) -> Optional[Trade]:
         path = self._file_path(trade_id)
         if not os.path.exists(path):

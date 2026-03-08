@@ -96,7 +96,15 @@ def duplicate_signal_rule(
     effective_open: int,
     effective_symbol: int,
 ) -> RuleResult:
-    duplicate = next((t for t in open_trades if t.signal_id == signal.id), None)
+    # Stubs have signal_id="unknown" — exclude them from duplicate detection
+    duplicate = next(
+        (
+            t
+            for t in open_trades
+            if t.signal_id == signal.id and t.signal_id != "unknown"
+        ),
+        None,
+    )
     if duplicate:
         return RuleResult(
             approved=False,

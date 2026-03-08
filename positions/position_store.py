@@ -24,7 +24,7 @@ class PositionStore:
 
     def add(self, trade: Trade) -> None:
         with self._lock:
-            self._trades[trade.id] = copy.copy(trade)
+            self._trades[trade.id] = copy.deepcopy(trade)
 
     def update(self, trade_id: str, **kwargs) -> Optional[Trade]:
         """Apply keyword-argument patches to a trade and return the updated copy."""
@@ -36,7 +36,7 @@ class PositionStore:
                 setattr(trade, key, val)
             trade.updated_at = now_ms()
             self._trades[trade_id] = trade
-            return copy.copy(trade)
+            return copy.deepcopy(trade)
 
     def remove(self, trade_id: str) -> None:
         """Remove a trade from the store. Called when a trade closes."""
@@ -47,14 +47,14 @@ class PositionStore:
         """Bulk-load on startup from persistent storage."""
         with self._lock:
             for t in trades:
-                self._trades[t.id] = copy.copy(t)
+                self._trades[t.id] = copy.deepcopy(t)
 
     # ── Read ──────────────────────────────────────────────────────────────
 
     def get(self, trade_id: str) -> Optional[Trade]:
         with self._lock:
             t = self._trades.get(trade_id)
-            return copy.copy(t) if t else None
+            return copy.deepcopy(t) if t else None
 
     def get_by_signal_id(self, signal_id: str) -> Optional[Trade]:
         with self._lock:

@@ -21,6 +21,7 @@ from positions.position_manager import PositionManager
 from positions.position_store import PositionStore
 from risk.risk_engine import RiskEngine
 from signals.signal_consumer import SignalConsumer
+from signals.signal_queue import SignalQueue
 from signals.signal_validator import SignalValidator
 from storage.trade_repository import TradeRepository
 from strategies.signal_adapter import PassthroughAdapter
@@ -31,6 +32,7 @@ from strategies.strategy_router import StrategyRouter
 class AppContainer:
     event_bus: EventBus
     signal_consumer: SignalConsumer
+    signal_queue: SignalQueue
     execution_engine: ExecutionEngine
     position_manager: PositionManager
     mt5_client: Mt5Client
@@ -82,6 +84,7 @@ def build_container(config: AppConfig) -> AppContainer:
     )
 
     # ── Signal ingestion ──────────────────────────────────────────────────
+    signal_queue = SignalQueue(on_signal=execution_engine.execute)
     validator = SignalValidator()
     signal_consumer = SignalConsumer(
         event_bus=event_bus,
@@ -97,6 +100,7 @@ def build_container(config: AppConfig) -> AppContainer:
     return AppContainer(
         event_bus=event_bus,
         signal_consumer=signal_consumer,
+        signal_queue=signal_queue,
         execution_engine=execution_engine,
         position_manager=position_manager,
         mt5_client=mt5_client,

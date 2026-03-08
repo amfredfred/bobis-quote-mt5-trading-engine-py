@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import math
 import threading
-import time
 import uuid
 
 from brokers.mt5.mt5_positions import Mt5Positions
@@ -59,9 +58,7 @@ class ExecutionEngine:
         self._cfg = exec_config
         self._pending: dict[str, int] = {}
         self._pending_lock = threading.Lock()
-        self._last_executed: dict[str, float] = {}
-        self._executing = threading.Lock()  # only one execution at a time
-        self._daily_loss_pct: float = 0.0
+        self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
 
     def update_daily_loss(self, loss_pct: float) -> None:
         """Called by PositionManager on each poll cycle."""
@@ -80,21 +77,6 @@ class ExecutionEngine:
         self._pending[symbol] = max(0, self._pending.get(symbol, 0) - 1)
 
     def execute(self, signal: InboundSignal) -> Trade | None:
-        # Drop signal immediately if another execution is in progress.
-        # Non-blocking acquire — signals are not queued, they are discarded.
-        if not self._executing.acquire(blocking=False):
-            logger.debug(
-                "ExecutionEngine: dropped signal — execution in progress",
-                extra={"signal_id": signal.id, "symbol": signal.symbol},
-            )
-            return None
-
-        try:
-            return self._execute(signal)
-        finally:
-            self._executing.release()
-
-    def _execute(self, signal: InboundSignal) -> Trade | None:
         logger.info(
             "ExecutionEngine processing signal",
             extra={
@@ -117,20 +99,6 @@ class ExecutionEngine:
 
         # ── 2. Risk check ──────────────────────────────────────────────────
         with self._pending_lock:
-            # Throttle — ignore signals for a symbol that fired too recently
-            now = time.monotonic()
-            last = self._last_executed.get(signal.symbol, 0.0)
-            if now - last < self._cfg.signal_throttle_sec:
-                logger.debug(
-                    "ExecutionEngine: throttled signal",
-                    extra={
-                        "signal_id": signal.id,
-                        "symbol": signal.symbol,
-                        "elapsed_ms": round((now - last) * 1000),
-                    },
-                )
-                return None
-
             open_trades = self._store.get_open_trades()
             effective_open = len(open_trades) + self._pending_total()
             effective_symbol = len(
@@ -150,9 +118,7 @@ class ExecutionEngine:
                 )
                 return None
 
-            # Reserve slot and stamp time before releasing lock
             self._reserve(signal.symbol)
-            self._last_executed[signal.symbol] = now
 
         self._bus.emit(Events.RISK_APPROVED, {"signal": signal})
 
@@ -160,6 +126,8 @@ class ExecutionEngine:
         try:
             plan = self._planner.plan(signal, account_info, symbol_info)
         except Exception:
+            with self._pending_lock:
+                self._release(signal.symbol)
             logger.exception("ExecutionEngine: trade planning failed")
             self._bus.emit(
                 Events.TRADE_ERROR, {"signal": signal, "reason": "planning_failed"}

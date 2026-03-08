@@ -60,10 +60,20 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     # The first _poll() cycle handles anything closed while the engine was down.
     container.position_manager.hydrate_from_broker()
 
-    # ── Wire: signal.triggered → execution pipeline ───────────────────────
+    # ── Prime daily loss before first signal can arrive ───────────────────
+    # Without this, _daily_loss_pct=0.0 until the first poll tick fires,
+    # meaning a signal arriving before that tick bypasses the daily loss rule.
+    try:
+        loss_pct = container.mt5_positions.get_daily_loss_pct(config.execution.magic)
+        container.execution_engine.update_daily_loss(loss_pct)
+        logger.info("Daily loss primed", extra={"daily_loss_pct": loss_pct})
+    except Exception:
+        logger.warning("bootstrap: could not prime daily loss — defaulting to 0.0")
+
+    # ── Wire: signal.triggered → queue → execution pipeline ──────────────
     def on_signal_triggered(signal: InboundSignal) -> None:
         adapted = container.strategy_router.route(signal)
-        container.execution_engine.execute(adapted)
+        container.signal_queue.put(adapted)
 
     container.event_bus.on(Events.SIGNAL_TRIGGERED, on_signal_triggered)
 
@@ -74,6 +84,7 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     container.event_bus.on_any(on_any_event)
 
     # ── Start services ────────────────────────────────────────────────────
+    container.signal_queue.start()
     container.position_manager.start()
     container.signal_consumer.start()
 
@@ -93,6 +104,7 @@ def shutdown(container: AppContainer) -> None:
     logger.info("Shutting down Execution Engine")
     container.event_bus.emit(Events.SYSTEM_STOPPING)
     container.signal_consumer.stop()
+    container.signal_queue.stop()
     container.position_manager.stop()
     container.mt5_client.disconnect()
     logger.info("Shutdown complete")
