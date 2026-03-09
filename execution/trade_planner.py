@@ -14,6 +14,17 @@ Live-account adjustment:
                         even after paying the spread.
 
       Set SPREAD_RISK_MULTIPLIER=0.0 to disable (demo / tight ECN accounts).
+
+  [3] Pessimistic entry — lot size is calculated against the worst possible fill
+      price within the configured slippage limit (max_entry_slippage_pips).
+      This ensures the position never risks more than the target amount even if
+      the broker fills at the edge of the allowed slippage band.
+
+      Example (SHORT):  entry=0.70193, SL=0.70300, max_slip=3 pips
+                        pessimistic_entry = 0.70193 - 0.00003 = 0.70163
+                        raw_sl_distance   = 0.70300 - 0.70163 = 0.00137  (vs 0.00107)
+                        Result: smaller lot size — actual risk stays ≤ target
+                                regardless of where within the slip band fill lands.
 """
 
 from __future__ import annotations
@@ -48,6 +59,7 @@ class TradePlanner:
             if signal.direction == SignalDirection.LONG
             else OrderSide.SELL
         )
+        pip = pip_size(symbol_info.point, symbol_info.digits)
 
         # ── [2] Spread-adjusted stop loss distance ─────────────────────────
         spread_price = (
@@ -56,27 +68,26 @@ class TradePlanner:
             else 0.0
         )
         spread_surcharge = spread_price * self._exec.spread_risk_multiplier
-        raw_sl_distance = abs(signal.entry_price - signal.stop_loss)
+
+        # ── [3] Pessimistic entry — size to worst fill within slippage limit ─
+        # For SHORT: a lower fill widens the SL distance (entry moves away from SL).
+        # For LONG:  a higher fill widens the SL distance.
+        # Using the worst-case entry guarantees actual risk ≤ target risk amount
+        # regardless of where within the slippage band the broker fills.
+        max_slip_price = self._exec.max_entry_slippage_pips * pip
+        pessimistic_entry = (
+            signal.entry_price - max_slip_price
+            if signal.direction == SignalDirection.SHORT
+            else signal.entry_price + max_slip_price
+        )
+
+        raw_sl_distance = abs(pessimistic_entry - signal.stop_loss)
         adjusted_sl_distance = raw_sl_distance + spread_surcharge
 
         if signal.direction == SignalDirection.LONG:
             sizing_sl = signal.entry_price - adjusted_sl_distance
         else:
             sizing_sl = signal.entry_price + adjusted_sl_distance
-
-        pip = pip_size(symbol_info.point, symbol_info.digits)
-
-        if spread_surcharge > 0:
-            logger.info(
-                "Spread surcharge applied to lot sizing",
-                extra={
-                    "symbol": signal.symbol,
-                    "spread_pips": round(spread_price / pip, 1),
-                    "surcharge_pips": round(spread_surcharge / pip, 1),
-                    "raw_sl_pips": round(raw_sl_distance / pip, 1),
-                    "adjusted_sl_pips": round(adjusted_sl_distance / pip, 1),
-                },
-            )
 
         # ── Lot size calculation ───────────────────────────────────────────
         calc = calculate_lot_size(
@@ -120,7 +131,7 @@ class TradePlanner:
         )
 
         logger.info(
-            "Trade planned",
+            "Lot sizing adjustments applied",
             extra={
                 "signal_id": signal.id,
                 "symbol": signal.symbol,
@@ -132,6 +143,13 @@ class TradePlanner:
                 "risk_amount": round(calc.risk_amount, 2),
                 "risk_pct": round(risk_pct, 2),
                 "spread_pips": round(spread_price / pip, 1) if spread_price else 0,
+                "surcharge_pips": round(spread_surcharge / pip, 1),
+                "slippage_buffer_pips": self._exec.max_entry_slippage_pips,
+                "raw_sl_pips": round(
+                    abs(signal.entry_price - signal.stop_loss) / pip, 1
+                ),
+                "pessimistic_sl_pips": round(raw_sl_distance / pip, 1),
+                "adjusted_sl_pips": round(adjusted_sl_distance / pip, 1),
             },
         )
         return plan
