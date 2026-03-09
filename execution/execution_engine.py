@@ -9,6 +9,11 @@ Orchestrates the full execution pipeline for a triggered signal:
     5. Recalculate TP1/TP2 lot split from ACTUAL filled volume  [4]
     6. Persist Trade in PositionStore + disk
     7. Emit TRADE_OPENED
+
+Latency tracking  [5]:
+    signal_to_trade_ms   — triggered_at → trade.opened_at  (full pipeline)
+    broker_round_trip_ms — order sent → order confirmed     (MT5 only)
+    Both are emitted as metrics gauges and appear in the monitoring dashboard.
 """
 
 from __future__ import annotations
@@ -77,6 +82,9 @@ class ExecutionEngine:
         self._pending[symbol] = max(0, self._pending.get(symbol, 0) - 1)
 
     def execute(self, signal: InboundSignal) -> Trade | None:
+        # ── [5] Pipeline start time ────────────────────────────────────────
+        pipeline_start_ms = now_ms()
+
         logger.info(
             "ExecutionEngine processing signal",
             extra={
@@ -137,6 +145,7 @@ class ExecutionEngine:
         self._bus.emit(Events.TRADE_PLANNED, {"plan": plan})
 
         # ── 4. Execute order ───────────────────────────────────────────────
+        broker_send_ms = now_ms()  # [5] broker round-trip start
         try:
             ticket, executed_price, filled_volume = self._orders.execute_market_order(
                 plan, symbol_info
@@ -148,6 +157,8 @@ class ExecutionEngine:
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
             metrics.increment("orders.rejected")
             return None
+
+        broker_round_trip_ms = now_ms() - broker_send_ms  # [5]
 
         # ── 5. Recalculate TP lots from actual filled volume  [4] ──────────
         # On a live broker, filled_volume may be less than plan.lot_size.
@@ -168,7 +179,6 @@ class ExecutionEngine:
                     "tp2_lots": tp2_lot,
                 },
             )
-            # Patch the plan with the corrected split
             from dataclasses import replace
 
             plan = replace(
@@ -209,6 +219,17 @@ class ExecutionEngine:
         metrics.increment("trades.opened")
         metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
+        # ── [5] Latency metrics ────────────────────────────────────────────
+        # signal_to_trade_ms: full pipeline from when signal was triggered
+        # (uses signal.triggered_at so candle-to-trade latency is captured,
+        #  not just queue-to-trade)
+        signal_to_trade_ms = ts - (signal.triggered_at or pipeline_start_ms)
+        pipeline_only_ms = ts - pipeline_start_ms  # queue dequeue → trade opened
+
+        metrics.set_gauge("latency.signal_to_trade_ms", signal_to_trade_ms)
+        metrics.set_gauge("latency.pipeline_ms", pipeline_only_ms)
+        metrics.set_gauge("latency.broker_round_trip_ms", broker_round_trip_ms)
+
         logger.info(
             "Trade opened",
             extra={
@@ -224,6 +245,10 @@ class ExecutionEngine:
                 "filled_lots": filled_volume,
                 "tp1_lots": tp1_lot,
                 "tp2_lots": tp2_lot,
+                # [5] latency breakdown
+                "signal_to_trade_ms": signal_to_trade_ms,
+                "pipeline_ms": pipeline_only_ms,
+                "broker_round_trip_ms": broker_round_trip_ms,
             },
         )
         return trade

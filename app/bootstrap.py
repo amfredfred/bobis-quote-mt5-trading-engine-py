@@ -20,13 +20,22 @@ logger = logging.getLogger(__name__)
 
 def bootstrap(container: AppContainer, config: AppConfig) -> None:
     """
-    1. Connect to MT5 and verify.
-    2. Hydrate position store from live MT5 positions.
-    3. Register event handlers.
-    4. Start position manager and signal consumer.
+    1. Init database schema.
+    2. Connect to MT5 and verify.
+    3. Hydrate position store from live MT5 positions.
+    4. Register event handlers.
+    5. Start position manager and signal consumer.
     """
-    # ── Initialise storage ────────────────────────────────────────────────
+    # ── Init database ─────────────────────────────────────────────────────
+    # Creates tables if they don't exist. Safe to call on every startup.
+    container.db.init()
+
+    # ── Init storage (now a no-op — schema handled by db.init()) ─────────
     container.trade_repo.init()
+
+    # ── Restore metrics from last session ────────────────────────────────
+    # Counters and gauges survive restarts via SQLite.
+    metrics.init_db(container.db)
 
     # ── Connect to MT5 and verify ─────────────────────────────────────────
     container.mt5_client.connect()
@@ -114,6 +123,11 @@ def shutdown(container: AppContainer) -> None:
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()
-    container.monitoring_server.stop()
+    if container.monitoring_server:
+        container.monitoring_server.stop()
     container.mt5_client.disconnect()
+
+    # Final metrics flush before exit
+    metrics.stop()
+
     logger.info("Shutdown complete")

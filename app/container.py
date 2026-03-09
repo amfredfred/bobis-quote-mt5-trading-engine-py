@@ -17,6 +17,8 @@ from core.event_bus import EventBus
 from execution.execution_engine import ExecutionEngine
 from execution.order_manager import OrderManager
 from execution.trade_planner import TradePlanner
+from infrastructure.database import Database
+from infrastructure.monitoring_server import MonitoringServer
 from positions.position_manager import PositionManager
 from positions.position_store import PositionStore
 from risk.risk_engine import RiskEngine
@@ -27,11 +29,10 @@ from storage.trade_repository import TradeRepository
 from strategies.signal_adapter import PassthroughAdapter
 from strategies.strategy_router import StrategyRouter
 
-from infrastructure.monitoring_server import MonitoringServer
-
 
 @dataclass
 class AppContainer:
+    db: Database
     event_bus: EventBus
     signal_consumer: SignalConsumer
     signal_queue: SignalQueue
@@ -49,13 +50,16 @@ def build_container(config: AppConfig) -> AppContainer:
     # ── Core ──────────────────────────────────────────────────────────────
     event_bus = EventBus()
 
+    # ── Database ──────────────────────────────────────────────────────────
+    db = Database(config.storage_path)
+
     # ── Broker ────────────────────────────────────────────────────────────
     mt5_client = Mt5Client(config.mt5)
     mt5_orders = Mt5Orders(mt5_client)
     mt5_positions = Mt5Positions(mt5_client)
 
     # ── Storage ───────────────────────────────────────────────────────────
-    trade_repo = TradeRepository(config.storage_path)
+    trade_repo = TradeRepository(db)
     position_store = PositionStore()
 
     # ── Risk + execution ──────────────────────────────────────────────────
@@ -101,6 +105,7 @@ def build_container(config: AppConfig) -> AppContainer:
     strategy_router.register("default", PassthroughAdapter())
 
     return AppContainer(
+        db=db,
         event_bus=event_bus,
         signal_consumer=signal_consumer,
         signal_queue=signal_queue,

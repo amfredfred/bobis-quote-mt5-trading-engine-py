@@ -145,47 +145,53 @@ class Mt5Positions:
         positions = self.get_open_positions()
         return next((p for p in positions if p.ticket == ticket), None)
 
+
     def get_daily_loss_pct(self, magic: int) -> float:
         self._client.ensure_connected()
         try:
             offset_hours = self._client.broker_utc_offset_hours
             now_utc = datetime.now(timezone.utc)
             now_broker = (now_utc + timedelta(hours=offset_hours)).replace(tzinfo=None)
-            from_dt = datetime(
-                now_broker.year, now_broker.month, now_broker.day, 0, 0, 0
-            )
+            from_dt = datetime(now_broker.year, now_broker.month, now_broker.day, 0, 0, 0)
             to_dt = from_dt + timedelta(days=1)
 
             deals = self._mt5.history_deals_get(from_dt, to_dt) or []
 
-            daily_pnl = sum(
+            daily_trading_pnl = sum(
                 d.profit + d.swap + d.commission
                 for d in deals
                 if d.magic == magic and d.entry == self._client.mt5.DEAL_ENTRY_OUT
             )
-            balance_ops = sum(
-                d.profit for d in deals if d.type == self._client.mt5.DEAL_TYPE_BALANCE
-            )
 
-            if daily_pnl >= 0:
+            if daily_trading_pnl >= 0:
                 return 0.0
 
             account = self._mt5.account_info()
             if not account or account.balance <= 0:
+                print("No valid account or balance <= 0")
                 return 0.0
 
-            starting_balance = account.balance - daily_pnl - balance_ops
-            if starting_balance <= 0:
-                return 0.0
-
-            return (abs(daily_pnl) / starting_balance) * 100
-
-        except Exception:
-            logger.warning(
-                "Mt5Positions.get_daily_loss_pct: failed to calculate daily loss"
+            non_trading = sum(
+                d.profit for d in deals
+                if d.type == self._client.mt5.DEAL_TYPE_BALANCE
             )
-            return 0.0
+            starting_balance = account.balance - non_trading - daily_trading_pnl
 
+            if starting_balance <= 0:
+                if non_trading > 0:
+                    starting_balance = non_trading
+                else:
+                    print("starting_balance <= 0")
+                    return 0.0
+
+            loss_pct = (abs(daily_trading_pnl) / starting_balance) * 100
+
+            return loss_pct
+
+        except Exception as e:
+            logger.warning(f"Mt5Positions.get_daily_loss_pct failed: {e}")
+            return 0.0
+    
     def get_current_tick(self, symbol: str):
         self._client.ensure_connected()
         return self._mt5.symbol_info_tick(symbol)
