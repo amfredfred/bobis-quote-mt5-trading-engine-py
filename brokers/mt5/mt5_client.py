@@ -27,7 +27,7 @@ from config.config import Mt5Config
 logger = logging.getLogger(__name__)
 
 _RECONNECT_DELAYS = [2, 4, 8, 16, 30]  # seconds, capped at last value
-_OFFSET_SYMBOLS = ["BTCUSD", "ETHUSD", "BTCUSDT", "ETHUSDT"]  # always live
+_OFFSET_SYMBOLS = ["BTCUSD", "ETHUSD", "BTCUSDT", "ETHUSDT", "EURUSD"]  # always live
 
 class Mt5Client:
     """
