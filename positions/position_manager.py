@@ -187,7 +187,8 @@ class PositionManager:
                         pos.ticket,
                         pos.symbol,
                     )
-                self._store.add(trade)
+                if not self._store.get_by_ticket(pos.ticket):
+                    self._store.add(trade)
 
         # ── Refresh store_trades after reconcile ──────────────────────────
         open_trades = self._store.get_open_trades()
@@ -358,7 +359,6 @@ class PositionManager:
                 self._bus.emit(Events.TRADE_SL_HIT, updated)
             self._bus.emit(Events.TRADE_CLOSED, updated)
             metrics.increment("trades.sl_hit" if not is_stub else "trades.stub_closed")
-            metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
             metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
 
