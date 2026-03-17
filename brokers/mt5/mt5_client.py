@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _RECONNECT_DELAYS = [2, 4, 8, 16, 30]  # seconds, capped at last value
 _OFFSET_SYMBOLS = ["BTCUSD", "ETHUSD", "BTCUSDT", "ETHUSDT", "EURUSD"]  # always live
 
+
 class Mt5Client:
     """
     Manages the MT5 terminal connection.
@@ -87,10 +88,47 @@ class Mt5Client:
         self._connected = True
         self.broker_utc_offset_hours = self._derive_broker_utc_offset()
 
+    def resolve_symbol(self, base_symbol: str) -> str | None:
+        """
+        Find the correct broker symbol for a given base symbol.
+
+        Example:
+            BTCUSD -> BTCUSDm, BTCUSD.x, etc
+        """
+        symbols = mt5.symbols_get()
+        if not symbols:
+            return None
+
+        base_symbol = base_symbol.upper()
+
+        # 1. Exact match first
+        for s in symbols:
+            if s.name.upper() == base_symbol:
+                return s.name
+
+        # 2. Startswith match (BTCUSDm, BTCUSD.x, etc)
+        candidates = []
+        for s in symbols:
+            name = s.name.upper()
+            if name.startswith(base_symbol):
+                candidates.append(s.name)
+
+        if candidates:
+            # Prefer shortest match (usually best)
+            return sorted(candidates, key=len)[0]
+
+        # 3. Contains match fallback (less strict)
+        for s in symbols:
+            if base_symbol in s.name.upper():
+                return s.name
+
+        return None
+
     def _derive_broker_utc_offset(self) -> int:
         tick = None
         for symbol in _OFFSET_SYMBOLS:
-            t = mt5.symbol_info_tick(symbol)
+            _resolved = self.resolve_symbol(symbol)
+            t = mt5.symbol_info_tick(_resolved)
             if t is not None:
                 tick = t
                 break
@@ -111,7 +149,7 @@ class Mt5Client:
             extra={"offset_hours": offset, "raw_offset_hours": raw_offset},
         )
         return offset
-    
+
     def disconnect(self) -> None:
         if self._connected:
             mt5.shutdown()

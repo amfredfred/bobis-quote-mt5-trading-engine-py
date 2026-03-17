@@ -49,8 +49,10 @@ class Mt5Positions:
     # ── Symbol ────────────────────────────────────────────────────────────
 
     def get_symbol_info(self, symbol: str) -> SymbolInfo:
+        _resolved_symbol = self._client.resolve_symbol(symbol)
+        print(_resolved_symbol)
         self._client.ensure_connected()
-        info = self._mt5.symbol_info(symbol)
+        info = self._mt5.symbol_info(_resolved_symbol)
         if info is None:
             error = self._mt5.last_error()
             raise RuntimeError(f"symbol_info({symbol!r}) failed: {error}")
@@ -145,14 +147,15 @@ class Mt5Positions:
         positions = self.get_open_positions()
         return next((p for p in positions if p.ticket == ticket), None)
 
-
     def get_daily_loss_pct(self, magic: int) -> float:
         self._client.ensure_connected()
         try:
             offset_hours = self._client.broker_utc_offset_hours
             now_utc = datetime.now(timezone.utc)
             now_broker = (now_utc + timedelta(hours=offset_hours)).replace(tzinfo=None)
-            from_dt = datetime(now_broker.year, now_broker.month, now_broker.day, 0, 0, 0)
+            from_dt = datetime(
+                now_broker.year, now_broker.month, now_broker.day, 0, 0, 0
+            )
             to_dt = from_dt + timedelta(days=1)
 
             deals = self._mt5.history_deals_get(from_dt, to_dt) or []
@@ -172,8 +175,7 @@ class Mt5Positions:
                 return 0.0
 
             non_trading = sum(
-                d.profit for d in deals
-                if d.type == self._client.mt5.DEAL_TYPE_BALANCE
+                d.profit for d in deals if d.type == self._client.mt5.DEAL_TYPE_BALANCE
             )
             starting_balance = account.balance - non_trading - daily_trading_pnl
 
@@ -191,7 +193,7 @@ class Mt5Positions:
         except Exception as e:
             logger.warning(f"Mt5Positions.get_daily_loss_pct failed: {e}")
             return 0.0
-    
+
     def get_current_tick(self, symbol: str):
         self._client.ensure_connected()
         return self._mt5.symbol_info_tick(symbol)
