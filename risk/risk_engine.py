@@ -13,6 +13,7 @@ from config.config import RiskConfig
 from infrastructure.metrics import metrics
 from risk.risk_rules import ALL_RULES, RiskRule
 from interfaces.signal_interface import InboundSignal
+from interfaces.position import SymbolInfo
 from interfaces.trade import Trade
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class RiskEngine:
         daily_loss_pct: float,
         effective_open: int = 0,
         effective_symbol: int = 0,
+        symbol_info: SymbolInfo = None,
     ) -> RiskDecision:
         for rule in self._rules:
             result = rule(
@@ -49,6 +51,7 @@ class RiskEngine:
                 daily_loss_pct,
                 effective_open,
                 effective_symbol,
+                symbol_info,
             )
             if not result.approved:
                 logger.warning(

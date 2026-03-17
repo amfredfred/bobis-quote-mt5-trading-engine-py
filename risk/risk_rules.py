@@ -20,7 +20,9 @@ from typing import Callable, List
 
 from config.config import RiskConfig
 from interfaces.signal_interface import InboundSignal
-from interfaces.trade import Trade, TradeStatus
+from interfaces.position import SymbolInfo
+from interfaces.trade import Trade
+from utils.lot_calculator import pip_size
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,7 @@ class RuleResult:
 
 
 RiskRule = Callable[
-    [InboundSignal, List[Trade], RiskConfig, float, int, int], RuleResult
+    [InboundSignal, List[Trade], RiskConfig, float, int, int, SymbolInfo], RuleResult
 ]
 
 
@@ -132,10 +134,39 @@ def daily_loss_limit_rule(
     return RuleResult(approved=True)
 
 
+def spread_quality_rule(
+    signal: InboundSignal,
+    open_trades: List[Trade],
+    config: RiskConfig,
+    daily_loss_pct: float,
+    effective_open: int,
+    effective_symbol: int,
+    symbol_info,
+) -> RuleResult:
+
+    if not symbol_info or not symbol_info.ask or not symbol_info.bid:
+        return RuleResult(False, "No market data")
+
+    pip = pip_size(symbol_info.point, symbol_info.digits)
+
+    spread_pips = (symbol_info.ask - symbol_info.bid) / pip
+    raw_sl_pips = abs(signal.entry_price - signal.stop_loss) / pip
+
+    # block trades if spread eats too much of SL
+    if spread_pips > raw_sl_pips * 0.25:
+        return RuleResult(
+            False,
+            f"Spread too high ({spread_pips:.1f} pips vs SL {raw_sl_pips:.1f})",
+        )
+
+    return RuleResult(True)
+
+
 ALL_RULES: List[RiskRule] = [
     min_rr_rule,
     max_open_trades_rule,
     max_symbol_exposure_rule,
     duplicate_signal_rule,
     daily_loss_limit_rule,
+    spread_quality_rule,
 ]

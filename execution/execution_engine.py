@@ -118,6 +118,7 @@ class ExecutionEngine:
                 self._daily_loss_pct,
                 effective_open,
                 effective_symbol,
+                symbol_info,
             )
 
             if not decision.approved:
