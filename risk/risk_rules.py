@@ -23,7 +23,18 @@ from interfaces.signal_interface import InboundSignal
 from interfaces.position import SymbolInfo
 from interfaces.trade import Trade
 from utils.lot_calculator import pip_size
+from typing import Sequence
 
+
+@dataclass
+class RuleContext:
+    signal: InboundSignal
+    open_trades: List[Trade]
+    config: RiskConfig
+    daily_loss_pct: float
+    effective_open: int
+    effective_symbol: int
+    symbol_info: SymbolInfo
 
 @dataclass(frozen=True)
 class RuleResult:
@@ -31,10 +42,7 @@ class RuleResult:
     reason: str = ""
 
 
-RiskRule = Callable[
-    [InboundSignal, List[Trade], RiskConfig, float, int, int, SymbolInfo], RuleResult
-]
-
+RiskRule = Callable[[RuleContext], RuleResult]
 
 # ── Rules ─────────────────────────────────────────────────────────────────────
 
@@ -46,6 +54,7 @@ def min_rr_rule(
     daily_loss_pct: float,
     effective_open: int,
     effective_symbol: int,
+    symbol_info,
 ) -> RuleResult:
     if signal.risk_reward_ratio < config.min_rr_ratio:
         return RuleResult(
@@ -62,6 +71,7 @@ def max_open_trades_rule(
     daily_loss_pct: float,
     effective_open: int,
     effective_symbol: int,
+    symbol_info,
 ) -> RuleResult:
     if effective_open >= config.max_open_trades:
         return RuleResult(
@@ -78,6 +88,7 @@ def max_symbol_exposure_rule(
     daily_loss_pct: float,
     effective_open: int,
     effective_symbol: int,
+    symbol_info,
 ) -> RuleResult:
     if effective_symbol >= config.max_exposure_per_symbol:
         return RuleResult(
@@ -97,6 +108,7 @@ def duplicate_signal_rule(
     daily_loss_pct: float,
     effective_open: int,
     effective_symbol: int,
+    symbol_info,
 ) -> RuleResult:
     # Stubs have signal_id="unknown" — exclude them from duplicate detection
     duplicate = next(
@@ -122,6 +134,7 @@ def daily_loss_limit_rule(
     daily_loss_pct: float,
     effective_open: int,
     effective_symbol: int,
+    symbol_info,
 ) -> RuleResult:
     if daily_loss_pct >= config.max_daily_loss_percent:
         return RuleResult(
@@ -136,30 +149,29 @@ def daily_loss_limit_rule(
 
 def spread_quality_rule(
     signal: InboundSignal,
-    open_trades: List[Trade],
+    open_trades: Sequence[Trade],
     config: RiskConfig,
     daily_loss_pct: float,
     effective_open: int,
     effective_symbol: int,
-    symbol_info,
+    symbol_info: SymbolInfo,
 ) -> RuleResult:
 
-    if not symbol_info or not symbol_info.ask or not symbol_info.bid:
-        return RuleResult(False, "No market data")
+    if symbol_info is None or symbol_info.ask is None or symbol_info.bid is None:
+        return RuleResult(approved=False, reason="No market data")
 
     pip = pip_size(symbol_info.point, symbol_info.digits)
 
     spread_pips = (symbol_info.ask - symbol_info.bid) / pip
     raw_sl_pips = abs(signal.entry_price - signal.stop_loss) / pip
 
-    # block trades if spread eats too much of SL
     if spread_pips > raw_sl_pips * 0.25:
         return RuleResult(
-            False,
-            f"Spread too high ({spread_pips:.1f} pips vs SL {raw_sl_pips:.1f})",
+            approved=False,
+            reason=f"Spread too high ({spread_pips:.1f} pips vs SL {raw_sl_pips:.1f})",
         )
 
-    return RuleResult(True)
+    return RuleResult(approved=True)
 
 
 ALL_RULES: List[RiskRule] = [
