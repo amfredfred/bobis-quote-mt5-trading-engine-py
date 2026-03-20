@@ -32,6 +32,7 @@ class RiskConfig:
     min_rr_ratio: float
     max_lot_size: float
     min_lot_size: float
+    sl_ratio_threshold: float
 
     # ── Trade-count circuit-breaker guards ─────────────────────────────────
     # Guard 1 — consecutive streak
@@ -100,6 +101,7 @@ def _build() -> AppConfig:
             min_rr_ratio=env.MIN_RR_RATIO,
             max_lot_size=env.MAX_LOT_SIZE,
             min_lot_size=env.MIN_LOT_SIZE,
+            sl_ratio_threshold=env.SL_RATIO_THRESHOLD,
             max_consecutive_losses=env.MAX_CONSECUTIVE_LOSSES,
             pause_after_streak_h=env.PAUSE_AFTER_STREAK_H,
             max_daily_losses=env.MAX_DAILY_LOSSES,

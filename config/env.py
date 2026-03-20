@@ -72,6 +72,7 @@ class Env:
     MIN_RR_RATIO: float = _optional_float("MIN_RR_RATIO", 1.5)
     MAX_LOT_SIZE: float = _optional_float("MAX_LOT_SIZE", 10.0)
     MIN_LOT_SIZE: float = _optional_float("MIN_LOT_SIZE", 0.01)
+    SL_RATIO_THRESHOLD: float = _optional_float("SL_RATIO_THRESHOLD", 0.33)
 
     # ── Trade-count circuit-breaker guards ─────────────────────────────────
     MAX_CONSECUTIVE_LOSSES: int = _optional_int("MAX_CONSECUTIVE_LOSSES", 3)
