@@ -1,8 +1,8 @@
 """
-Wires event bus subscriptions and starts all services.
+app/bootstrap.py — wires event bus subscriptions and starts all services.
 
-Separating bootstrap from container keeps construction (what exists)
-separate from runtime wiring (what talks to what).
+Import change: interfaces.signal_interface → interfaces
+All wiring logic is unchanged.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import logging
 
 from app.container import AppContainer
 from config.config import AppConfig
-from core.events import Events
+from core.event_types import Events
 from infrastructure.metrics import metrics
 from interfaces.signal_interface import InboundSignal
 
@@ -24,54 +24,55 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     2. Connect to MT5 and verify.
     3. Hydrate position store from live MT5 positions.
     4. Register event handlers.
-    5. Start position manager and signal consumer.
+    5. Start all services.
     """
-    # ── Init database ─────────────────────────────────────────────────────
-    # Creates tables if they don't exist. Safe to call on every startup.
+    # Init database
     container.db.init()
-
-    # ── Init storage (now a no-op — schema handled by db.init()) ─────────
     container.trade_repo.init()
 
-    # ── Restore metrics from last session ────────────────────────────────
-    # Counters and gauges survive restarts via SQLite.
+    # Restore metrics from last session
     metrics.init_db(container.db)
 
-    # ── Connect to MT5 and verify ─────────────────────────────────────────
+    # Connect to MT5
     container.mt5_client.connect()
 
-    # mt5.initialize() can return True even when credentials are wrong —
-    # account_info() is the ground truth.
     try:
         account = container.mt5_positions.get_account_info()
     except Exception as exc:
         raise ConnectionError(
-            f"MT5 initialized but account_info() failed — "
-            f"check login/password/server in .env. Detail: {exc}"
+            f"MT5 initialised but account_info() failed — "
+            f"check login/password/server in .env.  Detail: {exc}"
         ) from exc
 
     container.event_bus.emit(Events.BROKER_CONNECTED)
     logger.info(
-        "MT5 connected and verified",
+        "MT5 connected",
         extra={
-            "login": account.login,
-            "server": account.server,
-            "currency": account.currency,
-            "balance": account.balance,
-            "equity": account.equity,
-            "leverage": account.leverage,
+            "login":       account.login,
+            "server":      account.server,
+            "currency":    account.currency,
+            "balance":     account.balance,
+            "equity":      account.equity,
+            "leverage":    account.leverage,
             "free_margin": account.free_margin,
         },
     )
 
-    # ── Hydrate position store from MT5 ───────────────────────────────────
-    # MT5 is the single source of truth for open positions.
-    # The first _poll() cycle handles anything closed while the engine was down.
+    # Hydrate position store
     container.position_manager.hydrate_from_broker()
 
-    # ── Prime daily loss before first signal can arrive ───────────────────
-    # Without this, _daily_loss_pct=0.0 until the first poll tick fires,
-    # meaning a signal arriving before that tick bypasses the daily loss rule.
+    # Load LossTracker from DB — restores today's closed trade history so
+    # guard state survives process restarts (a loss before restart still counts)
+    container.loss_tracker.load_today(container.trade_repo)
+    logger.info(
+        "LossTracker primed",
+        extra=container.loss_tracker.stats(),
+    )
+
+    # Wire LossTracker to receive every confirmed trade close
+    container.event_bus.on(Events.TRADE_CLOSED, container.loss_tracker.on_trade_closed)
+
+    # Prime daily loss before first signal
     try:
         loss_pct = container.mt5_positions.get_daily_loss_pct(config.execution.magic)
         container.execution_engine.update_daily_loss(loss_pct)
@@ -79,27 +80,24 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     except Exception:
         logger.warning("bootstrap: could not prime daily loss — defaulting to 0.0")
 
-    # ── Wire: signal.triggered → queue → execution pipeline ──────────────
+    # Wire: signal.triggered → queue → execution pipeline
     def on_signal_triggered(signal: InboundSignal) -> None:
         adapted = container.strategy_router.route(signal)
         container.signal_queue.put(adapted)
 
     container.event_bus.on(Events.SIGNAL_TRIGGERED, on_signal_triggered)
 
-    # ── Wire: all events → metrics counter ────────────────────────────────
+    # Wire: all events → metrics counter
     def on_any_event(event: str, _payload) -> None:
         metrics.increment(f"events.{event}")
 
     container.event_bus.on_any(on_any_event)
 
-    # ── Monitoring server — built here so container is fully available ────
+    # Monitoring server
     from infrastructure.monitoring_server import MonitoringServer
+    container.monitoring_server = MonitoringServer(container, config, port=config.monitoring_port)
 
-    container.monitoring_server = MonitoringServer(
-        container, config, port=config.monitoring_port
-    )
-
-    # ── Start services ────────────────────────────────────────────────────
+    # Start all services
     container.monitoring_server.start()
     container.signal_queue.start()
     container.position_manager.start()
@@ -109,9 +107,9 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     logger.info(
         "Execution Engine started",
         extra={
-            "symbols": config.signal.symbols,
-            "signal_ws": config.signal.ws_url,
-            "risk_pct": config.risk.risk_percent_per_trade,
+            "symbols":    config.signal.symbols,
+            "signal_ws":  config.signal.ws_url,
+            "risk_pct":   config.risk.risk_percent_per_trade,
             "max_trades": config.risk.max_open_trades,
         },
     )
@@ -126,8 +124,5 @@ def shutdown(container: AppContainer) -> None:
     if container.monitoring_server:
         container.monitoring_server.stop()
     container.mt5_client.disconnect()
-
-    # Final metrics flush before exit
     metrics.stop()
-
     logger.info("Shutdown complete")

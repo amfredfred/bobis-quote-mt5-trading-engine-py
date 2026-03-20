@@ -22,6 +22,7 @@ from infrastructure.monitoring_server import MonitoringServer
 from positions.position_manager import PositionManager
 from positions.position_store import PositionStore
 from risk.risk_engine import RiskEngine
+from risk.loss_tracker import LossTracker
 from signals.signal_consumer import SignalConsumer
 from signals.signal_queue import SignalQueue
 from signals.signal_validator import SignalValidator
@@ -43,6 +44,7 @@ class AppContainer:
     position_store: PositionStore
     trade_repo: TradeRepository
     strategy_router: StrategyRouter
+    loss_tracker: LossTracker
     monitoring_server: "MonitoringServer | None" = None
 
 
@@ -63,7 +65,15 @@ def build_container(config: AppConfig) -> AppContainer:
     position_store = PositionStore()
 
     # ── Risk + execution ──────────────────────────────────────────────────
-    risk_engine = RiskEngine(config.risk)
+    loss_tracker = LossTracker(
+        max_consecutive  = config.risk.max_consecutive_losses,
+        pause_hours      = config.risk.pause_after_streak_h,
+        max_daily        = config.risk.max_daily_losses,
+        max_per_window   = config.risk.max_losses_per_window,
+        window_hours     = config.risk.loss_window_hours,
+        engine_tz        = config.engine_timezone,
+    )
+    risk_engine = RiskEngine(config.risk, loss_tracker=loss_tracker)
     trade_planner = TradePlanner(config.risk, config.execution)
     order_manager = OrderManager(mt5_orders, mt5_positions, config.execution)
 
@@ -116,4 +126,5 @@ def build_container(config: AppConfig) -> AppContainer:
         trade_repo=trade_repo,
         position_store=position_store,
         strategy_router=strategy_router,
+        loss_tracker=loss_tracker,
     )

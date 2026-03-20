@@ -73,6 +73,14 @@ class Env:
     MAX_LOT_SIZE: float = _optional_float("MAX_LOT_SIZE", 10.0)
     MIN_LOT_SIZE: float = _optional_float("MIN_LOT_SIZE", 0.01)
 
+    # ── Trade-count circuit-breaker guards ─────────────────────────────────
+    MAX_CONSECUTIVE_LOSSES: int = _optional_int("MAX_CONSECUTIVE_LOSSES", 3)
+    PAUSE_AFTER_STREAK_H: float = _optional_float("PAUSE_AFTER_STREAK_H", 12.0)
+    MAX_DAILY_LOSSES: int = _optional_int("MAX_DAILY_LOSSES", 3)
+    MAX_LOSSES_PER_WINDOW: int = _optional_int("MAX_LOSSES_PER_WINDOW", 2)
+    LOSS_WINDOW_HOURS: float = _optional_float("LOSS_WINDOW_HOURS", 4.0)
+    MIN_LOT_SIZE: float = _optional_float("MIN_LOT_SIZE", 0.01)
+
     # ─────────────────────────────────────────
     # TIMEZONE
     # ─────────────────────────────────────────
@@ -105,6 +113,7 @@ class Env:
     LOG_LEVEL: str = _optional("LOG_LEVEL", "INFO")
     STORAGE_PATH: str = _optional("STORAGE_PATH", "./data")
 
-    MONITORING_PORT:   int   = _optional_int("MONITORING_PORT", 8080)
+    MONITORING_PORT: int = _optional_int("MONITORING_PORT", 8080)
+
 
 env = Env()

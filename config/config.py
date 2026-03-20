@@ -24,14 +24,28 @@ def _parse_risk_mode(raw: str) -> RiskMode:
 @dataclass(frozen=True)
 class RiskConfig:
     risk_mode: RiskMode
-    risk_percent_per_trade: float  # used when mode=PERCENTAGE
-    risk_fixed_amount: float  # used when mode=FIXED
+    risk_percent_per_trade: float
+    risk_fixed_amount: float
     max_open_trades: int
     max_daily_loss_percent: float
     max_exposure_per_symbol: int
     min_rr_ratio: float
     max_lot_size: float
     min_lot_size: float
+
+    # ── Trade-count circuit-breaker guards ─────────────────────────────────
+    # Guard 1 — consecutive streak
+    max_consecutive_losses: int = 3
+    pause_after_streak_h: float = 12.0
+
+    # Guard 2 — daily cap: stop after N losing trades on one calendar day
+    # 0 = disabled
+    max_daily_losses: int = 3
+
+    # Guard 3 — rolling window: cooldown after N losses within W hours
+    # 0 = disabled
+    max_losses_per_window: int = 2
+    loss_window_hours: float = 4.0
 
 
 @dataclass(frozen=True)
@@ -86,6 +100,11 @@ def _build() -> AppConfig:
             min_rr_ratio=env.MIN_RR_RATIO,
             max_lot_size=env.MAX_LOT_SIZE,
             min_lot_size=env.MIN_LOT_SIZE,
+            max_consecutive_losses=env.MAX_CONSECUTIVE_LOSSES,
+            pause_after_streak_h=env.PAUSE_AFTER_STREAK_H,
+            max_daily_losses=env.MAX_DAILY_LOSSES,
+            max_losses_per_window=env.MAX_LOSSES_PER_WINDOW,
+            loss_window_hours=env.LOSS_WINDOW_HOURS,
         ),
         execution=ExecutionConfig(
             tp1_partial_close_percent=env.TP1_PARTIAL_CLOSE_PERCENT,

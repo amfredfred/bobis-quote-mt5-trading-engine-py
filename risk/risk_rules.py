@@ -1,29 +1,33 @@
 """
-Individual risk rules.
+risk/risk_rules.py — individual risk rules.
 
-Each rule is a callable with signature:
-    rule(signal, open_trades, config, daily_loss_pct, effective_open, effective_symbol) -> RuleResult
+Each rule is a callable:  rule(ctx: RuleContext) -> RuleResult
 
-effective_open   = len(open_trades) + pending orders not yet in store (global)
-effective_symbol = open + pending for the signal's specific symbol
+RuleContext carries everything a rule needs — no global state reads.
+Rules are composable: add to ALL_RULES without touching RiskEngine.
 
-These prevent the race condition where rapid signals bypass limits before
-any order has filled and been added to the store.
+Guard rules (new):
+    loss_guard_rule — delegates to LossTracker which covers all three guards:
+        Guard 1: consecutive streak  (MAX_CONSECUTIVE_LOSSES / PAUSE_AFTER_STREAK_H)
+        Guard 2: daily cap           (MAX_DAILY_LOSSES)
+        Guard 3: rolling window      (MAX_LOSSES_PER_WINDOW / LOSS_WINDOW_HOURS)
 
-Rules are composable: add new ones to ALL_RULES without touching risk_engine.py.
+    If ctx.loss_tracker is None (backward compat / tests), guard rules pass.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, List
+from dataclasses import dataclass, field
+from typing import Callable, List, Optional, Sequence, TYPE_CHECKING
 
-from config.config import RiskConfig
 from interfaces.signal_interface import InboundSignal
-from interfaces.position import SymbolInfo
 from interfaces.trade import Trade
-from utils.lot_calculator import pip_size
-from typing import Sequence
+from interfaces.position import SymbolInfo
+from config.config import RiskConfig
+from utils.price_utils import pip_size
+
+if TYPE_CHECKING:
+    from risk.loss_tracker import LossTracker
 
 
 @dataclass
@@ -35,6 +39,8 @@ class RuleContext:
     effective_open: int
     effective_symbol: int
     symbol_info: SymbolInfo
+    loss_tracker: Optional["LossTracker"] = field(default=None)
+
 
 @dataclass(frozen=True)
 class RuleResult:
@@ -44,137 +50,115 @@ class RuleResult:
 
 RiskRule = Callable[[RuleContext], RuleResult]
 
-# ── Rules ─────────────────────────────────────────────────────────────────────
+
+# ── Existing rules ─────────────────────────────────────────────────────────────
 
 
-def min_rr_rule(
-    signal: InboundSignal,
-    open_trades: List[Trade],
-    config: RiskConfig,
-    daily_loss_pct: float,
-    effective_open: int,
-    effective_symbol: int,
-    symbol_info,
-) -> RuleResult:
-    if signal.risk_reward_ratio < config.min_rr_ratio:
+def min_rr_rule(ctx: RuleContext) -> RuleResult:
+    if ctx.signal.risk_reward_ratio < ctx.config.min_rr_ratio:
         return RuleResult(
             approved=False,
-            reason=f"R:R {signal.risk_reward_ratio:.2f} < minimum {config.min_rr_ratio}",
+            reason=f"R:R {ctx.signal.risk_reward_ratio:.2f} < minimum {ctx.config.min_rr_ratio}",
         )
     return RuleResult(approved=True)
 
 
-def max_open_trades_rule(
-    signal: InboundSignal,
-    open_trades: List[Trade],
-    config: RiskConfig,
-    daily_loss_pct: float,
-    effective_open: int,
-    effective_symbol: int,
-    symbol_info,
-) -> RuleResult:
-    if effective_open >= config.max_open_trades:
+def max_open_trades_rule(ctx: RuleContext) -> RuleResult:
+    if ctx.effective_open >= ctx.config.max_open_trades:
         return RuleResult(
             approved=False,
-            reason=f"Max open trades reached ({effective_open}/{config.max_open_trades})",
+            reason=f"Max open trades reached ({ctx.effective_open}/{ctx.config.max_open_trades})",
         )
     return RuleResult(approved=True)
 
 
-def max_symbol_exposure_rule(
-    signal: InboundSignal,
-    open_trades: List[Trade],
-    config: RiskConfig,
-    daily_loss_pct: float,
-    effective_open: int,
-    effective_symbol: int,
-    symbol_info,
-) -> RuleResult:
-    if effective_symbol >= config.max_exposure_per_symbol:
+def max_symbol_exposure_rule(ctx: RuleContext) -> RuleResult:
+    if ctx.effective_symbol >= ctx.config.max_exposure_per_symbol:
         return RuleResult(
             approved=False,
             reason=(
-                f"Symbol exposure limit for {signal.symbol}: "
-                f"{effective_symbol}/{config.max_exposure_per_symbol}"
+                f"Symbol exposure limit for {ctx.signal.symbol}: "
+                f"{ctx.effective_symbol}/{ctx.config.max_exposure_per_symbol}"
             ),
         )
     return RuleResult(approved=True)
 
 
-def duplicate_signal_rule(
-    signal: InboundSignal,
-    open_trades: List[Trade],
-    config: RiskConfig,
-    daily_loss_pct: float,
-    effective_open: int,
-    effective_symbol: int,
-    symbol_info,
-) -> RuleResult:
-    # Stubs have signal_id="unknown" — exclude them from duplicate detection
+def duplicate_signal_rule(ctx: RuleContext) -> RuleResult:
     duplicate = next(
         (
             t
-            for t in open_trades
-            if t.signal_id == signal.id and t.signal_id != "unknown"
+            for t in ctx.open_trades
+            if t.signal_id == ctx.signal.id and t.signal_id != "unknown"
         ),
         None,
     )
     if duplicate:
         return RuleResult(
             approved=False,
-            reason=f"Duplicate signal: trade {duplicate.id} already open for signal {signal.id}",
+            reason=f"Duplicate signal: trade {duplicate.id} already open for {ctx.signal.id}",
         )
     return RuleResult(approved=True)
 
 
-def daily_loss_limit_rule(
-    signal: InboundSignal,
-    open_trades: List[Trade],
-    config: RiskConfig,
-    daily_loss_pct: float,
-    effective_open: int,
-    effective_symbol: int,
-    symbol_info,
-) -> RuleResult:
-    if daily_loss_pct >= config.max_daily_loss_percent:
+def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
+    """Monetary daily drawdown guard — sourced from MT5 account equity."""
+    if ctx.daily_loss_pct >= ctx.config.max_daily_loss_percent:
         return RuleResult(
             approved=False,
             reason=(
                 f"Daily loss limit reached: "
-                f"{daily_loss_pct:.2f}% >= {config.max_daily_loss_percent}%"
+                f"{ctx.daily_loss_pct:.2f}% >= {ctx.config.max_daily_loss_percent}%"
             ),
         )
     return RuleResult(approved=True)
 
 
-def spread_quality_rule(
-    signal: InboundSignal,
-    open_trades: Sequence[Trade],
-    config: RiskConfig,
-    daily_loss_pct: float,
-    effective_open: int,
-    effective_symbol: int,
-    symbol_info: SymbolInfo,
-) -> RuleResult:
-
-    if symbol_info is None or symbol_info.ask is None or symbol_info.bid is None:
+def spread_quality_rule(ctx: RuleContext) -> RuleResult:
+    si = ctx.symbol_info
+    if si is None or si.ask is None or si.bid is None:
         return RuleResult(approved=False, reason="No market data")
 
-    pip = pip_size(symbol_info.point, symbol_info.digits)
+    pip = pip_size(si.point, si.digits)
+    spread_pips = (si.ask - si.bid) / pip
+    sl_pips = abs(ctx.signal.entry_price - ctx.signal.stop_loss) / pip
 
-    spread_pips = (symbol_info.ask - symbol_info.bid) / pip
-    raw_sl_pips = abs(signal.entry_price - signal.stop_loss) / pip
-
-    if spread_pips > raw_sl_pips * 0.25:
+    if spread_pips > sl_pips * 0.25:
         return RuleResult(
             approved=False,
-            reason=f"Spread too high ({spread_pips:.1f} pips vs SL {raw_sl_pips:.1f})",
+            reason=f"Spread too high ({spread_pips:.1f} pips vs SL {sl_pips:.1f})",
         )
-
     return RuleResult(approved=True)
 
 
+# ── Guard rule ─────────────────────────────────────────────────────────────────
+
+
+def loss_guard_rule(ctx: RuleContext) -> RuleResult:
+    """
+    Trade-count circuit breaker — all three guards in one call.
+
+    Delegates to LossTracker which maintains a combined paused_until
+    timestamp across streak, daily-cap, and rolling-window guards.
+
+    Runs first in ALL_RULES so we skip all other checks (including the
+    broker symbol_info call) when already paused.
+    """
+    if ctx.loss_tracker is None:
+        return RuleResult(approved=True)
+
+    paused, reason = ctx.loss_tracker.is_paused()
+    if paused:
+        return RuleResult(approved=False, reason=f"Loss guard: {reason}")
+    return RuleResult(approved=True)
+
+
+# ── Rule list ──────────────────────────────────────────────────────────────────
+# loss_guard_rule runs first — it's memory-only and short-circuits
+# everything else when paused.
+
 ALL_RULES: List[RiskRule] = [
+    loss_guard_rule,
     min_rr_rule,
     max_open_trades_rule,
     max_symbol_exposure_rule,
