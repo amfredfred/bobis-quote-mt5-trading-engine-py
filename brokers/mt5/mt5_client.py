@@ -59,7 +59,12 @@ class Mt5Client:
         """
         logger.info("Connecting to MT5 terminal")
 
-        if not mt5.initialize():
+        if not mt5.initialize(
+            login=self._config.login,
+            password=self._config.password,
+            server=self._config.server,
+            path=self._config.path,
+        ):
             error = mt5.last_error()
             raise ConnectionError(f"MT5 initialize() failed: {error}")
 
