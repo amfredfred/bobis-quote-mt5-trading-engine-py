@@ -1,17 +1,11 @@
 """
-MT5 connection manager.
+MT5 connection manager with symbol caching.
 
-Wraps the MetaTrader5 Python package initialisation / shutdown lifecycle.
-All other MT5 modules receive this client and call `mt5` through it so
-the package import is a single seam that can be mocked in tests.
-
-broker_utc_offset_hours is derived once on connect() by comparing a live
-tick timestamp against true UTC. Use it anywhere broker timestamps need
-converting to UTC — no pytz, no global state, no repeated queries.
-
-Auto-reconnect:
-    If the terminal is closed and reopened, any call that goes through
-    ensure_connected() will attempt to re-initialise transparently.
+Wraps the MetaTrader5 Python package initialization / shutdown lifecycle.
+All other MT5 modules receive this client and call `mt5` through it.
+Symbol resolution is cached in memory for performance and thread safety.
+Broker UTC offset is derived once on connect() by comparing a live tick timestamp
+against true UTC. Use it anywhere broker timestamps need converting.
 """
 
 from __future__ import annotations
@@ -19,27 +13,22 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+import threading
 
 import MetaTrader5 as mt5
-
 from config.config import Mt5Config
 
 logger = logging.getLogger(__name__)
 
 _RECONNECT_DELAYS = [2, 4, 8, 16, 30]  # seconds, capped at last value
 _OFFSET_SYMBOLS = ["BTCUSD", "ETHUSD", "BTCUSDT", "ETHUSDT", "EURUSD"]  # always live
+_MT5_LOCK = threading.Lock()
+_SYMBOL_CACHE: dict[str, str] = {}
 
 
 class Mt5Client:
     """
-    Manages the MT5 terminal connection.
-
-    Usage:
-        client = Mt5Client(cfg.mt5)
-        client.connect()              # raises on failure
-        client.ensure_connected()     # call before every broker op
-        ...
-        client.disconnect()
+    Manages the MT5 terminal connection with symbol caching.
     """
 
     def __init__(self, config: Mt5Config) -> None:
@@ -54,31 +43,31 @@ class Mt5Client:
         Initialise the MT5 connection.
 
         If login/password/server are configured, authenticate immediately.
-        Otherwise initialise without credentials (manual login assumed).
         Raises ConnectionError on failure.
         """
         logger.info("Connecting to MT5 terminal")
 
-        if not mt5.initialize(
-            login=self._config.login,
-            password=self._config.password,
-            server=self._config.server,
-            path=self._config.path,
-        ):
-            error = mt5.last_error()
-            raise ConnectionError(f"MT5 initialize() failed: {error}")
-
-        if self._config.login:
-            authorised = mt5.login(
+        with _MT5_LOCK:
+            if not mt5.initialize(
                 login=self._config.login,
                 password=self._config.password,
                 server=self._config.server,
                 path=self._config.path,
-            )
-            if not authorised:
+            ):
                 error = mt5.last_error()
-                mt5.shutdown()
-                raise ConnectionError(f"MT5 login() failed: {error}")
+                raise ConnectionError(f"MT5 initialize() failed: {error}")
+
+            if self._config.login:
+                authorised = mt5.login(
+                    login=self._config.login,
+                    password=self._config.password,
+                    server=self._config.server,
+                    path=self._config.path,
+                )
+                if not authorised:
+                    error = mt5.last_error()
+                    mt5.shutdown()
+                    raise ConnectionError(f"MT5 login() failed: {error}")
 
         info = mt5.terminal_info()
         logger.info(
@@ -100,40 +89,50 @@ class Mt5Client:
         Example:
             BTCUSD -> BTCUSDm, BTCUSD.x, etc
         """
-        symbols = mt5.symbols_get()
+        base_symbol = base_symbol.replace("/", "").replace("_", "").upper()
+
+        # Check cache first
+        if base_symbol in _SYMBOL_CACHE:
+            return _SYMBOL_CACHE[base_symbol]
+
+        with _MT5_LOCK:
+            symbols = mt5.symbols_get()
+
         if not symbols:
             return None
 
-        base_symbol = base_symbol.upper()
+        matches = []
 
-        # 1. Exact match first
         for s in symbols:
-            if s.name.upper() == base_symbol:
-                return s.name
+            name = s.name
+            upper_name = name.upper()
 
-        # 2. Startswith match (BTCUSDm, BTCUSD.x, etc)
-        candidates = []
-        for s in symbols:
-            name = s.name.upper()
-            if name.startswith(base_symbol):
-                candidates.append(s.name)
+            # 1. Exact match
+            if upper_name == base_symbol:
+                _SYMBOL_CACHE[base_symbol] = name
+                return name
 
-        if candidates:
-            # Prefer shortest match (usually best)
-            return sorted(candidates, key=len)[0]
+            # 2. Prefix or suffix match
+            if upper_name.startswith(base_symbol) or upper_name.endswith(base_symbol):
+                matches.append(name)
 
-        # 3. Contains match fallback (less strict)
-        for s in symbols:
-            if base_symbol in s.name.upper():
-                return s.name
+        if matches:
+            # Prefer shortest (EURUSDm over EURUSDmicro)
+            resolved = sorted(matches, key=len)[0]
+            _SYMBOL_CACHE[base_symbol] = resolved
+            return resolved
 
+        # No match
         return None
 
     def _derive_broker_utc_offset(self) -> int:
         tick = None
         for symbol in _OFFSET_SYMBOLS:
             _resolved = self.resolve_symbol(symbol)
-            t = mt5.symbol_info_tick(_resolved)
+            if _resolved is None:
+                continue
+            with _MT5_LOCK:
+                t = mt5.symbol_info_tick(_resolved)
             if t is not None:
                 tick = t
                 break
@@ -157,16 +156,17 @@ class Mt5Client:
 
     def disconnect(self) -> None:
         if self._connected:
-            mt5.shutdown()
+            with _MT5_LOCK:
+                mt5.shutdown()
             self._connected = False
             logger.info("MT5 disconnected")
 
     def is_connected(self) -> bool:
         """
         Live check — asks the terminal if it is connected to the broker.
-        Falls back to False if the terminal process is gone entirely.
         """
-        info = mt5.terminal_info()
+        with _MT5_LOCK:
+            info = mt5.terminal_info()
         if info is None:
             self._connected = False
             return False
@@ -178,9 +178,7 @@ class Mt5Client:
         """
         Call before every broker operation.
 
-        If the terminal is still alive and connected -> no-op (fast path).
-        If not -> attempt to reconnect with exponential backoff.
-        Raises ConnectionError only if all retries are exhausted.
+        If the terminal is not connected -> attempt to reconnect.
         """
         if self.is_connected():
             return
@@ -190,7 +188,8 @@ class Mt5Client:
         for attempt, delay in enumerate(_RECONNECT_DELAYS, start=1):
             logger.info("MT5 reconnect attempt %d/%d", attempt, len(_RECONNECT_DELAYS))
             try:
-                mt5.shutdown()  # clean slate before re-init
+                with _MT5_LOCK:
+                    mt5.shutdown()
                 self.connect()
                 logger.info("MT5 reconnected successfully")
                 return
@@ -206,10 +205,5 @@ class Mt5Client:
 
     @property
     def mt5(self):
-        """
-        Direct access to the MetaTrader5 module.
-
-        Exposed so mt5_orders / mt5_positions can call the API without
-        importing the package themselves — keeping mocking straightforward.
-        """
+        """Direct access to MetaTrader5 module for other modules."""
         return mt5
