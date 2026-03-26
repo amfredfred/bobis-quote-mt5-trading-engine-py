@@ -169,15 +169,27 @@ class OrderManager:
 
             # [1] Post-fill slippage — symbol-aware threshold
             slippage_pips = abs(result.executed_price - plan.entry_price) / pip
+            is_worse = not _is_better_price(plan.side, result.executed_price, plan.entry_price)
 
             if slippage_pips > 0:
-                direction = (
-                    "better"
-                    if _is_better_price(
-                        plan.side, result.executed_price, plan.entry_price
+                direction = "worse" if is_worse else "better"
+                if is_worse and slippage_pips > max_slip_pip:
+                    logger.warning(
+                        "Fill slippage exceeds limit — closing position",
+                        extra={
+                            "symbol": plan.symbol,
+                            "slippage_pips": round(slippage_pips, 1),
+                            "max_pips": max_slip_pip,
+                            "direction": direction,
+                            "ticket": result.ticket,
+                        },
                     )
-                    else "worse"
-                )
+                    metrics.increment("orders.slippage_rejected")
+                    self._emergency_close(result.ticket, plan, order_type, result.executed_price)
+                    raise RuntimeError(
+                        f"Slippage {slippage_pips:.1f} pips exceeds limit "
+                        f"{max_slip_pip} pips ({direction}) — position closed"
+                    )
                 logger.info(
                     "Fill slippage within limit",
                     extra={

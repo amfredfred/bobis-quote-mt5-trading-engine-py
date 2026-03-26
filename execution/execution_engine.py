@@ -180,14 +180,53 @@ class ExecutionEngine:
                     "tp2_lots": tp2_lot,
                 },
             )
-            from dataclasses import replace
 
-            plan = replace(
-                plan,
-                lot_size=filled_volume,
-                tp1_lot_size=tp1_lot,
-                tp2_lot_size=tp2_lot,
+        # ── 5b. Shift TP1, TP2 and SL to actual fill price ─────────────────
+        # The signal's levels are calculated relative to signal.entry_price.
+        # If the broker fills at a different price, all levels must shift by
+        # the same amount so R:R and risk amount remain correct.
+        #
+        # Example (LONG, 23 pip adverse slippage):
+        #   signal entry = 1.38296, fill = 1.38526  → slippage = +0.00230
+        #   signal TP1   = 1.38436 → adjusted TP1 = 1.38666
+        #   signal TP2   = 1.38576 → adjusted TP2 = 1.38806
+        #   signal SL    = 1.38243 → adjusted SL  = 1.38473
+        #
+        # Without this adjustment TP1 sits 9 pips BELOW the actual entry,
+        # triggering an immediate loss-close the moment price dips at all.
+        fill_slippage = executed_price - plan.entry_price  # signed; +ve = worse for BUY
+        adjusted_tp1 = plan.tp1        + fill_slippage
+        adjusted_tp2 = plan.tp2        + fill_slippage
+        adjusted_sl  = plan.stop_loss  + fill_slippage
+
+        if abs(fill_slippage) > 1e-8:
+            logger.info(
+                "Plan levels shifted to actual fill price",
+                extra={
+                    "symbol": signal.symbol,
+                    "signal_entry":  plan.entry_price,
+                    "fill_price":    executed_price,
+                    "fill_slippage": round(fill_slippage, 5),
+                    "original_sl":   plan.stop_loss,
+                    "adjusted_sl":   round(adjusted_sl, 5),
+                    "original_tp1":  plan.tp1,
+                    "adjusted_tp1":  round(adjusted_tp1, 5),
+                    "original_tp2":  plan.tp2,
+                    "adjusted_tp2":  round(adjusted_tp2, 5),
+                },
             )
+
+        from dataclasses import replace
+        plan = replace(
+            plan,
+            lot_size=filled_volume,
+            tp1_lot_size=tp1_lot,
+            tp2_lot_size=tp2_lot,
+            entry_price=executed_price,
+            tp1=adjusted_tp1,
+            tp2=adjusted_tp2,
+            stop_loss=adjusted_sl,
+        )
 
         # ── 6. Create Trade record ─────────────────────────────────────────
         ts = now_ms()
