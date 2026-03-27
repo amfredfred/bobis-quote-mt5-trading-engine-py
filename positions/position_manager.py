@@ -241,6 +241,26 @@ class PositionManager:
     # ── Trade lifecycle handlers ──────────────────────────────────────────────
 
     def _handle_tp1(self, trade: Trade, price: float, broker_pos) -> None:
+        # ── Profit gate — never close at a loss ───────────────────────────
+        # Compares close price against actual fill price (trade.entry_price),
+        # not the signal price. Protects against unadjusted levels, broker
+        # requotes, and any geometry that slipped through validation.
+        is_buy = trade.side.value == "BUY"
+        in_profit = price > trade.entry_price if is_buy else price < trade.entry_price
+        if not in_profit:
+            logger.warning(
+                "TP1 skipped — close price not in profit relative to fill",
+                extra={
+                    "trade_id":    trade.id,
+                    "symbol":      trade.symbol,
+                    "side":        trade.side.value,
+                    "entry_price": trade.entry_price,
+                    "tp1_level":   trade.tp1,
+                    "current":     price,
+                },
+            )
+            return
+
         logger.info(
             "TP1 hit",
             extra={"trade_id": trade.id, "symbol": trade.symbol, "price": price},
@@ -301,6 +321,23 @@ class PositionManager:
             metrics.increment("trades.tp1_hit")
 
     def _handle_tp2(self, trade: Trade, price: float) -> None:
+        # ── Profit gate ───────────────────────────────────────────────────
+        is_buy = trade.side.value == "BUY"
+        in_profit = price > trade.entry_price if is_buy else price < trade.entry_price
+        if not in_profit:
+            logger.warning(
+                "TP2 skipped — close price not in profit relative to fill",
+                extra={
+                    "trade_id":    trade.id,
+                    "symbol":      trade.symbol,
+                    "side":        trade.side.value,
+                    "entry_price": trade.entry_price,
+                    "tp2_level":   trade.tp2,
+                    "current":     price,
+                },
+            )
+            return
+
         logger.info(
             "TP2 hit",
             extra={"trade_id": trade.id, "symbol": trade.symbol, "price": price},
