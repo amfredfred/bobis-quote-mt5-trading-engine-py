@@ -40,6 +40,8 @@ class BosDirection(str, Enum):
 class CandlePattern(str, Enum):
     SHOOTING_STAR = "SHOOTING_STAR"
     HAMMER = "HAMMER"
+    CRT_BUY = "CRT_BUY"
+    CRT_SELL = "CRT_SELL"
 
 
 class SignalEventName(str, Enum):

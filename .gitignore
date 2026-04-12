@@ -5,3 +5,6 @@ __pycache__
 data/
 .zip
 *.zip
+
+# repowise API keys (local)
+.repowise/.env
