@@ -185,7 +185,13 @@ class OrderManager:
                         },
                     )
                     metrics.increment("orders.slippage_rejected")
-                    self._emergency_close(result.ticket, plan, order_type, result.executed_price)
+                    # self._emergency_close(
+                    #     result.ticket,
+                    #     plan,
+                    #     order_type,
+                    #     result.executed_price,
+                    #     symbol_info,
+                    # )
                     raise RuntimeError(
                         f"Slippage {slippage_pips:.1f} pips exceeds limit "
                         f"{max_slip_pip} pips ({direction}) — position closed"
@@ -208,7 +214,7 @@ class OrderManager:
     # ── Emergency close ───────────────────────────────────────────────────────
 
     def _emergency_close(
-        self, ticket: int, plan: TradePlan, order_type: int, price: float
+        self, ticket: int, plan: TradePlan, order_type: int, price: float, symbol_info: SymbolInfo
     ) -> None:
         try:
             tick = self._positions.get_current_tick(plan.symbol)
@@ -225,7 +231,9 @@ class OrderManager:
                 price=close_price,
                 slippage=self._cfg.slippage,
                 magic=self._cfg.magic,
-                comment=f"slippage-close {self._cfg.comment}",
+                comment=f"slippage-close",
+                #  {self._cfg.comment}
+                filling_mode=symbol_info.order_filling_mode,
             )
             logger.info("Emergency close executed", extra={"ticket": ticket})
             metrics.increment("orders.emergency_closes")

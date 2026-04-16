@@ -35,18 +35,19 @@ class RiskConfig:
     sl_ratio_threshold: float
 
     # ── Trade-count circuit-breaker guards ─────────────────────────────────
-    # Guard 1 — consecutive streak
+    # All four timing/count values below are derived from max_consecutive_losses
+    # in _build() — only MAX_CONSECUTIVE_LOSSES lives in the .env.
+    #
+    # Derivation (N = MAX_CONSECUTIVE_LOSSES):
+    #   pause_after_streak_h  = N × 1.2   e.g. N=10 → 12.0 h
+    #   max_daily_losses      = N          e.g. N=10 → 10 per day
+    #   max_losses_per_window = N          e.g. N=10 → 10 in rolling window
+    #   loss_window_hours     = N          e.g. N=10 → 10 h rolling window
     max_consecutive_losses: int = 3
-    pause_after_streak_h: float = 12.0
-
-    # Guard 2 — daily cap: stop after N losing trades on one calendar day
-    # 0 = disabled
-    max_daily_losses: int = 3
-
-    # Guard 3 — rolling window: cooldown after N losses within W hours
-    # 0 = disabled
-    max_losses_per_window: int = 2
-    loss_window_hours: float = 4.0
+    pause_after_streak_h: float = 3.6    # derived: N × 1.2
+    max_daily_losses: int = 3            # derived: N
+    max_losses_per_window: int = 3       # derived: N
+    loss_window_hours: float = 3.0       # derived: float(N)
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,32 @@ class AppConfig:
     monitoring_port: str
 
 
+def _derive_streak_params(n: int) -> tuple[float, int, int, float]:
+    """Derive all guard timing/count values from a single consecutive-loss knob.
+
+    Returns (pause_after_streak_h, max_daily_losses, max_losses_per_window, loss_window_hours).
+
+    Rationale:
+      pause_after_streak_h  = N × 1.2  — cool-off scales with streak severity
+      max_daily_losses      = N        — daily cap equals the streak threshold
+      max_losses_per_window = N        — rolling window uses the same count
+      loss_window_hours     = N        — window length (hours) equals the count
+
+    Example  MAX_CONSECUTIVE_LOSSES=10:
+      pause=12.0 h  |  max_daily=10  |  window_count=10  |  window_hours=10.0
+    """
+    return (
+        round(n * 1.2, 1),  # pause_after_streak_h
+        n,                  # max_daily_losses
+        n,                  # max_losses_per_window
+        float(n),           # loss_window_hours
+    )
+
+
 def _build() -> AppConfig:
+    n = env.MAX_CONSECUTIVE_LOSSES
+    pause_h, max_daily, max_window_count, window_h = _derive_streak_params(n)
+
     return AppConfig(
         risk=RiskConfig(
             risk_mode=_parse_risk_mode(env.RISK_MODE),
@@ -102,11 +128,11 @@ def _build() -> AppConfig:
             max_lot_size=env.MAX_LOT_SIZE,
             min_lot_size=env.MIN_LOT_SIZE,
             sl_ratio_threshold=env.SL_RATIO_THRESHOLD,
-            max_consecutive_losses=env.MAX_CONSECUTIVE_LOSSES,
-            pause_after_streak_h=env.PAUSE_AFTER_STREAK_H,
-            max_daily_losses=env.MAX_DAILY_LOSSES,
-            max_losses_per_window=env.MAX_LOSSES_PER_WINDOW,
-            loss_window_hours=env.LOSS_WINDOW_HOURS,
+            max_consecutive_losses=n,
+            pause_after_streak_h=pause_h,
+            max_daily_losses=max_daily,
+            max_losses_per_window=max_window_count,
+            loss_window_hours=window_h,
         ),
         execution=ExecutionConfig(
             tp1_partial_close_percent=env.TP1_PARTIAL_CLOSE_PERCENT,

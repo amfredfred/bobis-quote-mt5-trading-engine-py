@@ -148,50 +148,86 @@ class Mt5Positions:
         return next((p for p in positions if p.ticket == ticket), None)
 
     def get_daily_loss_pct(self, magic: int) -> float:
+        """Return today's loss as a percentage of START-OF-DAY EQUITY.
+
+        Why equity, not balance?
+          Prop-firm rules and sound risk management are expressed against the
+          equity you had at the start of the day, not the running balance.
+          Using balance understates the loss when floating drawdown is large;
+          using equity captures both realised and unrealised losses instantly.
+
+        Calculation:
+          1. Sum today's closed P&L (profit + swap + commission) for our magic
+             number  →  realised component.
+          2. Sum floating (unrealised) P&L on open positions for our magic
+             number  →  unrealised component.
+          3. start_equity = current_equity − realised_pnl − unrealised_pnl
+             (what equity was before any trade today ran)
+          4. total_pnl    = realised_pnl + unrealised_pnl  (negative = loss)
+          5. loss_pct     = abs(total_pnl) / start_equity × 100
+
+        Returns 0.0 when the day is net positive or flat.
+        """
         self._client.ensure_connected()
         try:
+            # ── Time window: broker-local midnight → next midnight ─────────
             offset_hours = self._client.broker_utc_offset_hours
-            now_utc = datetime.now(timezone.utc)
-            now_broker = (now_utc + timedelta(hours=offset_hours)).replace(tzinfo=None)
-            from_dt = datetime(
-                now_broker.year, now_broker.month, now_broker.day, 0, 0, 0
-            )
-            to_dt = from_dt + timedelta(days=1)
+            now_utc      = datetime.now(timezone.utc)
+            now_broker   = (now_utc + timedelta(hours=offset_hours)).replace(tzinfo=None)
+            from_dt      = datetime(now_broker.year, now_broker.month, now_broker.day)
+            to_dt        = from_dt + timedelta(days=1)
 
+            # ── Closed P&L for our magic (realised) ───────────────────────
             deals = self._mt5.history_deals_get(from_dt, to_dt) or []
-
-            daily_trading_pnl = sum(
+            realised_pnl = sum(
                 d.profit + d.swap + d.commission
                 for d in deals
                 if d.magic == magic and d.entry == self._client.mt5.DEAL_ENTRY_OUT
             )
 
-            if daily_trading_pnl >= 0:
-                return 0.0
-
-            account = self._mt5.account_info()
-            if not account or account.balance <= 0:
-                print("No valid account or balance <= 0")
-                return 0.0
-
-            non_trading = sum(
-                d.profit for d in deals if d.type == self._client.mt5.DEAL_TYPE_BALANCE
+            # ── Floating P&L on currently open positions (unrealised) ─────
+            open_positions = self._mt5.positions_get() or []
+            unrealised_pnl = sum(
+                p.profit
+                for p in open_positions
+                if p.magic == magic
             )
-            starting_balance = account.balance - non_trading - daily_trading_pnl
 
-            if starting_balance <= 0:
-                if non_trading > 0:
-                    starting_balance = non_trading
-                else:
-                    print("starting_balance <= 0")
-                    return 0.0
+            total_pnl = realised_pnl + unrealised_pnl
 
-            loss_pct = (abs(daily_trading_pnl) / starting_balance) * 100
+            # No loss today — return early, avoid division
+            if total_pnl >= 0:
+                return 0.0
 
+            # ── Account equity ─────────────────────────────────────────────
+            account = self._mt5.account_info()
+            if not account or account.equity <= 0:
+                logger.warning("get_daily_loss_pct: no valid account or equity <= 0")
+                return 0.0
+
+            # ── Start-of-day equity ────────────────────────────────────────
+            # current_equity = start_equity + total_pnl
+            # → start_equity = current_equity − total_pnl
+            start_equity = account.equity - total_pnl
+            if start_equity <= 0:
+                logger.warning(
+                    "get_daily_loss_pct: derived start_equity <= 0 "
+                    "(equity=%.2f total_pnl=%.2f) — returning 0",
+                    account.equity, total_pnl,
+                )
+                return 0.0
+
+            loss_pct = (abs(total_pnl) / start_equity) * 100.0
+            logger.debug(
+                "daily_loss_pct=%.3f%%  realised=%.2f  unrealised=%.2f  "
+                "start_equity=%.2f  current_equity=%.2f",
+                loss_pct, realised_pnl, unrealised_pnl,
+                start_equity, account.equity,
+            )
             return loss_pct
 
         except Exception as e:
-            logger.warning(f"Mt5Positions.get_daily_loss_pct failed: {e}")
+            logger.warning("Mt5Positions.get_daily_loss_pct failed: %s", e)
             return 0.0
 
     def get_current_tick(self, symbol: str):
