@@ -33,6 +33,7 @@ class RiskConfig:
     max_lot_size: float
     min_lot_size: float
     sl_ratio_threshold: float
+    no_hedging: bool = True
 
     # ── Trade-count circuit-breaker guards ─────────────────────────────────
     # All four timing/count values below are derived from max_consecutive_losses
@@ -133,6 +134,7 @@ def _build() -> AppConfig:
             max_daily_losses=max_daily,
             max_losses_per_window=max_window_count,
             loss_window_hours=window_h,
+            no_hedging=env.NO_HEDGING,
         ),
         execution=ExecutionConfig(
             tp1_partial_close_percent=env.TP1_PARTIAL_CLOSE_PERCENT,

@@ -92,6 +92,7 @@ class Env:
         "TP1_PARTIAL_CLOSE_PERCENT", 50.0
     )
     MOVE_SL_TO_BE_ON_TP1: bool = _optional_bool("MOVE_SL_TO_BE_ON_TP1", True)
+    NO_HEDGING: bool = _optional_bool("NO_HEDGING", True)
 
     # ── Live trading protections ───────────────────────────────────────────
     # [1] Max acceptable slippage AFTER a fill — warns and cancels if exceeded

@@ -20,11 +20,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence, TYPE_CHECKING
 
-from interfaces.signal_interface import InboundSignal
-from interfaces.trade import Trade
+from interfaces.signal_interface import InboundSignal, SignalDirection
+from interfaces.trade import Trade, OrderSide, TradeStatus
 from interfaces.position import SymbolInfo
 from config.config import RiskConfig
 from utils.price_utils import pip_size
+
 
 if TYPE_CHECKING:
     from risk.loss_tracker import LossTracker
@@ -141,6 +142,7 @@ def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
 
     # Layer 2 — budget projection: would this trade's SL push us past the threshold?
     from utils.lot_calculator import RiskMode as _RiskMode
+
     if ctx.config.risk_mode == _RiskMode.PERCENTAGE:
         per_trade_risk = ctx.config.risk_percent_per_trade
         projected = ctx.daily_loss_pct + per_trade_risk
@@ -197,12 +199,43 @@ def loss_guard_rule(ctx: RuleContext) -> RuleResult:
     return RuleResult(approved=True)
 
 
+def no_hedging_rule(ctx: RuleContext) -> RuleResult:
+    if not ctx.config.no_hedging:
+        return RuleResult(approved=True)
+
+    incoming_side = (
+        OrderSide.BUY
+        if ctx.signal.direction == SignalDirection.LONG
+        else OrderSide.SELL
+    )
+    opposing_side = OrderSide.SELL if incoming_side == OrderSide.BUY else OrderSide.BUY
+
+    conflict = next(
+        (
+            t
+            for t in ctx.open_trades
+            if t.symbol == ctx.signal.symbol
+            and t.side == opposing_side
+            and t.status
+            in (TradeStatus.PLANNED, TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED)
+        ),
+        None,
+    )
+    if conflict:
+        return RuleResult(
+            approved=False,
+            reason=f"NO_HEDGING: {opposing_side.value} trade {conflict.id} already open on {ctx.signal.symbol}",
+        )
+    return RuleResult(approved=True)
+
+
 # ── Rule list ──────────────────────────────────────────────────────────────────
 # loss_guard_rule runs first — it's memory-only and short-circuits
 # everything else when paused.
 
 ALL_RULES: List[RiskRule] = [
     loss_guard_rule,
+    no_hedging_rule,
     min_rr_rule,
     max_open_trades_rule,
     max_symbol_exposure_rule,
