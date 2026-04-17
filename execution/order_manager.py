@@ -177,13 +177,13 @@ class OrderManager:
                         },
                     )
                     metrics.increment("orders.slippage_rejected")
-                    self._emergency_close(
-                        result.ticket,
-                        plan,
-                        order_type,
-                        result.executed_price,
-                        symbol_info,
-                    )
+                    # self._emergency_close(
+                    #     result.ticket,
+                    #     plan,
+                    #     order_type,
+                    #     result.executed_price,
+                    #     symbol_info,
+                    # )
                     raise RuntimeError(
                         f"Slippage {slippage_pct_of_stop * 100:.1f}% of stop distance "
                         f"exceeds limit {max_slip_pct_of_stop * 100:.1f}% "
