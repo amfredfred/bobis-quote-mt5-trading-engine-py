@@ -96,7 +96,7 @@ class Env:
 
     # ── Live trading protections ───────────────────────────────────────────
     # [1] Max acceptable slippage AFTER a fill — warns and cancels if exceeded
-    MAX_ENTRY_SLIPPAGE_PIPS: float = _optional_float("MAX_ENTRY_SLIPPAGE_PIPS", 3.0)
+    MAX_ENTRY_SLIPPAGE_PCT_OF_STOP: float = _optional_float("MAX_ENTRY_SLIPPAGE_PCT_OF_STOP", 0.20)  # 20% of stop distance
 
     # [2] Spread surcharge — adds N × spread to the SL distance before sizing
     #     0.0 = disabled (demo behaviour)  |  1.0 = add full spread to risk

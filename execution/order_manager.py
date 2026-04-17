@@ -33,23 +33,9 @@ _RETRYABLE_RETCODES = {
     10018,  # TRADE_RETCODE_MARKET_CLOSED
 }
 
-# Per-symbol max slippage in pips.
-# Overrides MAX_ENTRY_SLIPPAGE_PIPS for volatile instruments where
-# a flat pip limit would close perfectly valid fills.
-_SYMBOL_SLIPPAGE_PIPS: dict[str, float] = {
-    # Metals
-    "XAU/USD": 8.0,
-    "XAG/USD": 6.0,
-    # Indices
-    "US100": 10.0,
-    "US500": 8.0,
-    "UK100": 8.0,
-    "JP225": 10.0,
-    # Crypto
-    "BTC/USD": 50.0,  # BTC moves $50 in microseconds — normal
-    "ETH/USD": 20.0,
-    "SOL/USD": 10.0,
-}
+# Slippage is validated as a fraction of each trade's own stop distance.
+# e.g. 0.20 means adverse slippage must be < 20% of (entry − SL).
+# This is fully dynamic — no per-symbol overrides needed.
 
 class OrderManager:
     def __init__(
@@ -77,7 +63,8 @@ class OrderManager:
             Mt5OrderType.BUY if plan.side == OrderSide.BUY else Mt5OrderType.SELL
         )
         pip = pip_size(symbol_info.point, symbol_info.digits)
-        max_slip_pip = _slippage_limit(plan.symbol, self._cfg.max_entry_slippage_pips)
+        stop_distance = abs(plan.entry_price - plan.stop_loss)
+        max_slip_pct_of_stop = self._cfg.max_entry_slippage_pct_of_stop
         last_error: Exception | None = None
         max_attempts = 1 + self._cfg.order_retry_count
 
@@ -167,21 +154,26 @@ class OrderManager:
                 )
                 metrics.increment("orders.partial_fills")
 
-            # [1] Post-fill slippage — symbol-aware threshold
-            slippage_pips = abs(result.executed_price - plan.entry_price) / pip
+            # [1] Post-fill slippage — as a fraction of this trade's stop distance.
+            # slippage_pct_of_stop = |fill - planned_entry| / |planned_entry - SL|
+            # A 0.20 reading means the fill ate 20% of the budgeted risk before the
+            # trade even started. Threshold from config (e.g. 0.20 = 20%).
+            raw_slippage = abs(result.executed_price - plan.entry_price)
+            slippage_pct_of_stop = (raw_slippage / stop_distance) if stop_distance > 0 else 0.0
             is_worse = not _is_better_price(plan.side, result.executed_price, plan.entry_price)
 
-            if slippage_pips > 0:
+            if raw_slippage > 0:
                 direction = "worse" if is_worse else "better"
-                if is_worse and slippage_pips > max_slip_pip:
+                if is_worse and slippage_pct_of_stop > max_slip_pct_of_stop:
                     logger.warning(
                         "Fill slippage exceeds limit — closing position",
                         extra={
-                            "symbol": plan.symbol,
-                            "slippage_pips": round(slippage_pips, 1),
-                            "max_pips": max_slip_pip,
-                            "direction": direction,
-                            "ticket": result.ticket,
+                            "symbol":               plan.symbol,
+                            "slippage_pct_of_stop": round(slippage_pct_of_stop * 100, 1),
+                            "max_pct_of_stop":      round(max_slip_pct_of_stop * 100, 1),
+                            "stop_distance":        round(stop_distance, 5),
+                            "direction":            direction,
+                            "ticket":               result.ticket,
                         },
                     )
                     metrics.increment("orders.slippage_rejected")
@@ -193,16 +185,17 @@ class OrderManager:
                         symbol_info,
                     )
                     raise RuntimeError(
-                        f"Slippage {slippage_pips:.1f} pips exceeds limit "
-                        f"{max_slip_pip} pips ({direction}) — position closed"
+                        f"Slippage {slippage_pct_of_stop * 100:.1f}% of stop distance "
+                        f"exceeds limit {max_slip_pct_of_stop * 100:.1f}% "
+                        f"({direction}) — position closed"
                     )
                 logger.info(
                     "Fill slippage within limit",
                     extra={
-                        "symbol": plan.symbol,
-                        "slippage_pips": round(slippage_pips, 1),
-                        "max_pips": max_slip_pip,
-                        "direction": direction,
+                        "symbol":               plan.symbol,
+                        "slippage_pct_of_stop": round(slippage_pct_of_stop * 100, 1),
+                        "max_pct_of_stop":      round(max_slip_pct_of_stop * 100, 1),
+                        "direction":            direction,
                     },
                 )
 
@@ -247,9 +240,7 @@ class OrderManager:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _slippage_limit(symbol: str, default: float) -> float:
-    """Return the per-symbol slippage limit, falling back to the config default."""
-    return _SYMBOL_SLIPPAGE_PIPS.get(symbol.upper(), default)
+
 
 
 def _widen_stops(

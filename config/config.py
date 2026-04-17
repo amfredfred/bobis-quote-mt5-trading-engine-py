@@ -60,7 +60,7 @@ class ExecutionConfig:
     comment: str
     spread_risk_multiplier: float
     order_retry_count: int
-    max_entry_slippage_pips: int
+    max_entry_slippage_pct_of_stop: float  # e.g. 0.20 = reject if slip > 20% of stop distance
     order_retry_delay_sec: int
 
 
@@ -144,7 +144,7 @@ def _build() -> AppConfig:
             comment=env.MT5_COMMENT,
             spread_risk_multiplier=env.SPREAD_RISK_MULTIPLIER,
             order_retry_count=env.ORDER_RETRY_COUNT,
-            max_entry_slippage_pips=env.MAX_ENTRY_SLIPPAGE_PIPS,
+            max_entry_slippage_pct_of_stop=env.MAX_ENTRY_SLIPPAGE_PCT_OF_STOP,
             order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC,
         ),
         mt5=Mt5Config(

@@ -16,13 +16,14 @@ Live-account adjustment:
       Set SPREAD_RISK_MULTIPLIER=0.0 to disable (demo / tight ECN accounts).
 
   [3] Pessimistic entry — lot size is calculated against the worst possible fill
-      price within the configured slippage limit (max_entry_slippage_pips).
+      price within the configured slippage limit (max_entry_slippage_pct_of_stop).
       This ensures the position never risks more than the target amount even if
       the broker fills at the edge of the allowed slippage band.
 
-      Example (SHORT):  entry=0.70193, SL=0.70300, max_slip=3 pips
-                        pessimistic_entry = 0.70193 - 0.00003 = 0.70163
-                        raw_sl_distance   = 0.70300 - 0.70163 = 0.00137  (vs 0.00107)
+      Example (SHORT):  entry=0.70193, SL=0.70300, stop_dist=0.00107, max_slip=20%
+                        max_slip_price    = 0.00107 * 0.20 = 0.000214
+                        pessimistic_entry = 0.70193 - 0.000214 = 0.701716
+                        raw_sl_distance   = 0.70300 - 0.701716 = 0.001284  (vs 0.00107)
                         Result: smaller lot size — actual risk stays ≤ target
                                 regardless of where within the slip band fill lands.
 """
@@ -74,7 +75,9 @@ class TradePlanner:
         # For LONG:  a higher fill widens the SL distance.
         # Using the worst-case entry guarantees actual risk ≤ target risk amount
         # regardless of where within the slippage band the broker fills.
-        max_slip_price = self._exec.max_entry_slippage_pips * pip
+        # max_slip is expressed as a fraction of the stop distance — dynamic per trade.
+        stop_distance = abs(signal.entry_price - signal.stop_loss)
+        max_slip_price = self._exec.max_entry_slippage_pct_of_stop * stop_distance
         pessimistic_entry = (
             signal.entry_price - max_slip_price
             if signal.direction == SignalDirection.SHORT
@@ -144,7 +147,7 @@ class TradePlanner:
                 "risk_pct": round(risk_pct, 2),
                 "spread_pips": round(spread_price / pip, 1) if spread_price else 0,
                 "surcharge_pips": round(spread_surcharge / pip, 1),
-                "slippage_buffer_pips": self._exec.max_entry_slippage_pips,
+                "slippage_buffer_pct_of_stop": round(self._exec.max_entry_slippage_pct_of_stop * 100, 1),
                 "raw_sl_pips": round(
                     abs(signal.entry_price - signal.stop_loss) / pip, 1
                 ),
