@@ -31,7 +31,6 @@ Live-account adjustment:
 from __future__ import annotations
 
 import logging
-import math
 
 from config.config import RiskConfig, ExecutionConfig
 from interfaces.position import AccountInfo, SymbolInfo
@@ -105,15 +104,11 @@ class TradePlanner:
             min_lot=self._risk.min_lot_size,
         )
 
-        # ── TP1 / TP2 lot split ───────────────────────────────────────────
-        tp1_frac = self._exec.tp1_partial_close_percent / 100.0
-        tp1_lot = _floor_to_step(calc.lot_size * tp1_frac, symbol_info.lot_step)
-        tp2_lot = _floor_to_step(calc.lot_size - tp1_lot, symbol_info.lot_step)
-
-        # ── Static TP1 level — entry ± (tp1_rr_multiple × stop_distance) ──
-        # Overrides signal.tp1.  The partial always fires at a predictable R
-        # multiple so after partial + BE the remaining lots run to signal.tp2
-        # completely risk-free.
+        # ── Static TP1 level — stored for poll-based BE detection ─────────
+        # When the position manager poll sees price cross TP1 it moves the
+        # broker SL to entry (breakeven) so the trade runs to TP2 risk-free.
+        # TP1 = entry ± (tp1_rr_multiple × raw_stop_distance), always relative
+        # to the actual stop distance, independent of signal.tp1.
         raw_stop_distance = abs(signal.entry_price - signal.stop_loss)
         tp1_offset = self._exec.tp1_rr_multiple * raw_stop_distance
         static_tp1 = (
@@ -132,12 +127,10 @@ class TradePlanner:
             symbol=signal.symbol,
             side=side,
             entry_price=signal.entry_price,
-            stop_loss=signal.stop_loss,  # real SL on broker — not sizing SL
+            stop_loss=signal.stop_loss,
             tp1=static_tp1,
             tp2=signal.tp2,
             lot_size=calc.lot_size,
-            tp1_lot_size=tp1_lot,
-            tp2_lot_size=tp2_lot,
             risk_amount=calc.risk_amount,
             risk_percent=risk_pct,
             risk_reward_ratio=signal.risk_reward_ratio,
@@ -153,8 +146,6 @@ class TradePlanner:
                 "side": side.value,
                 "risk_mode": calc.risk_mode.value,
                 "lot_size": calc.lot_size,
-                "tp1_lots": tp1_lot,
-                "tp2_lots": tp2_lot,
                 "risk_amount": round(calc.risk_amount, 2),
                 "risk_pct": round(risk_pct, 2),
                 "spread_pips": round(spread_price / pip, 1) if spread_price else 0,
@@ -172,7 +163,3 @@ class TradePlanner:
             },
         )
         return plan
-
-
-def _floor_to_step(value: float, step: float) -> float:
-    return round(math.floor(value / step) * step, 2)

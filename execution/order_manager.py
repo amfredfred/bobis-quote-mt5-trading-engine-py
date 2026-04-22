@@ -59,8 +59,7 @@ class OrderManager:
         """
         Submit a market order for *plan*.
 
-        tp_override: use a specific TP instead of plan.tp2 (e.g. plan.tp1 for the
-                     TP1 leg so the broker closes it automatically at TP1).
+        tp_override: explicit broker TP level — defaults to plan.tp2 when None.
 
         Returns (ticket, executed_price, filled_volume).
         Raises on exhausted retries or unacceptable slippage.

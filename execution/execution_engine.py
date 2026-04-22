@@ -21,7 +21,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 import logging
-import math
 import threading
 import uuid
 
@@ -147,82 +146,34 @@ class ExecutionEngine:
 
         self._bus.emit(Events.TRADE_PLANNED, {"plan": plan})
 
-        # ── 4. Execute two legs — TP1 lot at broker tp1, TP2 lot at broker tp2 ─
-        # Both TPs sit at the broker so they trigger even if our server goes offline.
-        # TP1 leg: broker auto-closes at tp1.  TP2 leg: broker auto-closes at tp2/sl.
-        # PositionManager only needs to detect TP1 leg gone → move TP2 leg SL to BE.
+        # ── 4. Execute single order — full lot, broker TP at tp2 ───────────
+        # TP1 level is stored in plan.tp1 and monitored by the position manager
+        # poll; when price reaches TP1 the poll moves the broker SL to breakeven
+        # so the trade runs the rest of the way to TP2 risk-free.
         broker_send_ms = now_ms()  # [5] broker round-trip start
 
-        # ── 4a. TP1 leg ────────────────────────────────────────────────────
-        tp1_plan = replace(plan, lot_size=plan.tp1_lot_size)
         try:
-            ticket_a, executed_price, filled_a = self._orders.execute_market_order(
-                tp1_plan, symbol_info, tp_override=plan.tp1, comment='TP1 leg'
+            ticket, executed_price, filled_volume = self._orders.execute_market_order(
+                plan, symbol_info, tp_override=plan.tp2, comment="xcom"
             )
         except Exception as exc:
             with self._pending_lock:
                 self._release(signal.symbol)
-            logger.exception("ExecutionEngine: TP1 leg execution failed")
+            logger.exception("ExecutionEngine: order execution failed")
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
-            metrics.increment("orders.rejected")
-            return None
-
-        # ── 4b. TP2 leg ────────────────────────────────────────────────────
-        tp2_plan = replace(plan, lot_size=plan.tp2_lot_size)
-        try:
-            ticket_b, _, filled_b = self._orders.execute_market_order(
-                tp2_plan, symbol_info, tp_override=plan.tp2, comment='TP2 leg'
-            )
-        except Exception as exc:
-            # TP1 leg is live at the broker — operator must handle TP2 leg manually
-            logger.exception(
-                "ExecutionEngine: TP2 leg execution failed — TP1 leg is live at broker",
-                extra={"tp1_ticket": ticket_a, "symbol": plan.symbol},
-            )
-            with self._pending_lock:
-                self._release(signal.symbol)
-            self._bus.emit(
-                Events.TRADE_ERROR,
-                {"signal": signal, "reason": f"tp2_leg_failed:{exc}"},
-            )
             metrics.increment("orders.rejected")
             return None
 
         broker_round_trip_ms = now_ms() - broker_send_ms  # [5]
 
-        # ── 5. Reconcile actual fills ──────────────────────────────────────
-        filled_volume = filled_a + filled_b
-        tp1_lot = filled_a
-        tp2_lot = filled_b
-
-        if filled_a != plan.tp1_lot_size or filled_b != plan.tp2_lot_size:
-            logger.info(
-                "Lot split from actual fills",
-                extra={
-                    "planned_tp1_lots": plan.tp1_lot_size,
-                    "filled_tp1_lots":  filled_a,
-                    "planned_tp2_lots": plan.tp2_lot_size,
-                    "filled_tp2_lots":  filled_b,
-                },
-            )
-
-        # ── 5b. Shift TP1, TP2 and SL to actual fill price ─────────────────
-        # The signal's levels are calculated relative to signal.entry_price.
-        # If the broker fills at a different price, all levels must shift by
-        # the same amount so R:R and risk amount remain correct.
-        #
-        # Example (LONG, 23 pip adverse slippage):
-        #   signal entry = 1.38296, fill = 1.38526  → slippage = +0.00230
-        #   signal TP1   = 1.38436 → adjusted TP1 = 1.38666
-        #   signal TP2   = 1.38576 → adjusted TP2 = 1.38806
-        #   signal SL    = 1.38243 → adjusted SL  = 1.38473
-        #
-        # Without this adjustment TP1 sits 9 pips BELOW the actual entry,
-        # triggering an immediate loss-close the moment price dips at all.
-        fill_slippage = executed_price - plan.entry_price  # signed; +ve = worse for BUY
-        adjusted_tp1 = plan.tp1        + fill_slippage
-        adjusted_tp2 = plan.tp2        + fill_slippage
-        adjusted_sl  = plan.stop_loss  + fill_slippage
+        # ── 5. Shift TP1, TP2 and SL to actual fill price ─────────────────
+        # Signal levels are relative to signal.entry_price. If the broker fills
+        # at a different price, all levels shift by the same amount so R:R and
+        # risk amount remain correct.
+        fill_slippage = executed_price - plan.entry_price  # signed
+        adjusted_tp1 = plan.tp1       + fill_slippage
+        adjusted_tp2 = plan.tp2       + fill_slippage
+        adjusted_sl  = plan.stop_loss + fill_slippage
 
         if abs(fill_slippage) > 1e-8:
             logger.info(
@@ -240,28 +191,9 @@ class ExecutionEngine:
                     "adjusted_tp2":  round(adjusted_tp2, 5),
                 },
             )
-
-        plan = replace(
-            plan,
-            lot_size=filled_volume,
-            tp1_lot_size=tp1_lot,
-            tp2_lot_size=tp2_lot,
-            entry_price=executed_price,
-            tp1=adjusted_tp1,
-            tp2=adjusted_tp2,
-            stop_loss=adjusted_sl,
-        )
-
-        # ── 5c. Sync adjusted levels to broker if slippage shifted them ────
-        # The orders were placed with the plan-time tp1/tp2/sl. If the fill
-        # price slipped, those broker levels are now wrong — update both legs.
-        if abs(fill_slippage) > 1e-8:
             try:
                 self._orders._orders.modify_position(
-                    ticket=ticket_a, sl=adjusted_sl, tp=adjusted_tp1
-                )
-                self._orders._orders.modify_position(
-                    ticket=ticket_b, sl=adjusted_sl, tp=adjusted_tp2
+                    ticket=ticket, sl=adjusted_sl, tp=adjusted_tp2
                 )
             except Exception:
                 logger.warning(
@@ -269,6 +201,15 @@ class ExecutionEngine:
                     "levels may drift; position manager will still track correctly",
                     extra={"symbol": signal.symbol, "slippage": round(fill_slippage, 5)},
                 )
+
+        plan = replace(
+            plan,
+            lot_size=filled_volume,
+            entry_price=executed_price,
+            tp1=adjusted_tp1,
+            tp2=adjusted_tp2,
+            stop_loss=adjusted_sl,
+        )
 
         # ── 6. Create Trade record ─────────────────────────────────────────
         ts = now_ms()
@@ -279,8 +220,7 @@ class ExecutionEngine:
             side=plan.side,
             status=TradeStatus.OPEN,
             plan=plan,
-            entry_ticket=ticket_a,   # TP1 leg — broker closes at tp1
-            tp2_ticket=ticket_b,     # TP2 leg — broker closes at tp2 or sl
+            entry_ticket=ticket,
             entry_price=executed_price,
             entry_lots=filled_volume,
             current_lots=filled_volume,
@@ -303,11 +243,8 @@ class ExecutionEngine:
         metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
         # ── [5] Latency metrics ────────────────────────────────────────────
-        # signal_to_trade_ms: full pipeline from when signal was triggered
-        # (uses signal.triggered_at so candle-to-trade latency is captured,
-        #  not just queue-to-trade)
         signal_to_trade_ms = ts - (signal.triggered_at or pipeline_start_ms)
-        pipeline_only_ms = ts - pipeline_start_ms  # queue dequeue → trade opened
+        pipeline_only_ms = ts - pipeline_start_ms
 
         metrics.set_gauge("latency.signal_to_trade_ms", signal_to_trade_ms)
         metrics.set_gauge("latency.pipeline_ms", pipeline_only_ms)
@@ -318,18 +255,11 @@ class ExecutionEngine:
             extra={
                 "trade_id": trade.id,
                 "signal_id": signal.id,
-                "ticket_tp1": ticket_a,
-                "ticket_tp2": ticket_b,
+                "ticket": ticket,
                 "entry_price": executed_price,
-                "planned_lots": (
-                    plan.lot_size
-                    if filled_volume == plan.lot_size
-                    else f"{plan.lot_size} (plan)"
-                ),
                 "filled_lots": filled_volume,
-                "tp1_lots": tp1_lot,
-                "tp2_lots": tp2_lot,
-                # [5] latency breakdown
+                "tp1": round(plan.tp1, 5),
+                "tp2": round(plan.tp2, 5),
                 "signal_to_trade_ms": signal_to_trade_ms,
                 "pipeline_ms": pipeline_only_ms,
                 "broker_round_trip_ms": broker_round_trip_ms,
@@ -347,6 +277,7 @@ def _split_lots(
     lot_step: float,
 ) -> tuple[float, float]:
     """Split *total* lots into (tp1, tp2) floored to lot_step."""
+    import math
     tp1 = math.floor(total * (tp1_pct / 100.0) / lot_step) * lot_step
     tp2 = math.floor((total - tp1) / lot_step) * lot_step
     return round(tp1, 2), round(tp2, 2)

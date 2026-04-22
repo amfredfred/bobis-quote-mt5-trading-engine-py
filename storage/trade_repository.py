@@ -63,7 +63,7 @@ class TradeRepository:
 
     def load_by_ticket(self, ticket: int) -> Optional[Trade]:
         for trade in self.load_open_trades():
-            if trade.entry_ticket == ticket or trade.tp2_ticket == ticket:
+            if trade.entry_ticket == ticket:
                 return trade
         return None
 
@@ -108,8 +108,6 @@ class TradeRepository:
                 tp1=row.get("tp1") or 0.0,
                 tp2=row.get("tp2") or 0.0,
                 lot_size=plan_d.get("lotSize", 0.0),
-                tp1_lot_size=plan_d.get("tp1LotSize", 0.0),
-                tp2_lot_size=plan_d.get("tp2LotSize", 0.0),
                 risk_amount=plan_d.get("riskAmount", 0.0),
                 risk_percent=plan_d.get("riskPercent", 0.0),
                 risk_reward_ratio=plan_d.get("riskRewardRatio", 0.0),
@@ -125,7 +123,6 @@ class TradeRepository:
                 status=TradeStatus(row["status"]),
                 plan=plan,
                 entry_ticket=row.get("entry_ticket"),
-                tp2_ticket=row.get("tp2_ticket"),
                 entry_price=row.get("entry_price"),
                 entry_lots=row.get("entry_lots") or 0.0,
                 current_lots=row.get("current_lots") or 0.0,

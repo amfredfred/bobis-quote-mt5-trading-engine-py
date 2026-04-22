@@ -42,11 +42,9 @@ class TradePlan:
     side: OrderSide
     entry_price: float
     stop_loss: float
-    tp1: float
+    tp1: float   # stored for poll-based BE detection; broker TP is always tp2
     tp2: float
     lot_size: float
-    tp1_lot_size: float  # lots to close at TP1
-    tp2_lot_size: float  # lots to close at TP2
     risk_amount: float  # in account currency
     risk_percent: float
     risk_reward_ratio: float
@@ -63,8 +61,7 @@ class Trade:
     status: TradeStatus
     plan: TradePlan
 
-    entry_ticket: Optional[int] = None  # MT5 ticket — TP1 leg
-    tp2_ticket: Optional[int] = None   # MT5 ticket — TP2 leg (broker-side TP)
+    entry_ticket: Optional[int] = None  # MT5 ticket — single order per signal
     entry_price: Optional[float] = None
     entry_lots: float = 0.0
     current_lots: float = 0.0
@@ -99,7 +96,6 @@ class Trade:
             "side": self.side.value,
             "status": self.status.value,
             "entryTicket": self.entry_ticket,
-            "tp2Ticket": self.tp2_ticket,
             "entryPrice": self.entry_price,
             "entryLots": self.entry_lots,
             "currentLots": self.current_lots,
@@ -124,8 +120,6 @@ class Trade:
             "plan": {
                 "signalId": self.plan.signal_id,
                 "lotSize": self.plan.lot_size,
-                "tp1LotSize": self.plan.tp1_lot_size,
-                "tp2LotSize": self.plan.tp2_lot_size,
                 "riskAmount": self.plan.risk_amount,
                 "riskPercent": self.plan.risk_percent,
                 "riskRewardRatio": self.plan.risk_reward_ratio,

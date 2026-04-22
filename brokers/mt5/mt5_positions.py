@@ -238,7 +238,7 @@ class Mt5Positions:
         """
         Look up the close price of a deal by its position ticket in MT5 history.
 
-        Used as a fallback in position_manager when _last_tp2_price has no entry
+        Used as a fallback in position_manager when _last_price has no entry
         for a ticket (e.g. the engine restarted while the position was open and
         the broker closed it during the downtime).  Returns None if no matching
         OUT deal is found.

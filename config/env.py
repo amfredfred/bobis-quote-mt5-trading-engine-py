@@ -88,13 +88,8 @@ class Env:
     ENGINE_TIMEZONE: str = _optional("ENGINE_TIMEZONE", "Africa/Lagos")
 
     # ── Execution ──────────────────────────────────────────────────────────
-    TP1_PARTIAL_CLOSE_PERCENT: float = _optional_float(
-        "TP1_PARTIAL_CLOSE_PERCENT", 50.0
-    )
-    # Static R-multiple at which the partial close fires.
-    # Overrides signal.tp1 — TP1 is always entry ± (TP1_RR_MULTIPLE × stop_distance).
-    # After the partial + BE move the remaining position runs to signal.tp2 risk-free.
-    # Must be ≤ MIN_RR_RATIO so TP1 never exceeds TP2.
+    # R-multiple at which the poll detects TP1 and moves SL to breakeven.
+    # TP1 = entry ± (TP1_RR_MULTIPLE × stop_distance). Must be ≤ MIN_RR_RATIO.
     TP1_RR_MULTIPLE: float = _optional_float("TP1_RR_MULTIPLE", 1.5)
     MOVE_SL_TO_BE_ON_TP1: bool = _optional_bool("MOVE_SL_TO_BE_ON_TP1", True)
     NO_HEDGING: bool = _optional_bool("NO_HEDGING", True)

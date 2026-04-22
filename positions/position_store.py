@@ -66,14 +66,7 @@ class PositionStore:
     def get_by_ticket(self, ticket: int) -> Optional[Trade]:
         with self._lock:
             for t in self._trades.values():
-                if t.entry_ticket == ticket or t.tp2_ticket == ticket:
-                    return copy.copy(t)
-            return None
-
-    def get_by_tp2_ticket(self, ticket: int) -> Optional[Trade]:
-        with self._lock:
-            for t in self._trades.values():
-                if t.tp2_ticket == ticket:
+                if t.entry_ticket == ticket:
                     return copy.copy(t)
             return None
 
