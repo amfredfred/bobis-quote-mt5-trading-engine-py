@@ -109,6 +109,18 @@ class TradePlanner:
         tp1_frac = self._exec.tp1_partial_close_percent / 100.0
         tp1_lot = _floor_to_step(calc.lot_size * tp1_frac, symbol_info.lot_step)
         tp2_lot = _floor_to_step(calc.lot_size - tp1_lot, symbol_info.lot_step)
+
+        # ── Static TP1 level — entry ± (tp1_rr_multiple × stop_distance) ──
+        # Overrides signal.tp1.  The partial always fires at a predictable R
+        # multiple so after partial + BE the remaining lots run to signal.tp2
+        # completely risk-free.
+        raw_stop_distance = abs(signal.entry_price - signal.stop_loss)
+        tp1_offset = self._exec.tp1_rr_multiple * raw_stop_distance
+        static_tp1 = (
+            signal.entry_price + tp1_offset
+            if signal.direction == SignalDirection.LONG
+            else signal.entry_price - tp1_offset
+        )
         risk_pct = (
             (calc.risk_amount / account_info.balance) * 100.0
             if account_info.balance
@@ -121,7 +133,7 @@ class TradePlanner:
             side=side,
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,  # real SL on broker — not sizing SL
-            tp1=signal.tp1,
+            tp1=static_tp1,
             tp2=signal.tp2,
             lot_size=calc.lot_size,
             tp1_lot_size=tp1_lot,
@@ -153,6 +165,10 @@ class TradePlanner:
                 ),
                 "pessimistic_sl_pips": round(raw_sl_distance / pip, 1),
                 "adjusted_sl_pips": round(adjusted_sl_distance / pip, 1),
+                "tp1_rr_multiple": self._exec.tp1_rr_multiple,
+                "signal_tp1": signal.tp1,
+                "static_tp1": round(static_tp1, 5),
+                "tp1_overridden": signal.tp1 != static_tp1,
             },
         )
         return plan

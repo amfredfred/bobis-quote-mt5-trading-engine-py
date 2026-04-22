@@ -54,6 +54,11 @@ class RiskConfig:
 @dataclass(frozen=True)
 class ExecutionConfig:
     tp1_partial_close_percent: float
+    # R-multiple at which the partial close fires.  Replaces signal.tp1 so the
+    # level is always entry ± (tp1_rr_multiple × stop_distance), independent of
+    # whatever the signal engine computed.  After partial + BE the rest runs to
+    # signal.tp2 risk-free.
+    tp1_rr_multiple: float
     move_sl_to_be_on_tp1: bool
     slippage: int
     magic: int
@@ -138,6 +143,7 @@ def _build() -> AppConfig:
         ),
         execution=ExecutionConfig(
             tp1_partial_close_percent=env.TP1_PARTIAL_CLOSE_PERCENT,
+            tp1_rr_multiple=env.TP1_RR_MULTIPLE,
             move_sl_to_be_on_tp1=env.MOVE_SL_TO_BE_ON_TP1,
             slippage=env.MT5_SLIPPAGE,
             magic=env.MT5_MAGIC,
