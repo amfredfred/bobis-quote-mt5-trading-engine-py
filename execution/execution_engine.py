@@ -157,7 +157,7 @@ class ExecutionEngine:
         tp1_plan = replace(plan, lot_size=plan.tp1_lot_size)
         try:
             ticket_a, executed_price, filled_a = self._orders.execute_market_order(
-                tp1_plan, symbol_info, tp_override=plan.tp1
+                tp1_plan, symbol_info, tp_override=plan.tp1, comment='TP1 leg'
             )
         except Exception as exc:
             with self._pending_lock:
@@ -171,7 +171,7 @@ class ExecutionEngine:
         tp2_plan = replace(plan, lot_size=plan.tp2_lot_size)
         try:
             ticket_b, _, filled_b = self._orders.execute_market_order(
-                tp2_plan, symbol_info, tp_override=plan.tp2
+                tp2_plan, symbol_info, tp_override=plan.tp2, comment='TP2 leg'
             )
         except Exception as exc:
             # TP1 leg is live at the broker — operator must handle TP2 leg manually

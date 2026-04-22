@@ -37,6 +37,7 @@ _RETRYABLE_RETCODES = {
 # e.g. 0.20 means adverse slippage must be < 20% of (entry − SL).
 # This is fully dynamic — no per-symbol overrides needed.
 
+
 class OrderManager:
     def __init__(
         self,
@@ -53,6 +54,7 @@ class OrderManager:
         plan: TradePlan,
         symbol_info: SymbolInfo,
         tp_override: float | None = None,
+        comment: str | None = "_market_order",
     ) -> tuple[int, float, float]:
         """
         Submit a market order for *plan*.
@@ -94,7 +96,7 @@ class OrderManager:
                     tp=tp,
                     slippage=self._cfg.slippage,
                     magic=self._cfg.magic,
-                    comment=self._cfg.comment,
+                    comment=f"{comment}_{self._cfg.comment}",
                     filling_mode=symbol_info.order_filling_mode,
                 )
 
@@ -163,8 +165,12 @@ class OrderManager:
             # A 0.20 reading means the fill ate 20% of the budgeted risk before the
             # trade even started. Threshold from config (e.g. 0.20 = 20%).
             raw_slippage = abs(result.executed_price - plan.entry_price)
-            slippage_pct_of_stop = (raw_slippage / stop_distance) if stop_distance > 0 else 0.0
-            is_worse = not _is_better_price(plan.side, result.executed_price, plan.entry_price)
+            slippage_pct_of_stop = (
+                (raw_slippage / stop_distance) if stop_distance > 0 else 0.0
+            )
+            is_worse = not _is_better_price(
+                plan.side, result.executed_price, plan.entry_price
+            )
 
             if raw_slippage > 0:
                 direction = "worse" if is_worse else "better"
@@ -172,12 +178,14 @@ class OrderManager:
                     logger.warning(
                         "Fill slippage exceeds limit — closing position",
                         extra={
-                            "symbol":               plan.symbol,
-                            "slippage_pct_of_stop": round(slippage_pct_of_stop * 100, 1),
-                            "max_pct_of_stop":      round(max_slip_pct_of_stop * 100, 1),
-                            "stop_distance":        round(stop_distance, 5),
-                            "direction":            direction,
-                            "ticket":               result.ticket,
+                            "symbol": plan.symbol,
+                            "slippage_pct_of_stop": round(
+                                slippage_pct_of_stop * 100, 1
+                            ),
+                            "max_pct_of_stop": round(max_slip_pct_of_stop * 100, 1),
+                            "stop_distance": round(stop_distance, 5),
+                            "direction": direction,
+                            "ticket": result.ticket,
                         },
                     )
                     metrics.increment("orders.slippage_rejected")
@@ -198,19 +206,21 @@ class OrderManager:
                         logger.warning(
                             "Fill slippage exceeds limit — accepting fill (CLOSE_ON_SLIPPAGE_EXCEED=false)",
                             extra={
-                                "symbol":               plan.symbol,
-                                "slippage_pct_of_stop": round(slippage_pct_of_stop * 100, 1),
-                                "max_pct_of_stop":      round(max_slip_pct_of_stop * 100, 1),
-                                "ticket":               result.ticket,
+                                "symbol": plan.symbol,
+                                "slippage_pct_of_stop": round(
+                                    slippage_pct_of_stop * 100, 1
+                                ),
+                                "max_pct_of_stop": round(max_slip_pct_of_stop * 100, 1),
+                                "ticket": result.ticket,
                             },
                         )
                 logger.info(
                     "Fill slippage within limit",
                     extra={
-                        "symbol":               plan.symbol,
+                        "symbol": plan.symbol,
                         "slippage_pct_of_stop": round(slippage_pct_of_stop * 100, 1),
-                        "max_pct_of_stop":      round(max_slip_pct_of_stop * 100, 1),
-                        "direction":            direction,
+                        "max_pct_of_stop": round(max_slip_pct_of_stop * 100, 1),
+                        "direction": direction,
                     },
                 )
 
@@ -222,7 +232,12 @@ class OrderManager:
     # ── Emergency close ───────────────────────────────────────────────────────
 
     def _emergency_close(
-        self, ticket: int, plan: TradePlan, order_type: int, price: float, symbol_info: SymbolInfo
+        self,
+        ticket: int,
+        plan: TradePlan,
+        order_type: int,
+        price: float,
+        symbol_info: SymbolInfo,
     ) -> None:
         try:
             tick = self._positions.get_current_tick(plan.symbol)
@@ -253,9 +268,6 @@ class OrderManager:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-
 
 
 def _widen_stops(
