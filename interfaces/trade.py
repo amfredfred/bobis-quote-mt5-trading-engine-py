@@ -63,7 +63,8 @@ class Trade:
     status: TradeStatus
     plan: TradePlan
 
-    entry_ticket: Optional[int] = None  # MT5 ticket
+    entry_ticket: Optional[int] = None  # MT5 ticket — TP1 leg
+    tp2_ticket: Optional[int] = None   # MT5 ticket — TP2 leg (broker-side TP)
     entry_price: Optional[float] = None
     entry_lots: float = 0.0
     current_lots: float = 0.0
@@ -98,6 +99,7 @@ class Trade:
             "side": self.side.value,
             "status": self.status.value,
             "entryTicket": self.entry_ticket,
+            "tp2Ticket": self.tp2_ticket,
             "entryPrice": self.entry_price,
             "entryLots": self.entry_lots,
             "currentLots": self.current_lots,

@@ -145,39 +145,62 @@ class ExecutionEngine:
 
         self._bus.emit(Events.TRADE_PLANNED, {"plan": plan})
 
-        # ── 4. Execute order ───────────────────────────────────────────────
+        # ── 4. Execute two legs — TP1 lot at broker tp1, TP2 lot at broker tp2 ─
+        # Both TPs sit at the broker so they trigger even if our server goes offline.
+        # TP1 leg: broker auto-closes at tp1.  TP2 leg: broker auto-closes at tp2/sl.
+        # PositionManager only needs to detect TP1 leg gone → move TP2 leg SL to BE.
         broker_send_ms = now_ms()  # [5] broker round-trip start
+
+        # ── 4a. TP1 leg ────────────────────────────────────────────────────
+        tp1_plan = replace(plan, lot_size=plan.tp1_lot_size)
         try:
-            ticket, executed_price, filled_volume = self._orders.execute_market_order(
-                plan, symbol_info
+            ticket_a, executed_price, filled_a = self._orders.execute_market_order(
+                tp1_plan, symbol_info, tp_override=plan.tp1
             )
         except Exception as exc:
             with self._pending_lock:
                 self._release(signal.symbol)
-            logger.exception("ExecutionEngine: order execution failed")
+            logger.exception("ExecutionEngine: TP1 leg execution failed")
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
+            metrics.increment("orders.rejected")
+            return None
+
+        # ── 4b. TP2 leg ────────────────────────────────────────────────────
+        tp2_plan = replace(plan, lot_size=plan.tp2_lot_size)
+        try:
+            ticket_b, _, filled_b = self._orders.execute_market_order(
+                tp2_plan, symbol_info, tp_override=plan.tp2
+            )
+        except Exception as exc:
+            # TP1 leg is live at the broker — operator must handle TP2 leg manually
+            logger.exception(
+                "ExecutionEngine: TP2 leg execution failed — TP1 leg is live at broker",
+                extra={"tp1_ticket": ticket_a, "symbol": plan.symbol},
+            )
+            with self._pending_lock:
+                self._release(signal.symbol)
+            self._bus.emit(
+                Events.TRADE_ERROR,
+                {"signal": signal, "reason": f"tp2_leg_failed:{exc}"},
+            )
             metrics.increment("orders.rejected")
             return None
 
         broker_round_trip_ms = now_ms() - broker_send_ms  # [5]
 
-        # ── 5. Recalculate TP lots from actual filled volume  [4] ──────────
-        # On a live broker, filled_volume may be less than plan.lot_size.
-        # Recompute the TP1/TP2 split so position manager closes correct amounts.
-        tp1_lot, tp2_lot = _split_lots(
-            filled_volume,
-            self._cfg.tp1_partial_close_percent,
-            symbol_info.lot_step,
-        )
+        # ── 5. Reconcile actual fills ──────────────────────────────────────
+        filled_volume = filled_a + filled_b
+        tp1_lot = filled_a
+        tp2_lot = filled_b
 
-        if filled_volume != plan.lot_size:
+        if filled_a != plan.tp1_lot_size or filled_b != plan.tp2_lot_size:
             logger.info(
-                "Lot split recalculated from actual fill",
+                "Lot split from actual fills",
                 extra={
-                    "planned_lots": plan.lot_size,
-                    "filled_lots": filled_volume,
-                    "tp1_lots": tp1_lot,
-                    "tp2_lots": tp2_lot,
+                    "planned_tp1_lots": plan.tp1_lot_size,
+                    "filled_tp1_lots":  filled_a,
+                    "planned_tp2_lots": plan.tp2_lot_size,
+                    "filled_tp2_lots":  filled_b,
                 },
             )
 
@@ -228,6 +251,24 @@ class ExecutionEngine:
             stop_loss=adjusted_sl,
         )
 
+        # ── 5c. Sync adjusted levels to broker if slippage shifted them ────
+        # The orders were placed with the plan-time tp1/tp2/sl. If the fill
+        # price slipped, those broker levels are now wrong — update both legs.
+        if abs(fill_slippage) > 1e-8:
+            try:
+                self._orders._orders.modify_position(
+                    ticket=ticket_a, sl=adjusted_sl, tp=adjusted_tp1
+                )
+                self._orders._orders.modify_position(
+                    ticket=ticket_b, sl=adjusted_sl, tp=adjusted_tp2
+                )
+            except Exception:
+                logger.warning(
+                    "ExecutionEngine: could not sync slippage-adjusted levels to broker — "
+                    "levels may drift; position manager will still track correctly",
+                    extra={"symbol": signal.symbol, "slippage": round(fill_slippage, 5)},
+                )
+
         # ── 6. Create Trade record ─────────────────────────────────────────
         ts = now_ms()
         trade = Trade(
@@ -237,7 +278,8 @@ class ExecutionEngine:
             side=plan.side,
             status=TradeStatus.OPEN,
             plan=plan,
-            entry_ticket=ticket,
+            entry_ticket=ticket_a,   # TP1 leg — broker closes at tp1
+            tp2_ticket=ticket_b,     # TP2 leg — broker closes at tp2 or sl
             entry_price=executed_price,
             entry_lots=filled_volume,
             current_lots=filled_volume,
@@ -275,7 +317,8 @@ class ExecutionEngine:
             extra={
                 "trade_id": trade.id,
                 "signal_id": signal.id,
-                "ticket": ticket,
+                "ticket_tp1": ticket_a,
+                "ticket_tp2": ticket_b,
                 "entry_price": executed_price,
                 "planned_lots": (
                     plan.lot_size

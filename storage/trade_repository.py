@@ -63,7 +63,7 @@ class TradeRepository:
 
     def load_by_ticket(self, ticket: int) -> Optional[Trade]:
         for trade in self.load_open_trades():
-            if trade.entry_ticket == ticket:
+            if trade.entry_ticket == ticket or trade.tp2_ticket == ticket:
                 return trade
         return None
 
@@ -125,6 +125,7 @@ class TradeRepository:
                 status=TradeStatus(row["status"]),
                 plan=plan,
                 entry_ticket=row.get("entry_ticket"),
+                tp2_ticket=row.get("tp2_ticket"),
                 entry_price=row.get("entry_price"),
                 entry_lots=row.get("entry_lots") or 0.0,
                 current_lots=row.get("current_lots") or 0.0,

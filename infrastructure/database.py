@@ -45,6 +45,7 @@ class Database:
                     side            TEXT NOT NULL,
                     status          TEXT NOT NULL,
                     entry_ticket    INTEGER,
+                    tp2_ticket      INTEGER,
                     entry_price     REAL,
                     entry_lots      REAL,
                     current_lots    REAL,
@@ -115,6 +116,15 @@ class Database:
                 );
             """
             )
+        # ── Migration: add tp2_ticket for existing DBs ────────────────────
+        with self._connect() as conn:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()}
+            if "tp2_ticket" not in cols:
+                conn.execute("ALTER TABLE trades ADD COLUMN tp2_ticket INTEGER")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_trades_tp2_ticket ON trades(tp2_ticket)"
+                )
+                logger.info("Database migrated: added tp2_ticket column")
         logger.info("Database initialised", extra={"path": self._path})
 
     # ── Trades ────────────────────────────────────────────────────────────
@@ -147,7 +157,7 @@ class Database:
                 """
                 INSERT INTO trades (
                     id, signal_id, symbol, side, status,
-                    entry_ticket, entry_price, entry_lots, current_lots,
+                    entry_ticket, tp2_ticket, entry_price, entry_lots, current_lots,
                     stop_loss, tp1, tp2,
                     tp1_hit, tp1_hit_at, tp2_hit, tp2_hit_at,
                     sl_hit, sl_hit_at,
@@ -155,7 +165,7 @@ class Database:
                     plan_json, opened_at, closed_at, created_at, updated_at
                 ) VALUES (
                     :id, :signal_id, :symbol, :side, :status,
-                    :entry_ticket, :entry_price, :entry_lots, :current_lots,
+                    :entry_ticket, :tp2_ticket, :entry_price, :entry_lots, :current_lots,
                     :stop_loss, :tp1, :tp2,
                     :tp1_hit, :tp1_hit_at, :tp2_hit, :tp2_hit_at,
                     :sl_hit, :sl_hit_at,
@@ -164,6 +174,7 @@ class Database:
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     status       = excluded.status,
+                    tp2_ticket   = excluded.tp2_ticket,
                     current_lots = excluded.current_lots,
                     stop_loss    = excluded.stop_loss,
                     tp1_hit      = excluded.tp1_hit,
@@ -186,8 +197,8 @@ class Database:
                     "side": trade.side.value,
                     "status": trade.status.value,
                     "entry_ticket": trade.entry_ticket,
+                    "tp2_ticket": trade.tp2_ticket,
                     "entry_price": trade.entry_price,
-                    "entry_lots": trade.entry_lots,
                     "current_lots": trade.current_lots,
                     "stop_loss": trade.stop_loss,
                     "tp1": trade.tp1,

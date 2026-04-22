@@ -52,9 +52,13 @@ class OrderManager:
         self,
         plan: TradePlan,
         symbol_info: SymbolInfo,
+        tp_override: float | None = None,
     ) -> tuple[int, float, float]:
         """
         Submit a market order for *plan*.
+
+        tp_override: use a specific TP instead of plan.tp2 (e.g. plan.tp1 for the
+                     TP1 leg so the broker closes it automatically at TP1).
 
         Returns (ticket, executed_price, filled_volume).
         Raises on exhausted retries or unacceptable slippage.
@@ -70,7 +74,7 @@ class OrderManager:
 
         # Working SL/TP — may be adjusted on INVALID_STOPS retry
         sl = plan.stop_loss
-        tp = plan.tp2
+        tp = tp_override if tp_override is not None else plan.tp2
 
         for attempt in range(1, max_attempts + 1):
 

@@ -55,6 +55,8 @@ class PositionManager:
         self._thread: Optional[threading.Thread] = None
         self._stub_miss_count: dict[str, int] = {}  # trade_id → consecutive poll misses
         self._stub_miss_limit = 3  # evict stub after this many consecutive misses
+        # Last price seen for tp2 leg — used to classify SL vs TP2 on disappearance
+        self._last_tp2_price: dict[int, float] = {}  # tp2_ticket → price
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -104,23 +106,41 @@ class PositionManager:
             logger.info("PositionManager.hydrate_from_broker: no open positions in MT5")
             return
 
-        # Load saved records to restore plan data MT5 doesn't store
+        # Load saved records to restore plan data MT5 doesn't store.
+        # Index by both entry_ticket (TP1 leg) and tp2_ticket (TP2 leg) so we
+        # can match whichever leg(s) are still open after a server outage.
         saved_by_ticket: dict[int, Trade] = {}
         try:
             for t in self._repo.load_open_trades():
                 if t.entry_ticket is not None:
                     saved_by_ticket[t.entry_ticket] = t
+                if t.tp2_ticket is not None:
+                    saved_by_ticket[t.tp2_ticket] = t
         except Exception:
             logger.warning(
                 "PositionManager.hydrate_from_broker: could not read saved records — "
                 "using broker data only, tp1/tp2 management unavailable for existing positions"
             )
 
+        seen_trade_ids: set[str] = set()
         trades: list[Trade] = []
         for pos in broker_positions:
             if pos.ticket in saved_by_ticket:
                 trade = saved_by_ticket[pos.ticket]
-                # Sync live broker fields in case they changed while engine was down
+                if trade.id in seen_trade_ids:
+                    # Already added via the other leg — just sync live fields
+                    continue
+                seen_trade_ids.add(trade.id)
+                # If TP1 leg is gone but TP2 leg is in MT5, mark tp1 as already hit
+                if pos.ticket == trade.tp2_ticket and not trade.tp1_hit:
+                    trade.tp1_hit = True
+                    trade.tp1_hit_at = pos.open_time
+                    trade.status = __import__('interfaces.trade', fromlist=['TradeStatus']).TradeStatus.PARTIALLY_CLOSED
+                    logger.info(
+                        "PositionManager.hydrate_from_broker: TP1 leg absent — "
+                        "marking tp1_hit=True for trade %s",
+                        trade.id,
+                    )
                 trade.current_lots = pos.lots
                 trade.stop_loss = pos.stop_loss
             else:
@@ -132,7 +152,9 @@ class PositionManager:
                     pos.ticket,
                     pos.symbol,
                 )
-            trades.append(trade)
+            if trade.id not in seen_trade_ids:
+                seen_trade_ids.add(trade.id)
+                trades.append(trade)
 
         self._store.hydrate(trades)
         logger.info(
@@ -172,12 +194,18 @@ class PositionManager:
         broker_tickets = {p.ticket for p in broker_positions}
         broker_by_ticket = {p.ticket: p for p in broker_positions}
         store_trades = self._store.get_open_trades()
-        store_tickets = {t.entry_ticket for t in store_trades if t.entry_ticket}
+
+        # All tickets we already track (both legs)
+        tracked_tickets: set[int] = set()
+        for t in store_trades:
+            if t.entry_ticket:
+                tracked_tickets.add(t.entry_ticket)
+            if t.tp2_ticket:
+                tracked_tickets.add(t.tp2_ticket)
 
         # ── Reconcile: positions in MT5 but missing from store ────────────
         for pos in broker_positions:
-            if pos.ticket not in store_tickets:
-                # Opened externally or store/repo drifted — add stub immediately
+            if pos.ticket not in tracked_tickets:
                 saved = self._repo.load_by_ticket(pos.ticket)
                 trade = saved if saved else _trade_stub_from_position(pos)
                 if not saved:
@@ -193,120 +221,81 @@ class PositionManager:
         # ── Refresh store_trades after reconcile ──────────────────────────
         open_trades = self._store.get_open_trades()
 
+        # ── Update last known price for TP2 legs ──────────────────────────
+        for trade in open_trades:
+            if trade.tp2_ticket and trade.tp2_ticket in broker_by_ticket:
+                self._last_tp2_price[trade.tp2_ticket] = broker_by_ticket[trade.tp2_ticket].current_price
+
         # ── Lifecycle management ──────────────────────────────────────────
         for trade in open_trades:
             if trade.entry_ticket is None:
                 continue
 
-            if trade.entry_ticket not in broker_tickets:
-                if trade.id.startswith("STUB_"):
+            is_stub = trade.id.startswith("STUB_")
+            has_tp2_leg = trade.tp2_ticket is not None
+
+            # ── TP1 leg disappeared → broker closed it at TP1 ─────────────
+            if not trade.tp1_hit and trade.entry_ticket not in broker_tickets:
+                if is_stub:
                     misses = self._stub_miss_count.get(trade.id, 0) + 1
                     self._stub_miss_count[trade.id] = misses
                     if misses < self._stub_miss_limit:
                         logger.warning(
-                            "PositionManager: STUB ticket=%s not in broker — miss %d/%d, will reconcile",
-                            trade.entry_ticket,
-                            misses,
-                            self._stub_miss_limit,
-                            extra={"trade_id": trade.id},
+                            "PositionManager: STUB ticket=%s not in broker — miss %d/%d",
+                            trade.entry_ticket, misses, self._stub_miss_limit,
                         )
                         continue
-                    # Confirmed gone after consecutive misses — treat as closed
-                    logger.warning(
-                        "PositionManager: STUB ticket=%s absent for %d consecutive polls — treating as closed",
-                        trade.entry_ticket,
-                        misses,
-                        extra={"trade_id": trade.id},
-                    )
                     self._stub_miss_count.pop(trade.id, None)
-                self._handle_position_gone(trade)
+                    # Stub with no tp2_ticket — treat as fully closed
+                    if not has_tp2_leg:
+                        self._handle_position_gone(trade)
+                        continue
+
+                if has_tp2_leg:
+                    # TP1 leg closed by broker — move TP2 leg SL to BE
+                    self._handle_tp1_broker_closed(trade)
+                else:
+                    # No split — legacy single-leg or stub — gone means closed
+                    self._handle_position_gone(trade)
                 continue
 
-            # Position is present in broker — reset miss counter if it was accumulating
+            # ── TP2 leg disappeared → broker closed it (TP2 or SL) ────────
+            if has_tp2_leg and not trade.tp2_hit and trade.tp2_ticket not in broker_tickets:
+                self._handle_tp2_broker_closed(trade)
+                continue
+
+            # ── Both legs present — reset miss counter ─────────────────────
             self._stub_miss_count.pop(trade.id, None)
-
-            broker_pos = broker_by_ticket[trade.entry_ticket]
-            current = broker_pos.current_price
-            is_buy = trade.side.value == "BUY"
-
-            if not trade.tp1_hit:
-                if current >= trade.tp1 if is_buy else current <= trade.tp1:
-                    self._handle_tp1(trade, current, broker_pos)
-                    continue
-
-            if trade.tp1_hit and not trade.tp2_hit:
-                if current >= trade.tp2 if is_buy else current <= trade.tp2:
-                    self._handle_tp2(trade, current)
 
     # ── Trade lifecycle handlers ──────────────────────────────────────────────
 
-    def _handle_tp1(self, trade: Trade, price: float, broker_pos) -> None:
-        # ── Profit gate — never close at a loss ───────────────────────────
-        # Compares close price against actual fill price (trade.entry_price),
-        # not the signal price. Protects against unadjusted levels, broker
-        # requotes, and any geometry that slipped through validation.
-        is_buy = trade.side.value == "BUY"
-        in_profit = price > trade.entry_price if is_buy else price < trade.entry_price
-        if not in_profit:
-            logger.warning(
-                "TP1 skipped — close price not in profit relative to fill",
-                extra={
-                    "trade_id":    trade.id,
-                    "symbol":      trade.symbol,
-                    "side":        trade.side.value,
-                    "entry_price": trade.entry_price,
-                    "tp1_level":   trade.tp1,
-                    "current":     price,
-                },
-            )
-            return
-
+    def _handle_tp1_broker_closed(self, trade: Trade) -> None:
+        """
+        TP1 leg (entry_ticket) has disappeared from MT5 — the broker closed it
+        at the TP1 price we set.  Our job here is purely state bookkeeping and
+        moving the TP2 leg SL to breakeven.  No partial-close order needed.
+        """
         logger.info(
-            "TP1 hit",
-            extra={"trade_id": trade.id, "symbol": trade.symbol, "price": price},
+            "TP1 leg closed by broker",
+            extra={"trade_id": trade.id, "symbol": trade.symbol, "ticket": trade.entry_ticket},
         )
-        mt5_close_ok = False
-        try:
-            side_type = (
-                Mt5OrderType.BUY if trade.side.value == "BUY" else Mt5OrderType.SELL
-            )
-            symbol_info = self._mt5_pos.get_symbol_info(trade.symbol)
-            tick = self._mt5_pos.get_current_tick(trade.symbol)
-            close_price = tick.bid if trade.side.value == "BUY" else tick.ask
-            self._mt5_orders.close_position(
-                ticket=trade.entry_ticket,
-                symbol=trade.symbol,
-                side=side_type,
-                volume=trade.plan.tp1_lot_size,
-                price=close_price,
-                slippage=self._cfg.slippage,
-                magic=self._cfg.magic,
-                comment=f"TP1 {self._cfg.comment}",
-                filling_mode=symbol_info.order_filling_mode,
-            )
-            mt5_close_ok = True
-            if self._cfg.move_sl_to_be_on_tp1:
+
+        be_ok = False
+        if self._cfg.move_sl_to_be_on_tp1 and trade.tp2_ticket:
+            try:
                 self._mt5_orders.modify_position(
-                    ticket=trade.entry_ticket,
+                    ticket=trade.tp2_ticket,
                     sl=trade.entry_price,
                     tp=trade.tp2,
                 )
-        except Exception:
-            logger.exception(
-                "PositionManager: TP1 action failed", extra={"trade_id": trade.id}
-            )
+                be_ok = True
+            except Exception:
+                logger.exception(
+                    "PositionManager: BE move failed for TP2 leg — SL stays at original",
+                    extra={"trade_id": trade.id, "tp2_ticket": trade.tp2_ticket},
+                )
 
-        if not mt5_close_ok:
-            # Do not update store — TP1 will be retried next poll cycle
-            logger.warning(
-                "PositionManager: TP1 close failed — will retry next poll",
-                extra={"trade_id": trade.id},
-            )
-            return
-
-        new_sl = (
-            trade.entry_price if self._cfg.move_sl_to_be_on_tp1 else trade.stop_loss
-        )
+        new_sl = trade.entry_price if be_ok else trade.stop_loss
         updated = self._store.update(
             trade.id,
             tp1_hit=True,
@@ -320,49 +309,64 @@ class PositionManager:
             self._bus.emit(Events.TRADE_TP1_HIT, updated)
             metrics.increment("trades.tp1_hit")
 
-    def _handle_tp2(self, trade: Trade, price: float) -> None:
-        # ── Profit gate ───────────────────────────────────────────────────
+    def _handle_tp2_broker_closed(self, trade: Trade) -> None:
+        """
+        TP2 leg (tp2_ticket) has disappeared from MT5 — broker hit either TP2
+        or SL.  Use last known price to classify the close reason.
+        """
+        last_price = self._last_tp2_price.pop(trade.tp2_ticket, None)
         is_buy = trade.side.value == "BUY"
-        in_profit = price > trade.entry_price if is_buy else price < trade.entry_price
-        if not in_profit:
-            logger.warning(
-                "TP2 skipped — close price not in profit relative to fill",
-                extra={
-                    "trade_id":    trade.id,
-                    "symbol":      trade.symbol,
-                    "side":        trade.side.value,
-                    "entry_price": trade.entry_price,
-                    "tp2_level":   trade.tp2,
-                    "current":     price,
-                },
-            )
-            return
 
-        logger.info(
-            "TP2 hit",
-            extra={"trade_id": trade.id, "symbol": trade.symbol, "price": price},
-        )
+        if last_price is not None:
+            tp2_hit = (last_price >= trade.tp2) if is_buy else (last_price <= trade.tp2)
+            sl_hit  = (last_price <= trade.stop_loss) if is_buy else (last_price >= trade.stop_loss)
+        else:
+            # No price history — can't distinguish; default to SL_HIT (conservative)
+            tp2_hit = False
+            sl_hit  = True
+
+        close_reason = CloseReason.TP2_HIT if tp2_hit else CloseReason.SL_HIT
+        close_price  = last_price or trade.tp2
+
         realized_rr = (
-            abs(price - trade.entry_price) / abs(trade.entry_price - trade.stop_loss)
+            abs(close_price - trade.entry_price) / abs(trade.entry_price - trade.stop_loss)
             if trade.entry_price and trade.stop_loss != trade.entry_price
             else 0.0
         )
+
+        logger.info(
+            "TP2 leg closed by broker",
+            extra={
+                "trade_id":     trade.id,
+                "symbol":       trade.symbol,
+                "tp2_ticket":   trade.tp2_ticket,
+                "close_reason": close_reason.value,
+                "close_price":  close_price,
+                "realized_rr":  round(realized_rr, 2),
+            },
+        )
+
         updated = self._store.update(
             trade.id,
-            tp2_hit=True,
-            tp2_hit_at=now_ms(),
+            tp2_hit=tp2_hit,
+            tp2_hit_at=now_ms() if tp2_hit else None,
+            sl_hit=sl_hit,
+            sl_hit_at=now_ms() if sl_hit else None,
             status=TradeStatus.CLOSED,
-            close_reason=CloseReason.TP2_HIT,
-            close_price=price,
+            close_reason=close_reason,
+            close_price=close_price,
             closed_at=now_ms(),
             realized_rr=realized_rr,
         )
         if updated:
             self._store.remove(updated.id)
             self._repo.delete(updated.id)
-            self._bus.emit(Events.TRADE_TP2_HIT, updated)
+            if tp2_hit:
+                self._bus.emit(Events.TRADE_TP2_HIT, updated)
+            else:
+                self._bus.emit(Events.TRADE_SL_HIT, updated)
             self._bus.emit(Events.TRADE_CLOSED, updated)
-            metrics.increment("trades.tp2_hit")
+            metrics.increment("trades.tp2_hit" if tp2_hit else "trades.sl_hit")
             metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
     def _handle_position_gone(self, trade: Trade) -> None:
