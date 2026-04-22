@@ -233,3 +233,31 @@ class Mt5Positions:
     def get_current_tick(self, symbol: str):
         self._client.ensure_connected()
         return self._mt5.symbol_info_tick(symbol)
+
+    def get_deal_price_for_ticket(self, ticket: int) -> Optional[float]:
+        """
+        Look up the close price of a deal by its position ticket in MT5 history.
+
+        Used as a fallback in position_manager when _last_tp2_price has no entry
+        for a ticket (e.g. the engine restarted while the position was open and
+        the broker closed it during the downtime).  Returns None if no matching
+        OUT deal is found.
+        """
+        self._client.ensure_connected()
+        try:
+            # Search the last 7 days — wide enough to catch any recent close.
+            to_dt   = datetime.now(timezone.utc).replace(tzinfo=None)
+            from_dt = to_dt - timedelta(days=7)
+
+            deals = self._mt5.history_deals_get(from_dt, to_dt) or []
+            for d in deals:
+                # position_id on a deal == the ticket of the position it closed.
+                if (
+                    getattr(d, "position_id", None) == ticket
+                    and d.entry == self._client.mt5.DEAL_ENTRY_OUT
+                ):
+                    return float(d.price)
+            return None
+        except Exception as exc:
+            logger.warning("Mt5Positions.get_deal_price_for_ticket ticket=%s: %s", ticket, exc)
+            return None
