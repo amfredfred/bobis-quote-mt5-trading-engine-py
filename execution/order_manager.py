@@ -181,18 +181,29 @@ class OrderManager:
                         },
                     )
                     metrics.increment("orders.slippage_rejected")
-                    # self._emergency_close(
-                    #     result.ticket,
-                    #     plan,
-                    #     order_type,
-                    #     result.executed_price,
-                    #     symbol_info,
-                    # )
-                    raise RuntimeError(
-                        f"Slippage {slippage_pct_of_stop * 100:.1f}% of stop distance "
-                        f"exceeds limit {max_slip_pct_of_stop * 100:.1f}% "
-                        f"({direction}) — position closed"
-                    )
+                    if self._cfg.close_on_slippage_exceed:
+                        self._emergency_close(
+                            result.ticket,
+                            plan,
+                            order_type,
+                            result.executed_price,
+                            symbol_info,
+                        )
+                        raise RuntimeError(
+                            f"Slippage {slippage_pct_of_stop * 100:.1f}% of stop distance "
+                            f"exceeds limit {max_slip_pct_of_stop * 100:.1f}% "
+                            f"({direction}) — position closed"
+                        )
+                    else:
+                        logger.warning(
+                            "Fill slippage exceeds limit — accepting fill (CLOSE_ON_SLIPPAGE_EXCEED=false)",
+                            extra={
+                                "symbol":               plan.symbol,
+                                "slippage_pct_of_stop": round(slippage_pct_of_stop * 100, 1),
+                                "max_pct_of_stop":      round(max_slip_pct_of_stop * 100, 1),
+                                "ticket":               result.ticket,
+                            },
+                        )
                 logger.info(
                     "Fill slippage within limit",
                     extra={

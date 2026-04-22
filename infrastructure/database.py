@@ -199,6 +199,7 @@ class Database:
                     "entry_ticket": trade.entry_ticket,
                     "tp2_ticket": trade.tp2_ticket,
                     "entry_price": trade.entry_price,
+                    "entry_lots": trade.entry_lots,
                     "current_lots": trade.current_lots,
                     "stop_loss": trade.stop_loss,
                     "tp1": trade.tp1,

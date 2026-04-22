@@ -100,8 +100,11 @@ class Env:
     NO_HEDGING: bool = _optional_bool("NO_HEDGING", True)
 
     # ── Live trading protections ───────────────────────────────────────────
-    # [1] Max acceptable slippage AFTER a fill — warns and cancels if exceeded
+    # [1] Max acceptable slippage AFTER a fill
+    #     CLOSE_ON_SLIPPAGE_EXCEED=true  → emergency-close and reject the fill
+    #     CLOSE_ON_SLIPPAGE_EXCEED=false → warn only, accept the fill and continue
     MAX_ENTRY_SLIPPAGE_PCT_OF_STOP: float = _optional_float("MAX_ENTRY_SLIPPAGE_PCT_OF_STOP", 0.20)  # 20% of stop distance
+    CLOSE_ON_SLIPPAGE_EXCEED: bool = _optional_bool("CLOSE_ON_SLIPPAGE_EXCEED", False)
 
     # [2] Spread surcharge — adds N × spread to the SL distance before sizing
     #     0.0 = disabled (demo behaviour)  |  1.0 = add full spread to risk

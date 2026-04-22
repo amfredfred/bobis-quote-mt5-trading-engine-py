@@ -18,6 +18,8 @@ Latency tracking  [5]:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import logging
 import math
 import threading
@@ -239,7 +241,6 @@ class ExecutionEngine:
                 },
             )
 
-        from dataclasses import replace
         plan = replace(
             plan,
             lot_size=filled_volume,

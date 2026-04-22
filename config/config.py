@@ -66,6 +66,7 @@ class ExecutionConfig:
     spread_risk_multiplier: float
     order_retry_count: int
     max_entry_slippage_pct_of_stop: float  # e.g. 0.20 = reject if slip > 20% of stop distance
+    close_on_slippage_exceed: bool         # true = emergency-close; false = warn and continue
     order_retry_delay_sec: int
 
 
@@ -151,6 +152,7 @@ def _build() -> AppConfig:
             spread_risk_multiplier=env.SPREAD_RISK_MULTIPLIER,
             order_retry_count=env.ORDER_RETRY_COUNT,
             max_entry_slippage_pct_of_stop=env.MAX_ENTRY_SLIPPAGE_PCT_OF_STOP,
+            close_on_slippage_exceed=env.CLOSE_ON_SLIPPAGE_EXCEED,
             order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC,
         ),
         mt5=Mt5Config(
