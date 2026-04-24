@@ -96,6 +96,10 @@ class Env:
     #     CLOSE_ON_SLIPPAGE_EXCEED=false → warn only, accept the fill and continue
     MAX_ENTRY_SLIPPAGE_PCT_OF_STOP: float = _optional_float("MAX_ENTRY_SLIPPAGE_PCT_OF_STOP", 0.20)  # 20% of stop distance
     CLOSE_ON_SLIPPAGE_EXCEED: bool = _optional_bool("CLOSE_ON_SLIPPAGE_EXCEED", False)
+    # When False (default): SL/TP levels are held at the signal's original analysis
+    # prices after a slippage fill.  When True: all levels shift by the fill delta
+    # so stop distance and R:R are preserved relative to the actual fill price.
+    USE_SLIPPAGE_ADJUSTED_LEVELS: bool = _optional_bool("USE_SLIPPAGE_ADJUSTED_LEVELS", False)
 
     # [2] Spread surcharge — adds N × spread to the SL distance before sizing
     #     0.0 = disabled (demo behaviour)  |  1.0 = add full spread to risk

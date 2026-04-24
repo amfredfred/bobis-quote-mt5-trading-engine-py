@@ -173,20 +173,22 @@ class ExecutionEngine:
 
         broker_round_trip_ms = now_ms() - broker_send_ms  # [5]
 
-        # ── 5. Shift TP1, TP2 and SL to actual fill price ─────────────────
-        # Signal levels are relative to signal.entry_price. If the broker fills
-        # at a different price, all levels shift by the same amount so R:R and
-        # risk amount remain correct.
+        # ── 5. Resolve final SL/TP levels ─────────────────────────────────
+        # fill_slippage is signed: positive = filled above signal entry (buy
+        # paid more / sell received more), negative = filled below.
         fill_slippage = executed_price - plan.entry_price  # signed
-        adjusted_tp1 = plan.tp1       + fill_slippage
-        adjusted_tp2 = plan.tp2       + fill_slippage
-        adjusted_sl  = plan.stop_loss + fill_slippage
 
-        if abs(fill_slippage) > 1e-8:
+        if abs(fill_slippage) > 1e-8 and self._cfg.adjust_levels_on_slippage:
+            # USE_SLIPPAGE_ADJUSTED_LEVELS=true: shift every level by the fill
+            # delta so stop distance and R:R are preserved relative to fill.
+            # Note: this moves SL/TP away from their analysis-derived prices.
+            adjusted_sl  = plan.stop_loss + fill_slippage
+            adjusted_tp1 = plan.tp1       + fill_slippage
+            adjusted_tp2 = plan.tp2       + fill_slippage
             logger.info(
-                "Plan levels shifted to actual fill price",
+                "Plan levels shifted to actual fill price (USE_SLIPPAGE_ADJUSTED_LEVELS=true)",
                 extra={
-                    "symbol": signal.symbol,
+                    "symbol":        signal.symbol,
                     "signal_entry":  plan.entry_price,
                     "fill_price":    executed_price,
                     "fill_slippage": round(fill_slippage, 5),
@@ -207,6 +209,26 @@ class ExecutionEngine:
                     "ExecutionEngine: could not sync slippage-adjusted levels to broker — "
                     "levels may drift; position manager will still track correctly",
                     extra={"symbol": signal.symbol, "slippage": round(fill_slippage, 5)},
+                )
+        else:
+            # Default (USE_SLIPPAGE_ADJUSTED_LEVELS=false): hold levels at the
+            # signal's original analysis-derived prices.  The fill price is
+            # recorded for PnL tracking only — SL/TP are not moved.
+            adjusted_sl  = plan.stop_loss
+            adjusted_tp1 = plan.tp1
+            adjusted_tp2 = plan.tp2
+            if abs(fill_slippage) > 1e-8:
+                logger.info(
+                    "Fill slippage recorded — levels held at analysis prices",
+                    extra={
+                        "symbol":        signal.symbol,
+                        "signal_entry":  plan.entry_price,
+                        "fill_price":    executed_price,
+                        "fill_slippage": round(fill_slippage, 5),
+                        "sl":            plan.stop_loss,
+                        "tp1":           plan.tp1,
+                        "tp2":           plan.tp2,
+                    },
                 )
 
         plan = replace(

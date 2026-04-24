@@ -55,6 +55,12 @@ class ExecutionConfig:
     max_entry_slippage_pct_of_stop: float  # e.g. 0.20 = reject if slip > 20% of stop distance
     close_on_slippage_exceed: bool         # true = emergency-close; false = warn and continue
     order_retry_delay_sec: int
+    # When False (default): SL/TP levels stay at the signal's analysis-derived prices
+    # regardless of fill slippage.  The fill price is recorded for PnL tracking but
+    # levels are never moved.
+    # When True: all levels shift by the fill-vs-signal difference so that stop
+    # distance and R:R are preserved relative to the actual fill price.
+    adjust_levels_on_slippage: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,6 +117,7 @@ def _build() -> AppConfig:
             max_entry_slippage_pct_of_stop=env.MAX_ENTRY_SLIPPAGE_PCT_OF_STOP,
             close_on_slippage_exceed=env.CLOSE_ON_SLIPPAGE_EXCEED,
             order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC,
+            adjust_levels_on_slippage=env.USE_SLIPPAGE_ADJUSTED_LEVELS,
         ),
         mt5=Mt5Config(
             login=env.MT5_LOGIN,
