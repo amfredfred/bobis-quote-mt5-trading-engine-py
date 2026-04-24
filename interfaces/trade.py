@@ -42,7 +42,7 @@ class TradePlan:
     side: OrderSide
     entry_price: float
     stop_loss: float
-    tp1: float   # stored for poll-based BE detection; broker TP is always tp2
+    tp1: float   # price level for poll-based TP1 detection
     tp2: float
     lot_size: float
     risk_amount: float  # in account currency
@@ -50,6 +50,8 @@ class TradePlan:
     risk_reward_ratio: float
     planned_at: int
     signal: "InboundSignal"
+    # Lots to partially close when price hits tp1.  0.0 = disabled.
+    tp1_lots: float = 0.0
 
 
 @dataclass
@@ -65,6 +67,8 @@ class Trade:
     entry_price: Optional[float] = None
     entry_lots: float = 0.0
     current_lots: float = 0.0
+    # Pre-calculated lots for the TP1 partial close; mirrors plan.tp1_lots.
+    tp1_lots: float = 0.0
 
     stop_loss: float = 0.0
     tp1: float = 0.0
@@ -72,6 +76,7 @@ class Trade:
 
     tp1_hit: bool = False
     tp1_hit_at: Optional[int] = None
+    tp1_close_price: Optional[float] = None  # actual fill price of the TP1 partial close
     tp2_hit: bool = False
     tp2_hit_at: Optional[int] = None
     sl_hit: bool = False
@@ -99,11 +104,13 @@ class Trade:
             "entryPrice": self.entry_price,
             "entryLots": self.entry_lots,
             "currentLots": self.current_lots,
+            "tp1Lots": self.tp1_lots,
             "stopLoss": self.stop_loss,
             "tp1": self.tp1,
             "tp2": self.tp2,
             "tp1Hit": self.tp1_hit,
             "tp1HitAt": self.tp1_hit_at,
+            "tp1ClosePrice": self.tp1_close_price,
             "tp2Hit": self.tp2_hit,
             "tp2HitAt": self.tp2_hit_at,
             "slHit": self.sl_hit,

@@ -240,16 +240,77 @@ class PositionManager:
     def _handle_tp1_price_reached(self, trade: Trade) -> None:
         """
         Poll detected that current price has crossed the TP1 level.
-        Move the broker SL to breakeven so the trade runs to TP2 risk-free.
-        No partial close — the full position stays open.
+
+        Step 1 — Partial close: if tp1_lots > 0, close that volume at market.
+        Step 2 — BE move: if MOVE_SL_TO_BE_ON_TP1 and the partial close
+                 succeeded, move the broker SL to entry so the remaining
+                 position runs to TP2 risk-free.
+
+        Moving SL to breakeven is only meaningful after taking profits —
+        the two actions are intentionally coupled in that order.
         """
         logger.info(
-            "TP1 price reached — moving SL to breakeven",
-            extra={"trade_id": trade.id, "symbol": trade.symbol, "ticket": trade.entry_ticket, "tp1": trade.tp1},
+            "TP1 price reached — processing partial close",
+            extra={
+                "trade_id": trade.id,
+                "symbol": trade.symbol,
+                "ticket": trade.entry_ticket,
+                "tp1": trade.tp1,
+                "tp1_lots": trade.tp1_lots,
+                "current_lots": trade.current_lots,
+            },
         )
 
+        # ── Step 1: Partial close ─────────────────────────────────────────
+        partial_closed = False
+        tp1_close_price: float | None = None
+
+        if trade.tp1_lots > 0 and trade.entry_ticket:
+            try:
+                symbol_info = self._mt5_pos.get_symbol_info(trade.symbol)
+                tick = self._mt5_pos.get_current_tick(trade.symbol)
+                if tick is None:
+                    raise RuntimeError(f"Cannot get tick for {trade.symbol}")
+
+                is_buy = trade.side.value == "BUY"
+                close_price = tick.bid if is_buy else tick.ask
+                order_type = (
+                    Mt5OrderType.BUY if is_buy else Mt5OrderType.SELL
+                )
+
+                self._mt5_orders.close_position(
+                    ticket=trade.entry_ticket,
+                    symbol=trade.symbol,
+                    side=order_type,
+                    volume=trade.tp1_lots,
+                    price=close_price,
+                    slippage=self._cfg.slippage,
+                    magic=self._cfg.magic,
+                    comment="tp1-partial",
+                    filling_mode=symbol_info.order_filling_mode,
+                )
+                tp1_close_price = close_price
+                partial_closed = True
+                logger.info(
+                    "TP1 partial close executed",
+                    extra={
+                        "trade_id": trade.id,
+                        "ticket": trade.entry_ticket,
+                        "tp1_lots_closed": trade.tp1_lots,
+                        "close_price": close_price,
+                        "remaining_lots": round(trade.current_lots - trade.tp1_lots, 2),
+                    },
+                )
+                metrics.increment("trades.tp1_partial_close")
+            except Exception:
+                logger.exception(
+                    "PositionManager: TP1 partial close failed — SL not moved",
+                    extra={"trade_id": trade.id, "ticket": trade.entry_ticket},
+                )
+
+        # ── Step 2: Move SL to breakeven (only after a successful partial close) ──
         be_ok = False
-        if self._cfg.move_sl_to_be_on_tp1 and trade.entry_ticket:
+        if self._cfg.move_sl_to_be_on_tp1 and partial_closed and trade.entry_ticket:
             try:
                 self._mt5_orders.modify_position(
                     ticket=trade.entry_ticket,
@@ -257,17 +318,37 @@ class PositionManager:
                     tp=trade.tp2,
                 )
                 be_ok = True
+                logger.info(
+                    "SL moved to breakeven after TP1 partial close",
+                    extra={
+                        "trade_id": trade.id,
+                        "ticket": trade.entry_ticket,
+                        "be_price": trade.entry_price,
+                    },
+                )
             except Exception:
                 logger.exception(
                     "PositionManager: BE move failed — SL stays at original",
                     extra={"trade_id": trade.id, "ticket": trade.entry_ticket},
                 )
 
+        # ── Step 3: Update in-memory store and persist ────────────────────
         new_sl = trade.entry_price if be_ok else trade.stop_loss
+        new_current_lots = (
+            round(trade.current_lots - trade.tp1_lots, 2)
+            if partial_closed
+            else trade.current_lots
+        )
+        from interfaces.trade import TradeStatus as _TS
+        new_status = _TS.PARTIALLY_CLOSED if partial_closed else trade.status
+
         updated = self._store.update(
             trade.id,
             tp1_hit=True,
             tp1_hit_at=now_ms(),
+            tp1_close_price=tp1_close_price,
+            current_lots=new_current_lots,
+            status=new_status,
             stop_loss=new_sl,
         )
         if updated:

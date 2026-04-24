@@ -224,6 +224,7 @@ class ExecutionEngine:
             entry_price=executed_price,
             entry_lots=filled_volume,
             current_lots=filled_volume,
+            tp1_lots=plan.tp1_lots,
             stop_loss=plan.stop_loss,
             tp1=plan.tp1,
             tp2=plan.tp2,
@@ -267,17 +268,3 @@ class ExecutionEngine:
         )
         return trade
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _split_lots(
-    total: float,
-    tp1_pct: float,
-    lot_step: float,
-) -> tuple[float, float]:
-    """Split *total* lots into (tp1, tp2) floored to lot_step."""
-    import math
-    tp1 = math.floor(total * (tp1_pct / 100.0) / lot_step) * lot_step
-    tp2 = math.floor((total - tp1) / lot_step) * lot_step
-    return round(tp1, 2), round(tp2, 2)

@@ -104,9 +104,10 @@ class TradePlanner:
             min_lot=self._risk.min_lot_size,
         )
 
-        # ── Static TP1 level — stored for poll-based BE detection ─────────
-        # When the position manager poll sees price cross TP1 it moves the
-        # broker SL to entry (breakeven) so the trade runs to TP2 risk-free.
+        # ── Static TP1 level — stored for poll-based partial-close detection ─
+        # When the position manager poll sees price cross TP1 it closes tp1_lots
+        # and (if configured) moves the broker SL to entry so the remaining
+        # position runs to TP2 risk-free.
         # TP1 = entry ± (tp1_rr_multiple × raw_stop_distance), always relative
         # to the actual stop distance, independent of signal.tp1.
         raw_stop_distance = abs(signal.entry_price - signal.stop_loss)
@@ -116,6 +117,40 @@ class TradePlanner:
             if signal.direction == SignalDirection.LONG
             else signal.entry_price - tp1_offset
         )
+
+        # ── TP1 partial-close lot size ─────────────────────────────────────
+        # Pre-calculate how many lots to close at TP1 so the poll handler
+        # doesn't need to re-derive it.  Floored to volume_step so the broker
+        # always accepts the volume.  0.0 means "no partial close".
+        #
+        # TP1 is only meaningful when the trade has room to reach it before
+        # TP2.  If the signal RRR <= TP1_RR_MULTIPLE there is no space between
+        # the TP1 level and the final target, so tp1_lots is forced to 0.
+        import math
+        trade_rr = (
+            abs(signal.tp2 - signal.entry_price) / raw_stop_distance
+            if raw_stop_distance > 0
+            else 0.0
+        )
+        volume_step = symbol_info.volume_step if symbol_info.volume_step else 0.01
+        # NOTE: the guard `trade_rr > tp1_rr_multiple` is load-bearing for the
+        # price level too.  Because static_tp1 = entry ± (tp1_rr_multiple × stop)
+        # and tp2 = entry ± (trade_rr × stop), this inequality guarantees
+        # static_tp1 is always strictly between entry and tp2.  Never remove
+        # the guard without also adding an explicit price-level clamp.
+        if self._exec.tp1_percentage > 0 and trade_rr > self._exec.tp1_rr_multiple:
+            raw_tp1_lots = calc.lot_size * (self._exec.tp1_percentage / 100.0)
+            tp1_lots = math.floor(raw_tp1_lots / volume_step) * volume_step
+            tp1_lots = round(tp1_lots, 2)
+            # Ensure at least one step and never consumes the full position
+            if tp1_lots < volume_step:
+                tp1_lots = 0.0
+            elif tp1_lots >= calc.lot_size:
+                tp1_lots = round(
+                    math.floor((calc.lot_size - volume_step) / volume_step) * volume_step, 2
+                )
+        else:
+            tp1_lots = 0.0
         risk_pct = (
             (calc.risk_amount / account_info.balance) * 100.0
             if account_info.balance
@@ -131,6 +166,7 @@ class TradePlanner:
             tp1=static_tp1,
             tp2=signal.tp2,
             lot_size=calc.lot_size,
+            tp1_lots=tp1_lots,
             risk_amount=calc.risk_amount,
             risk_percent=risk_pct,
             risk_reward_ratio=signal.risk_reward_ratio,
@@ -157,6 +193,10 @@ class TradePlanner:
                 "pessimistic_sl_pips": round(raw_sl_distance / pip, 1),
                 "adjusted_sl_pips": round(adjusted_sl_distance / pip, 1),
                 "tp1_rr_multiple": self._exec.tp1_rr_multiple,
+                "trade_rr": round(trade_rr, 2),
+                "tp1_eligible": trade_rr > self._exec.tp1_rr_multiple,
+                "tp1_percentage": self._exec.tp1_percentage,
+                "tp1_lots": tp1_lots,
                 "signal_tp1": signal.tp1,
                 "static_tp1": round(static_tp1, 5),
                 "tp1_overridden": signal.tp1 != static_tp1,

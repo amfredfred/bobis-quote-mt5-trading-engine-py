@@ -88,9 +88,13 @@ class Env:
     ENGINE_TIMEZONE: str = _optional("ENGINE_TIMEZONE", "Africa/Lagos")
 
     # ── Execution ──────────────────────────────────────────────────────────
-    # R-multiple at which the poll detects TP1 and moves SL to breakeven.
+    # R-multiple at which the poll detects TP1 and triggers the partial close.
     # TP1 = entry ± (TP1_RR_MULTIPLE × stop_distance). Must be ≤ MIN_RR_RATIO.
     TP1_RR_MULTIPLE: float = _optional_float("TP1_RR_MULTIPLE", 1.5)
+    # Percentage of entry_lots to close at TP1 (0 = disabled, 50 = close half).
+    TP1_PERCENTAGE: float = _optional_float("TP1_PERCENTAGE", 50.0)
+    # Move the broker SL to breakeven AFTER the TP1 partial close succeeds.
+    # Has no effect when TP1_PERCENTAGE=0 (no partial close means no BE move).
     MOVE_SL_TO_BE_ON_TP1: bool = _optional_bool("MOVE_SL_TO_BE_ON_TP1", True)
     NO_HEDGING: bool = _optional_bool("NO_HEDGING", True)
 

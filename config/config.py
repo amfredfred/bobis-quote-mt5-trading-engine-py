@@ -53,11 +53,14 @@ class RiskConfig:
 
 @dataclass(frozen=True)
 class ExecutionConfig:
-    # R-multiple at which poll-based TP1 detection fires a BE move.
+    # R-multiple at which poll-based TP1 detection fires the partial close.
     # TP1 is always entry ± (tp1_rr_multiple × stop_distance), independent of
-    # whatever the signal engine computed.  When price crosses TP1, the SL is
-    # moved to breakeven so the remaining position runs to TP2 risk-free.
+    # whatever the signal engine computed.
     tp1_rr_multiple: float
+    # Percentage of entry_lots to close when price hits TP1.
+    # 0 = no partial close; move_sl_to_be_on_tp1 has no effect when this is 0.
+    tp1_percentage: float
+    # Move SL to entry after a successful TP1 partial close.
     move_sl_to_be_on_tp1: bool
     slippage: int
     magic: int
@@ -143,6 +146,7 @@ def _build() -> AppConfig:
         ),
         execution=ExecutionConfig(
             tp1_rr_multiple=env.TP1_RR_MULTIPLE,
+            tp1_percentage=env.TP1_PERCENTAGE,
             move_sl_to_be_on_tp1=env.MOVE_SL_TO_BE_ON_TP1,
             slippage=env.MT5_SLIPPAGE,
             magic=env.MT5_MAGIC,
