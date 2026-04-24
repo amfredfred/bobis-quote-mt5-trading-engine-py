@@ -6,11 +6,9 @@ Each rule is a callable:  rule(ctx: RuleContext) -> RuleResult
 RuleContext carries everything a rule needs — no global state reads.
 Rules are composable: add to ALL_RULES without touching RiskEngine.
 
-Guard rules (new):
-    loss_guard_rule — delegates to LossTracker which covers all three guards:
-        Guard 1: consecutive streak  (MAX_CONSECUTIVE_LOSSES / PAUSE_AFTER_STREAK_H)
-        Guard 2: daily cap           (MAX_DAILY_LOSSES)
-        Guard 3: rolling window      (MAX_LOSSES_PER_WINDOW / LOSS_WINDOW_HOURS)
+Guard rules:
+    loss_guard_rule — delegates to LossTracker which tracks daily loss %:
+        When MAX_DAILY_LOSS_PERCENT is reached, trading is paused until midnight.
 
     If ctx.loss_tracker is None (backward compat / tests), guard rules pass.
 """
@@ -184,8 +182,8 @@ def loss_guard_rule(ctx: RuleContext) -> RuleResult:
     """
     Trade-count circuit breaker — all three guards in one call.
 
-    Delegates to LossTracker which maintains a combined paused_until
-    timestamp across streak, daily-cap, and rolling-window guards.
+    Delegates to LossTracker which sets paused_until to midnight when
+    the daily loss % limit is reached.
 
     Runs first in ALL_RULES so we skip all other checks (including the
     broker symbol_info call) when already paused.

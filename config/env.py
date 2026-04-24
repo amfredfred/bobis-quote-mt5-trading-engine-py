@@ -74,14 +74,6 @@ class Env:
     MIN_LOT_SIZE: float = _optional_float("MIN_LOT_SIZE", 0.01)
     SL_RATIO_THRESHOLD: float = _optional_float("SL_RATIO_THRESHOLD", 0.33)
 
-    # ── Trade-count circuit-breaker guards ─────────────────────────────────
-    # Single knob — all streak/window/daily-cap values are derived from this.
-    #   pause_after_streak_h  = N × 1.2   (e.g. 10 → 12 h)
-    #   max_daily_losses      = N          (e.g. 10 → 10 per day)
-    #   max_losses_per_window = N          (e.g. 10 → 10 in rolling window)
-    #   loss_window_hours     = N          (e.g. 10 → 10 h rolling window)
-    MAX_CONSECUTIVE_LOSSES: int = _optional_int("MAX_CONSECUTIVE_LOSSES", 3)
-
     # ─────────────────────────────────────────
     # TIMEZONE
     # ─────────────────────────────────────────

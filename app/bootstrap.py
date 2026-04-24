@@ -61,17 +61,6 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     # Hydrate position store
     container.position_manager.hydrate_from_broker()
 
-    # Load LossTracker from DB — restores today's closed trade history so
-    # guard state survives process restarts (a loss before restart still counts)
-    container.loss_tracker.load_today(container.trade_repo)
-    logger.info(
-        "LossTracker primed",
-        extra=container.loss_tracker.stats(),
-    )
-
-    # Wire LossTracker to receive every confirmed trade close
-    container.event_bus.on(Events.TRADE_CLOSED, container.loss_tracker.on_trade_closed)
-
     # Prime daily loss before first signal
     try:
         loss_pct = container.mt5_positions.get_daily_loss_pct(config.execution.magic)

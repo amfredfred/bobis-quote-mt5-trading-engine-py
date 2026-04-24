@@ -35,6 +35,9 @@ from positions.position_store import PositionStore
 from risk.risk_engine import RiskEngine
 from storage.trade_repository import TradeRepository
 from interfaces.signal_interface import InboundSignal
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from risk.loss_tracker import LossTracker
 from interfaces.trade import Trade, TradeStatus
 from utils.price_utils import normalise_lots
 from utils.time_utils import now_ms
@@ -53,6 +56,7 @@ class ExecutionEngine:
         trade_repo: TradeRepository,
         event_bus: EventBus,
         exec_config: ExecutionConfig,
+        loss_tracker: "LossTracker | None" = None,
     ) -> None:
         self._risk = risk_engine
         self._planner = trade_planner
@@ -65,10 +69,13 @@ class ExecutionEngine:
         self._pending: dict[str, int] = {}
         self._pending_lock = threading.Lock()
         self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
+        self._loss_tracker: "LossTracker | None" = loss_tracker
 
     def update_daily_loss(self, loss_pct: float) -> None:
         """Called by PositionManager on each poll cycle."""
         self._daily_loss_pct = loss_pct
+        if self._loss_tracker is not None:
+            self._loss_tracker.update_daily_loss_pct(loss_pct)
 
     def _pending_total(self) -> int:
         return sum(self._pending.values())

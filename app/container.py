@@ -66,12 +66,8 @@ def build_container(config: AppConfig) -> AppContainer:
 
     # ── Risk + execution ──────────────────────────────────────────────────
     loss_tracker = LossTracker(
-        max_consecutive  = config.risk.max_consecutive_losses,
-        pause_hours      = config.risk.pause_after_streak_h,
-        max_daily        = config.risk.max_daily_losses,
-        max_per_window   = config.risk.max_losses_per_window,
-        window_hours     = config.risk.loss_window_hours,
-        engine_tz        = config.engine_timezone,
+        max_daily_loss_pct = config.risk.max_daily_loss_percent,
+        engine_tz          = config.engine_timezone,
     )
     risk_engine = RiskEngine(config.risk, loss_tracker=loss_tracker)
     trade_planner = TradePlanner(config.risk, config.execution)
@@ -86,6 +82,7 @@ def build_container(config: AppConfig) -> AppContainer:
         trade_repo=trade_repo,
         event_bus=event_bus,
         exec_config=config.execution,
+        loss_tracker=loss_tracker,
     )
 
     # ── Position management ───────────────────────────────────────────────
