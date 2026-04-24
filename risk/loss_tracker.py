@@ -14,7 +14,9 @@ Why here and not just daily_loss_pct from MT5:
 Guards:
   Guard 1 — consecutive streak:
       Pause after MAX_CONSECUTIVE_LOSSES losing trades in a row.
-      Resets on any TP1/TP2 hit or at midnight in engine_timezone.
+      Resets ONLY on a TP1 or TP2 hit, or at midnight in engine_timezone.
+      MANUAL / EXPIRED / CLOSED_WHILE_DOWN closes do NOT reset the streak —
+      they are neutral: neither a loss nor a streak-breaker.
 
   Guard 2 — daily cap:
       Pause for the remainder of the session day after MAX_DAILY_LOSSES
@@ -25,9 +27,13 @@ Guards:
       within any rolling LOSS_WINDOW_HOURS period.
 
 State:
-  In-memory list of (closed_at_ms, is_loss) tuples, populated at startup
-  from TradeRepository (today's trades only) and updated by EventBus
-  subscriptions on TRADE_CLOSED / TRADE_SL_HIT.
+  In-memory list of (closed_at_ms, CloseReason | None) tuples, populated
+  at startup from TradeRepository (today's trades only) and updated by
+  EventBus subscriptions on TRADE_CLOSED / TRADE_SL_HIT.
+
+  Stores the actual CloseReason (not just a bool) so the consecutive-streak
+  logic can correctly distinguish wins (TP1/TP2 → reset streak) from
+  neutral outcomes (MANUAL → preserve streak).
 
   Survives restarts: the DB load on startup reconstructs today's state.
   Between restarts: in-memory only — no separate file written.
@@ -50,7 +56,9 @@ from interfaces.trade import CloseReason, TradeStatus
 
 logger = logging.getLogger(__name__)
 
-# Close reasons that count as a loss for guard purposes
+# ── Close-reason classification ───────────────────────────────────────────────
+
+# Reasons that increment the loss counters (streak + daily + window).
 _LOSS_REASONS = frozenset({
     CloseReason.SL_HIT,
     CloseReason.INVALIDATED,
@@ -58,11 +66,20 @@ _LOSS_REASONS = frozenset({
     CloseReason.ERROR,
 })
 
-# Wins / neutrals that reset the consecutive streak
+# Reasons that reset the consecutive streak (genuine wins).
+# Everything else is neutral — it neither counts as a loss nor breaks the streak.
 _WIN_REASONS = frozenset({
     CloseReason.TP1_HIT,
     CloseReason.TP2_HIT,
 })
+
+
+def _is_loss(reason: CloseReason | None) -> bool:
+    return reason in _LOSS_REASONS
+
+
+def _is_win(reason: CloseReason | None) -> bool:
+    return reason in _WIN_REASONS
 
 
 def _now_ms() -> int:
@@ -111,9 +128,11 @@ class LossTracker:
         self._tz            = engine_tz
         self._lock          = threading.Lock()
 
-        # Each entry: (closed_at_ms: int, is_loss: bool)
-        self._history:      list[tuple[int, bool]] = []
-        self._paused_until: int                    = 0
+        # Each entry: (closed_at_ms: int, reason: CloseReason | None)
+        # Storing the actual reason (not just a bool) lets the streak logic
+        # distinguish wins (reset streak) from neutral closes (preserve streak).
+        self._history:      list[tuple[int, CloseReason | None]] = []
+        self._paused_until: int                                   = 0
 
     # ── Startup hydration ──────────────────────────────────────────────────
 
@@ -128,7 +147,7 @@ class LossTracker:
             logger.warning("LossTracker: could not load trades from DB: %s", exc)
             return
 
-        today   = _today(self._tz)
+        today     = _today(self._tz)
         day_start = _day_start_ms(today, self._tz)
         day_end   = _day_end_ms(today, self._tz)
 
@@ -143,8 +162,7 @@ class LossTracker:
         with self._lock:
             self._history.clear()
             for t in today_closed:
-                is_loss = t.close_reason in _LOSS_REASONS
-                self._history.append((t.closed_at, is_loss))
+                self._history.append((t.closed_at, t.close_reason))
             self._recompute_pause()
 
         logger.info(
@@ -152,7 +170,7 @@ class LossTracker:
             "losses=%d  paused=%s",
             len(today_closed),
             today.isoformat(),
-            sum(1 for _, is_loss in self._history if is_loss),
+            sum(1 for _, r in self._history if _is_loss(r)),
             bool(self._paused_until and _now_ms() < self._paused_until),
         )
 
@@ -172,26 +190,31 @@ class LossTracker:
         if trade.closed_at < day_start:
             return
 
-        is_loss = trade.close_reason in _LOSS_REASONS
-
         with self._lock:
             # Daily rollover: drop history entries from before today
             self._history = [
-                (ts, l) for ts, l in self._history if ts >= day_start
+                (ts, r) for ts, r in self._history if ts >= day_start
             ]
-            self._history.append((trade.closed_at, is_loss))
+            self._history.append((trade.closed_at, trade.close_reason))
             self._recompute_pause()
 
-        outcome = "LOSS" if is_loss else "WIN/NEUTRAL"
+            # Snapshot stats under the lock so the log line is consistent
+            streak       = self._consecutive_losses_nolock()
+            daily_losses = self._daily_losses_nolock()
+            paused       = bool(self._paused_until and _now_ms() < self._paused_until)
+
+        outcome = "LOSS" if _is_loss(trade.close_reason) else (
+            "WIN" if _is_win(trade.close_reason) else "NEUTRAL"
+        )
         logger.info(
             "LossTracker: trade closed  %s  reason=%s  outcome=%s  "
             "streak=%d  daily_losses=%d  paused=%s",
             trade.id,
             trade.close_reason.value if trade.close_reason else "?",
             outcome,
-            self._consecutive_losses_nolock(),
-            self._daily_losses_nolock(),
-            bool(self._paused_until and _now_ms() < self._paused_until),
+            streak,
+            daily_losses,
+            paused,
         )
 
     # ── Public guard query ─────────────────────────────────────────────────
@@ -238,9 +261,9 @@ class LossTracker:
         if self._max_consec > 0:
             cl = self._consecutive_losses_nolock()
             if cl >= self._max_consec:
-                # Pause from the most recent loss
+                # Pause from the most recent loss in the streak
                 last_loss_ts = next(
-                    (ts for ts, is_loss in reversed(self._history) if is_loss),
+                    (ts for ts, r in reversed(self._history) if _is_loss(r)),
                     now,
                 )
                 pause_until = last_loss_ts + self._pause_ms
@@ -268,13 +291,15 @@ class LossTracker:
 
         # Guard 3 — rolling window
         if self._max_window > 0 and self._window_ms > 0:
-            loss_times = [ts for ts, is_loss in self._history if is_loss]
+            loss_times = [ts for ts, r in self._history if _is_loss(r)]
             for start_ts in loss_times:
                 window_count = sum(
                     1 for ts in loss_times
                     if 0 <= ts - start_ts <= self._window_ms
                 )
                 if window_count >= self._max_window:
+                    # Pause expires when the oldest triggering loss falls
+                    # outside the window — i.e. start_ts + window_ms.
                     pause_until = start_ts + self._window_ms
                     if pause_until > now:
                         candidates.append(pause_until)
@@ -288,18 +313,28 @@ class LossTracker:
         self._paused_until = max(candidates) if candidates else 0
 
     def _consecutive_losses_nolock(self) -> int:
+        """
+        Count the current losing streak from the most recent trade backwards.
+
+        Rules (matches docstring):
+          - Loss (SL_HIT etc.)  → increment counter
+          - Win  (TP1/TP2)      → stop, streak is broken
+          - Neutral (MANUAL…)   → skip; neither counts as a loss nor resets the streak
+        """
         count = 0
-        for _, is_loss in reversed(self._history):
-            if is_loss:
+        for _, reason in reversed(self._history):
+            if _is_loss(reason):
                 count += 1
-            else:
+            elif _is_win(reason):
                 break
+            # neutral: keep walking backward without incrementing or breaking
+
         return count
 
     def _daily_losses_nolock(self) -> int:
         today     = _today(self._tz)
         day_start = _day_start_ms(today, self._tz)
         return sum(
-            1 for ts, is_loss in self._history
-            if is_loss and ts >= day_start
+            1 for ts, r in self._history
+            if _is_loss(r) and ts >= day_start
         )

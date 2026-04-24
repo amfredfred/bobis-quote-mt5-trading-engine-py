@@ -444,9 +444,8 @@ class PositionManager:
                     self._bus.emit(Events.TRADE_TP2_HIT, updated)
                 elif sl_hit:
                     self._bus.emit(Events.TRADE_SL_HIT, updated)
-                else:
-                    self._bus.emit(Events.TRADE_CLOSED, updated)
-            self._bus.emit(Events.TRADE_CLOSED, updated)
+                # MANUAL closes: TRADE_CLOSED emitted by the unconditional line below
+            self._bus.emit(Events.TRADE_CLOSED, updated)  # always fires once
             metric_key = (
                 "trades.tp2_hit" if tp2_hit
                 else ("trades.sl_hit" if sl_hit
