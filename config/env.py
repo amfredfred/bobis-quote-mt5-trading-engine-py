@@ -49,6 +49,7 @@ class Env:
 
     # ── Signal Engine ──────────────────────────────────────────────────────
     SIGNAL_ENGINE_WS_URL: str = _optional("SIGNAL_ENGINE_WS_URL", "ws://localhost:8765")
+    SIGNAL_ENGINE_WS_SECRET_KEY: str = _optional("SIGNAL_ENGINE_WS_SECRET_KEY", "")
     SIGNAL_ENGINE_SYMBOLS: str = _optional("SIGNAL_ENGINE_SYMBOLS", "EUR/USD,GBP/USD")
 
     # ── MT5 ────────────────────────────────────────────────────────────────

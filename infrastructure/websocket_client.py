@@ -21,6 +21,7 @@ class WebSocketClient:
     def __init__(
         self,
         url: str,
+        secret_key: str,
         on_message: Callable[[str], None],
         on_connected: Optional[Callable[[], None]] = None,
         on_disconnected: Optional[Callable[[], None]] = None,
@@ -35,6 +36,7 @@ class WebSocketClient:
         self._reconnect_delay   = reconnect_delay
         self._max_reconnect     = max_reconnect_delay
         self._ping_interval     = ping_interval
+        self._secret_key        = secret_key
 
         self._ws:      Optional[websocket.WebSocketApp] = None
         self._stopped  = threading.Event()
@@ -70,10 +72,11 @@ class WebSocketClient:
         while not self._stopped.is_set():
             self._ws = websocket.WebSocketApp(
                 self._url,
-                on_open    = self._handle_open,
-                on_message = self._handle_message,
-                on_error   = self._handle_error,
-                on_close   = self._handle_close,
+                header={"sec-websocket-protocol": f"{self._secret_key}"},
+                on_open=self._handle_open,
+                on_message=self._handle_message,
+                on_error=self._handle_error,
+                on_close=self._handle_close,
             )
             self._ws.run_forever(ping_interval=int(self._ping_interval))
 

@@ -104,6 +104,7 @@ def build_container(config: AppConfig) -> AppContainer:
         event_bus=event_bus,
         validator=validator,
         ws_url=config.signal.ws_url,
+        ws_secret_key=config.signal.ws_secret_key,
         symbols=config.signal.symbols,
     )
 

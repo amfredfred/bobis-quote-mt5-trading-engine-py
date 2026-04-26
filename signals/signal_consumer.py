@@ -39,6 +39,7 @@ class SignalConsumer:
         event_bus: EventBus,
         validator: SignalValidator,
         ws_url: str,
+        ws_secret_key: str,
         symbols: List[str],
     ) -> None:
         self._bus = event_bus
@@ -46,6 +47,7 @@ class SignalConsumer:
         self._symbols = symbols
         self._ws = WebSocketClient(
             url=ws_url,
+            secret_key=ws_secret_key,
             on_message=self._handle_raw,
             on_connected=self._subscribe,
             on_disconnected=self._on_disconnected,

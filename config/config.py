@@ -74,6 +74,7 @@ class Mt5Config:
 @dataclass(frozen=True)
 class SignalConfig:
     ws_url: str
+    ws_secret_key: str
     symbols: List[str]
 
 
@@ -127,6 +128,7 @@ def _build() -> AppConfig:
         ),
         signal=SignalConfig(
             ws_url=env.SIGNAL_ENGINE_WS_URL,
+            ws_secret_key=env.SIGNAL_ENGINE_WS_SECRET_KEY,
             symbols=[normalise_symbol(s) for s in env.SIGNAL_ENGINE_SYMBOLS.split(",")],
         ),
         storage_path=env.STORAGE_PATH,
