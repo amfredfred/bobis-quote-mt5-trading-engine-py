@@ -163,19 +163,27 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
     if si is None or si.ask is None or si.bid is None:
         return RuleResult(approved=False, reason="No market data")
 
+    if si.ask <= 0 or si.bid <= 0:
+        return RuleResult(
+            approved=False, reason="Invalid market data: zero or negative prices"
+        )
+
     pip = pip_size(si.point, si.digits)
+    if pip <= 0:
+        return RuleResult(approved=False, reason="Invalid pip size")
+
     spread_pips = (si.ask - si.bid) / pip
+
+    if spread_pips < 0:
+        return RuleResult(approved=False, reason="Invalid market data: negative spread")
 
     is_long = ctx.signal.direction in (1, "long", "buy")
     fill_price = si.ask if is_long else si.bid
 
     sl_pips = abs(fill_price - ctx.signal.stop_loss) / pip
-    tp_pips = abs(fill_price - ctx.signal.take_profit) / pip
 
-    if sl_pips < 1.0:
-        return RuleResult(
-            approved=False, reason=f"SL too close to fill: {sl_pips:.1f} pips"
-        )
+    if sl_pips == 0:
+        return RuleResult(approved=False, reason="SL distance is zero")
 
     if spread_pips / sl_pips > ctx.config.sl_ratio_threshold:
         return RuleResult(
@@ -183,16 +191,6 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
             reason=(
                 f"Spread/SL ratio too high: {spread_pips/sl_pips:.2f} "
                 f"({spread_pips:.1f} pip spread vs {sl_pips:.1f} pip SL)"
-            ),
-        )
-
-    effective_r = (tp_pips - spread_pips) / sl_pips
-    if effective_r < 1.0:
-        return RuleResult(
-            approved=False,
-            reason=(
-                f"Spread degrades effective R to {effective_r:.2f} "
-                f"(raw R {tp_pips/sl_pips:.2f}, spread cost {spread_pips:.1f} pips)"
             ),
         )
 
