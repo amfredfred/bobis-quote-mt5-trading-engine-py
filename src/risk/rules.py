@@ -165,13 +165,37 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
 
     pip = pip_size(si.point, si.digits)
     spread_pips = (si.ask - si.bid) / pip
-    sl_pips = abs(ctx.signal.entry_price - ctx.signal.stop_loss) / pip
 
-    if spread_pips > sl_pips * ctx.config.sl_ratio_threshold:
+    is_long = ctx.signal.direction in (1, "long", "buy")
+    fill_price = si.ask if is_long else si.bid
+
+    sl_pips = abs(fill_price - ctx.signal.stop_loss) / pip
+    tp_pips = abs(fill_price - ctx.signal.take_profit) / pip
+
+    if sl_pips < 1.0:
+        return RuleResult(
+            approved=False, reason=f"SL too close to fill: {sl_pips:.1f} pips"
+        )
+
+    if spread_pips / sl_pips > ctx.config.sl_ratio_threshold:
         return RuleResult(
             approved=False,
-            reason=f"Spread too high ({spread_pips:.1f} pips vs SL {sl_pips:.1f})",
+            reason=(
+                f"Spread/SL ratio too high: {spread_pips/sl_pips:.2f} "
+                f"({spread_pips:.1f} pip spread vs {sl_pips:.1f} pip SL)"
+            ),
         )
+
+    effective_r = (tp_pips - spread_pips) / sl_pips
+    if effective_r < 1.0:
+        return RuleResult(
+            approved=False,
+            reason=(
+                f"Spread degrades effective R to {effective_r:.2f} "
+                f"(raw R {tp_pips/sl_pips:.2f}, spread cost {spread_pips:.1f} pips)"
+            ),
+        )
+
     return RuleResult(approved=True)
 
 
@@ -241,12 +265,3 @@ ALL_RULES: List[RiskRule] = [
     daily_loss_limit_rule,
     spread_quality_rule,
 ]
-
-
-
-
-
-
-
-
-
