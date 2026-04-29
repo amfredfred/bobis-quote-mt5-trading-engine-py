@@ -14,7 +14,7 @@ Pure business logic with no external dependencies:
 
 - **`signal.py`**: Signal types and validation
   - `InboundSignal`: External trading signal
-  - `SignalDirection`: BUY/SELL enums
+  - `SignalDirection`: LONG/SHORT enums
   - Signal validation rules
 
 - **`trade.py`**: Trade entities and business rules
@@ -25,7 +25,7 @@ Pure business logic with no external dependencies:
 - **`position.py`**: Position management
   - `Position`: Current positions
   - `AccountInfo`: Account state
-  - `SymbolInfo`: Symbol specifications
+  - `SymbolInfo`: Symbol specifications (ask, bid, tick_value, tick_size, digits, point)
 
 ### 2. Core Layer (`src/core/`)
 
@@ -53,11 +53,13 @@ Trade execution pipeline:
   - Signal processing orchestration
   - Risk validation integration
   - Order execution coordination
+  - Receives `(loss_pct, start_equity)` from PositionManager and forwards to LossTracker
 
 - **`planner.py`**: Trade planning
-  - Lot size calculation
-  - Slippage estimation
-  - Spread surcharge handling
+  - Streak-based risk amount computation via `LossTracker.daily_risk_amount()`
+  - Lot size calculation from risk amount
+  - Pessimistic entry and spread surcharge adjustments
+  - Depends on `LossTracker` for live sizing — injected at construction
 
 - **`order_manager.py`**: Order lifecycle management
   - Order placement and tracking
@@ -74,14 +76,16 @@ Risk control system:
   - Risk state tracking
 
 - **`rules.py`**: Risk rule definitions
-  - `ALL_RULES`: Registry of active rules
+  - `ALL_RULES`: Registry of active rules, ordered by cost (memory-only first, broker I/O last)
   - `RuleContext`: Rule evaluation context
   - Individual rule implementations
+  - `max_open_trades` is derived as `config.max_losing_streak + 1` — not a separate config field
 
-- **`loss_tracker.py`**: Loss monitoring
-  - Daily/weekly loss tracking
-  - Drawdown calculations
-  - Risk limit enforcement
+- **`loss_tracker.py`**: Daily loss circuit-breaker and risk budget provider
+  - Latches `start_of_day_equity` once per calendar day from the first broker poll
+  - Computes `daily_risk_amount(max_losing_streak)`: `start_equity × daily_loss_pct% / (streak + 1)`
+  - Triggers trading pause at midnight when daily limit is reached
+  - Thread-safe; called from both PositionManager poll thread and RiskEngine signal thread
 
 ### 5. Infrastructure Layer (`src/infra/`)
 
@@ -94,8 +98,8 @@ External system adapters:
 
 - **`monitoring.py`**: HTTP dashboard server
   - Real-time metrics endpoint
-  - WebSocket monitoring
-  - Health checks
+  - Health checks and config display
+  - Derives `max_open_trades` from `config.risk.max_losing_streak + 1`
 
 - **`websocket.py`**: WebSocket client
   - Signal ingestion
@@ -121,14 +125,14 @@ MT5 integration:
   - Session management
 
 - **`orders.py`**: Order operations
-  - Market/limit order placement
+  - Market order placement
   - Order status tracking
   - Cancellation handling
 
 - **`positions.py`**: Position synchronization
   - Live position monitoring
   - Position reconciliation
-  - PnL calculations
+  - `get_daily_pnl_info(magic)` → `(loss_pct, start_of_day_equity)`: returns both the daily loss percentage and the start-of-day equity in a single broker call; start equity is derived as `current_equity − total_pnl`
 
 - **`types.py`**: MT5-specific types
   - MT5 API type mappings
@@ -191,9 +195,10 @@ Shared utilities:
   - Duration calculations
 
 - **`lot_calculator.py`**: Position sizing
-  - Risk-based lot calculation
-  - Account balance consideration
-  - Leverage adjustments
+  - Accepts a pre-computed `risk_amount` (currency) from the caller
+  - Computes lot size: `risk_amount / (risk_pips × pip_value_per_lot)`
+  - Normalises to broker-accepted volume step and enforces min/max lot bounds
+  - Single responsibility: sizing math only — risk amount resolution is owned by `LossTracker`
 
 ## Data Flow
 
@@ -212,11 +217,11 @@ External Signal Source
         ↓
     Strategy Router
         ↓
-    Risk Engine
+    Risk Engine (ALL_RULES — memory-only first, broker I/O last)
         ↓
     Execution Engine
         ↓
-    Trade Planner
+    Trade Planner  ←── LossTracker.daily_risk_amount()
         ↓
     Order Manager
         ↓
@@ -225,13 +230,33 @@ External Signal Source
     MetaTrader 5 Terminal
 ```
 
+## Daily Loss / Sizing Data Flow
+
+```
+MT5 Terminal
+    ↓
+Mt5Positions.get_daily_pnl_info()
+    → (loss_pct, start_of_day_equity)
+    ↓
+PositionManager._poll()
+    ↓
+ExecutionEngine.update_daily_loss(loss_pct, start_equity)
+    ↓
+LossTracker.update_daily_loss_pct(pct, start_equity)
+    ├── latches start_of_day_equity once per calendar day
+    ├── triggers pause if pct >= MAX_DAILY_LOSS_PERCENT
+    └── exposes daily_risk_amount(max_losing_streak)
+              ↓
+         TradePlanner.plan()  →  calculate_lot_size(risk_amount=...)
+```
+
 ## Event Flow
 
 1. **Signal Ingestion**: External signals received via WebSocket
 2. **Validation**: Signals validated against business rules
 3. **Enrichment**: Signals enriched with market data
-4. **Risk Check**: Risk rules evaluated for trade safety
-5. **Planning**: Trade parameters calculated (lots, slippage)
+4. **Risk Check**: Risk rules evaluated — memory-only rules first, live market rules last
+5. **Planning**: Trade parameters calculated (lots from streak-based risk amount, slippage, spread surcharge)
 6. **Execution**: Orders placed with MT5
 7. **Confirmation**: Fill confirmations processed
 8. **Persistence**: Trade data stored in database
@@ -276,38 +301,43 @@ External Signal Source
 
 The system uses a hierarchical configuration:
 
-1. **Environment Variables**: Runtime secrets and overrides
-2. **Settings Dataclass**: Typed configuration with defaults
-3. **Validation**: Configuration validated on startup
+1. **Environment Variables**: Runtime secrets and overrides (`.env`)
+2. **Settings Dataclass**: Typed configuration with defaults (`RiskConfig`, `ExecutionConfig`, etc.)
+3. **Validation**: Configuration validated on startup — `MAX_LOSING_STREAK < 1` raises `ValueError` before any broker connection
+
+Key derived values (computed from config, never set directly):
+- `max_open_trades = MAX_LOSING_STREAK + 1`
+- `risk_per_trade  = daily_budget / (MAX_LOSING_STREAK + 1)`
+- `daily_budget    = start_of_day_equity × (MAX_DAILY_LOSS_PERCENT / 100)`
 
 ## Error Handling
 
-- **Circuit Breakers**: Automatic shutdown on critical errors
-- **Retry Logic**: Exponential backoff for transient failures
-- **Logging**: Comprehensive error logging with context
-- **Recovery**: Graceful recovery from connection losses
+- **Circuit Breakers**: Automatic trading pause on daily loss limit
+- **Retry Logic**: Configurable retry count and delay for broker order rejections
+- **Logging**: Structured error logging with context on every rule rejection
+- **Recovery**: Graceful recovery from MT5 connection losses; daily loss is re-primed from broker on reconnect
 
 ## Performance Considerations
 
+- **Rule Ordering**: Memory-only rules short-circuit before any broker I/O; live market rules only reached when all memory checks pass
 - **Async Processing**: Non-blocking I/O operations
 - **Connection Pooling**: Reused database connections
 - **Event Buffering**: High-throughput event processing
 - **Memory Management**: Bounded queues and cleanup
-- **Monitoring**: Real-time performance metrics
 
 ## Security
 
 - **API Authentication**: WebSocket secret validation
-- **Input Validation**: Strict signal and configuration validation
+- **Input Validation**: Strict signal and configuration validation; `MAX_LOSING_STREAK` validated to be >= 1 at startup
 - **Error Masking**: Sensitive data not exposed in logs
-- **Access Control**: MT5 credentials encrypted in environment
+- **Access Control**: MT5 credentials stored in environment, never in source
 
 ## Extensibility
 
 The modular architecture allows for:
 
-- **New Brokers**: Additional broker adapters
-- **Custom Strategies**: Strategy-specific signal processing
-- **Additional Risk Rules**: Domain-specific risk controls
-- **Monitoring Integrations**: External monitoring systems
+- **New Brokers**: Additional broker adapters implementing the same interface
+- **Custom Strategies**: Strategy-specific signal processing via `StrategyRouter`
+- **Additional Risk Rules**: Add a function to `rules.py` and append to `ALL_RULES`
+- **Monitoring Integrations**: External monitoring systems via the metrics endpoint
 - **Signal Sources**: Multiple signal ingestion methods

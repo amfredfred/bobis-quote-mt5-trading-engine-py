@@ -71,11 +71,11 @@ class ExecutionEngine:
         self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
         self._loss_tracker: "LossTracker | None" = loss_tracker
 
-    def update_daily_loss(self, loss_pct: float) -> None:
+    def update_daily_loss(self, loss_pct: float, start_equity: float) -> None:
         """Called by PositionManager on each poll cycle."""
         self._daily_loss_pct = loss_pct
         if self._loss_tracker is not None:
-            self._loss_tracker.update_daily_loss_pct(loss_pct)
+            self._loss_tracker.update_daily_loss_pct(loss_pct, start_equity)
 
     def _pending_total(self) -> int:
         return sum(self._pending.values())

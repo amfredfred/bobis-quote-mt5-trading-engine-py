@@ -10,23 +10,12 @@ from dataclasses import dataclass
 from typing import List
 from src.utils.symbol import normalise_symbol
 from src.config.env import env
-from src.utils.lot_calculator import RiskMode
 from zoneinfo import ZoneInfo
-
-
-def _parse_risk_mode(raw: str) -> RiskMode:
-    try:
-        return RiskMode(raw.lower().strip())
-    except ValueError:
-        raise ValueError(f"RISK_MODE must be 'percentage' or 'fixed', got: {raw!r}")
 
 
 @dataclass(frozen=True)
 class RiskConfig:
-    risk_mode: RiskMode
-    risk_percent_per_trade: float
-    risk_fixed_amount: float
-    max_open_trades: int
+    max_losing_streak: int
     max_daily_loss_percent: float
     max_exposure_per_symbol: int
     min_rr_ratio: float
@@ -94,10 +83,7 @@ class AppConfig:
 def _build() -> AppConfig:
     return AppConfig(
         risk=RiskConfig(
-            risk_mode=_parse_risk_mode(env.RISK_MODE),
-            risk_percent_per_trade=env.RISK_PERCENT_PER_TRADE,
-            risk_fixed_amount=env.RISK_FIXED_AMOUNT,
-            max_open_trades=env.MAX_OPEN_TRADES,
+            max_losing_streak=env.MAX_LOSING_STREAK,
             max_daily_loss_percent=env.MAX_DAILY_LOSS_PERCENT,
             max_exposure_per_symbol=env.MAX_EXPOSURE_PER_SYMBOL,
             min_rr_ratio=env.MIN_RR_RATIO,

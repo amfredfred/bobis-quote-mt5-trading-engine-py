@@ -29,21 +29,31 @@ venv\Scripts\activate
 pip install -e .
 ```
 
-## Step 3: Configure MT5 Credentials
+## Step 3: Configure
 
 ```powershell
 # Copy example configuration
 Copy-Item .env.example .env
 
-# Edit .env - fill in your MT5 login details
+# Edit .env
 notepad .env
 ```
 
-**Required in .env**:
-```
+**Required fields**:
+```dotenv
 MT5_LOGIN=your_login_number
-MT5_PASSWORD=your_password  
+MT5_PASSWORD=your_password
 MT5_SERVER=your_server_address
+```
+
+**Key risk settings** (set these before going live):
+```dotenv
+MAX_LOSING_STREAK=4          # Your system's worst recorded consecutive losing streak
+                             # Determines max concurrent trades (streak + 1) and
+                             # per-trade risk amount automatically
+MAX_DAILY_LOSS_PERCENT=5.0   # Daily loss budget as % of account equity
+SL_RATIO_THRESHOLD=0.34      # Max spread/SL ratio — lower = stricter
+MIN_RR_RATIO=1.0             # Minimum risk:reward ratio
 ```
 
 ## Step 4: Validate Configuration
@@ -53,6 +63,8 @@ python scripts/check_env.py
 ```
 
 Should output: `OK: .env looks good`
+
+If you see `ValueError: MAX_LOSING_STREAK must be >= 1` — set `MAX_LOSING_STREAK` to at least `1` in `.env` and re-run.
 
 ## Step 5: Install as Service
 
@@ -135,9 +147,10 @@ Check error log:
 Get-Content logs\service_stderr.log -Tail 100 | Out-Host
 ```
 
-Common issues:
+Common causes:
 - `.env` file missing or invalid
 - MT5 terminal not running
+- `MAX_LOSING_STREAK` missing or set to `0` (must be >= 1)
 - Python environment not activated before install
 
 **Solution**:
@@ -246,9 +259,9 @@ nssm restart ExecutionEngine
 
 1. **Monitor Dashboard**: Connect to `http://localhost:8080` (when enabled)
 2. **Send Signals**: Use WebSocket API at `ws://localhost:8080/ws`
-3. **Configure Risk**: Edit risk parameters in `.env`
-4. **Review Logs**: Check logs regularly for issues
-5. **Test Signals**: Start with small positions to verify integration
+3. **Review Risk Settings**: Tune `MAX_LOSING_STREAK`, `MAX_DAILY_LOSS_PERCENT`, and `SL_RATIO_THRESHOLD` in `.env`
+4. **Review Logs**: Check logs regularly for rule rejections and sizing info
+5. **Test Signals**: Start with demo account to verify integration before live trading
 
 ## Security Reminders
 

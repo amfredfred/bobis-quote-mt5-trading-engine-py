@@ -48,7 +48,7 @@ def _today(tz: ZoneInfo) -> date:
 
 class LossTracker:
     """
-    Thread-safe daily loss % circuit-breaker.
+    Thread-safe daily loss % circuit-breaker + risk budget provider.
 
     Usage:
         tracker = LossTracker(
@@ -57,10 +57,13 @@ class LossTracker:
         )
 
         # Called on every position-manager poll cycle (via ExecutionEngine):
-        tracker.update_daily_loss_pct(loss_pct)
+        tracker.update_daily_loss_pct(loss_pct, start_equity)
 
         # Called by loss_guard_rule before every signal evaluation:
         paused, reason = tracker.is_paused()
+
+        # Called by TradePlanner for lot sizing:
+        risk_amount = tracker.daily_risk_amount(max_losing_streak)
     """
 
     def __init__(
@@ -72,14 +75,21 @@ class LossTracker:
         self._tz      = engine_tz
         self._lock    = threading.Lock()
 
-        self._current_pct:  float = 0.0
-        self._paused_until: int   = 0   # Unix-ms; 0 = not paused
+        self._current_pct:       float = 0.0
+        self._start_of_day_equity: float = 0.0
+        self._paused_until:      int   = 0   # Unix-ms; 0 = not paused
+        self._tracked_day:       date | None = None
 
     # ── Main update ────────────────────────────────────────────────────────
 
-    def update_daily_loss_pct(self, pct: float) -> None:
+    def update_daily_loss_pct(self, pct: float, start_equity: float) -> None:
         """
-        Receive the latest daily loss % from MT5 (via ExecutionEngine).
+        Receive the latest daily loss % and start-of-day equity from MT5
+        (via ExecutionEngine).
+
+        start_of_day_equity is latched on the first call each calendar day
+        and held fixed until midnight. This ensures lot sizes are stable
+        throughout the session regardless of intraday P&L movement.
 
         If *pct* meets or exceeds MAX_DAILY_LOSS_PERCENT and the session
         is not already paused, set paused_until to end of today and log a
@@ -89,7 +99,19 @@ class LossTracker:
         with self._lock:
             self._current_pct = pct
 
-            now = _now_ms()
+            today = _today(self._tz)
+            now   = _now_ms()
+
+            # Latch start-of-day equity once per calendar day.
+            # start_equity from positions.py is 0.0 on data failure — ignore those.
+            if (self._tracked_day != today) and start_equity > 0:
+                self._tracked_day         = today
+                self._start_of_day_equity = start_equity
+                logger.info(
+                    "📅 New trading day %s — start-of-day equity latched at %.2f",
+                    today.isoformat(),
+                    start_equity,
+                )
 
             # Already paused and still within the pause window — nothing to do.
             if self._paused_until and now < self._paused_until:
@@ -101,7 +123,6 @@ class LossTracker:
 
             # Trigger: daily loss limit reached.
             if pct >= self._limit:
-                today              = _today(self._tz)
                 self._paused_until = _day_end_ms(today, self._tz)
                 mins_left = int((self._paused_until - now) // 60_000)
                 logger.warning(
@@ -112,6 +133,32 @@ class LossTracker:
                     mins_left,
                     today.isoformat(),
                 )
+
+    # ── Risk budget ────────────────────────────────────────────────────────
+
+    def daily_risk_amount(self, max_losing_streak: int) -> float:
+        """
+        Return the per-trade risk amount in account currency for today.
+
+            daily_budget   = start_of_day_equity × (max_daily_loss_pct / 100)
+            risk_per_trade = daily_budget / (max_losing_streak + 1)
+
+        Budget coherence guarantee:
+            max_open_trades  = max_losing_streak + 1
+            max_exposure     = max_open_trades × risk_per_trade = daily_budget ✓
+
+        Returns 0.0 if start_of_day_equity has not yet been latched
+        (first poll cycle of the day has not completed).
+        """
+        with self._lock:
+            if self._start_of_day_equity <= 0:
+                logger.warning(
+                    "daily_risk_amount: start_of_day_equity not yet latched — "
+                    "returning 0.0; lot sizing will use min_lot fallback"
+                )
+                return 0.0
+            daily_budget = self._start_of_day_equity * (self._limit / 100.0)
+            return daily_budget / (max_losing_streak + 1)
 
     # ── Guard query ────────────────────────────────────────────────────────
 
@@ -137,10 +184,16 @@ class LossTracker:
         with self._lock:
             now    = _now_ms()
             paused = bool(self._paused_until and now < self._paused_until)
+            daily_budget = (
+                self._start_of_day_equity * (self._limit / 100.0)
+                if self._start_of_day_equity > 0 else 0.0
+            )
             return {
-                "daily_loss_pct":   self._current_pct,
-                "paused":           paused,
-                "paused_until_ms":  self._paused_until if paused else None,
+                "daily_loss_pct":        self._current_pct,
+                "start_of_day_equity":   self._start_of_day_equity,
+                "daily_budget":          round(daily_budget, 2),
+                "paused":                paused,
+                "paused_until_ms":       self._paused_until if paused else None,
                 "guard_config": {
                     "max_daily_loss_percent": self._limit,
                 },

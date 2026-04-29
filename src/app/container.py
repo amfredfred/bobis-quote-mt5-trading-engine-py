@@ -70,7 +70,7 @@ def build_container(config: AppConfig) -> AppContainer:
         engine_tz          = config.engine_timezone,
     )
     risk_engine = RiskEngine(config.risk, loss_tracker=loss_tracker)
-    trade_planner = TradePlanner(config.risk, config.execution)
+    trade_planner = TradePlanner(config.risk, config.execution, loss_tracker)
     order_manager = OrderManager(mt5_orders, mt5_positions, config.execution)
 
     execution_engine = ExecutionEngine(

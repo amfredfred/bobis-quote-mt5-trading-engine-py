@@ -160,8 +160,8 @@ class PositionManager:
     def _poll(self) -> None:
         # Refresh daily loss cache on every poll cycle
         try:
-            loss_pct = self._mt5_pos.get_daily_loss_pct(self._cfg.magic)
-            self._execution_engine.update_daily_loss(loss_pct)
+            loss_pct, start_equity = self._mt5_pos.get_daily_pnl_info(self._cfg.magic)
+            self._execution_engine.update_daily_loss(loss_pct, start_equity)
         except Exception:
             logger.warning("PositionManager: failed to refresh daily loss pct")
 

@@ -61,11 +61,14 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     # Hydrate position store
     container.position_manager.hydrate_from_broker()
 
-    # Prime daily loss before first signal
+    # Prime daily loss + start-of-day equity before first signal
     try:
-        loss_pct = container.mt5_positions.get_daily_loss_pct(config.execution.magic)
-        container.execution_engine.update_daily_loss(loss_pct)
-        logger.info("Daily loss primed", extra={"daily_loss_pct": loss_pct})
+        loss_pct, start_equity = container.mt5_positions.get_daily_pnl_info(config.execution.magic)
+        container.execution_engine.update_daily_loss(loss_pct, start_equity)
+        logger.info(
+            "Daily loss primed",
+            extra={"daily_loss_pct": loss_pct, "start_of_day_equity": start_equity},
+        )
     except Exception:
         logger.warning("bootstrap: could not prime daily loss — defaulting to 0.0")
 
@@ -96,10 +99,10 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     logger.info(
         "Execution Engine started",
         extra={
-            "symbols":    config.signal.symbols,
-            "signal_ws":  config.signal.ws_url,
-            "risk_pct":   config.risk.risk_percent_per_trade,
-            "max_trades": config.risk.max_open_trades,
+            "symbols":          config.signal.symbols,
+            "signal_ws":        config.signal.ws_url,
+            "max_losing_streak": config.risk.max_losing_streak,
+            "max_open_trades":  config.risk.max_losing_streak + 1,
         },
     )
 

@@ -31,22 +31,32 @@ Live-account adjustment:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from src.config.settings import RiskConfig, ExecutionConfig
 from src.domain.position import AccountInfo, SymbolInfo
 from src.domain.signal_interface import InboundSignal, SignalDirection
 from src.domain.trade import OrderSide, TradePlan
-from src.utils.lot_calculator import calculate_lot_size, RiskMode
+from src.utils.lot_calculator import calculate_lot_size
 from src.utils.price import pip_size
 from src.utils.time import now_ms
+
+if TYPE_CHECKING:
+    from src.risk.loss_tracker import LossTracker
 
 logger = logging.getLogger(__name__)
 
 
 class TradePlanner:
-    def __init__(self, risk_config: RiskConfig, exec_config: ExecutionConfig) -> None:
-        self._risk = risk_config
-        self._exec = exec_config
+    def __init__(
+        self,
+        risk_config: RiskConfig,
+        exec_config: ExecutionConfig,
+        loss_tracker: "LossTracker",
+    ) -> None:
+        self._risk         = risk_config
+        self._exec         = exec_config
+        self._loss_tracker = loss_tracker
 
     def plan(
         self,
@@ -70,11 +80,6 @@ class TradePlanner:
         spread_surcharge = spread_price * self._exec.spread_risk_multiplier
 
         # ── [3] Pessimistic entry — size to worst fill within slippage limit ─
-        # For SHORT: a lower fill widens the SL distance (entry moves away from SL).
-        # For LONG:  a higher fill widens the SL distance.
-        # Using the worst-case entry guarantees actual risk ≤ target risk amount
-        # regardless of where within the slippage band the broker fills.
-        # max_slip is expressed as a fraction of the stop distance — dynamic per trade.
         stop_distance = abs(signal.entry_price - signal.stop_loss)
         max_slip_price = self._exec.max_entry_slippage_pct_of_stop * stop_distance
         pessimistic_entry = (
@@ -91,12 +96,16 @@ class TradePlanner:
         else:
             sizing_sl = signal.entry_price + adjusted_sl_distance
 
+        # ── Streak-based risk amount ───────────────────────────────────────
+        # daily_budget = start_of_day_equity × (MAX_DAILY_LOSS_PERCENT / 100)
+        # risk_per_trade = daily_budget / (MAX_LOSING_STREAK + 1)
+        risk_amount = self._loss_tracker.daily_risk_amount(
+            self._risk.max_losing_streak
+        )
+
         # ── Lot size calculation ───────────────────────────────────────────
         calc = calculate_lot_size(
-            account_balance=account_info.balance,
-            risk_mode=RiskMode(self._risk.risk_mode),
-            risk_percent=self._risk.risk_percent_per_trade,
-            risk_fixed=self._risk.risk_fixed_amount,
+            risk_amount=risk_amount,
             entry_price=signal.entry_price,
             stop_loss=sizing_sl,
             symbol_info=symbol_info,
@@ -180,7 +189,6 @@ class TradePlanner:
                 "signal_id": signal.id,
                 "symbol": signal.symbol,
                 "side": side.value,
-                "risk_mode": calc.risk_mode.value,
                 "lot_size": calc.lot_size,
                 "risk_amount": round(calc.risk_amount, 2),
                 "risk_pct": round(risk_pct, 2),

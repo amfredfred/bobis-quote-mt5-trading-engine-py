@@ -61,13 +61,8 @@ class Env:
     MT5_COMMENT: str = _optional("MT5_COMMENT", "signal-engine")
     MT5_EXEC_PATH: str = _optional("MT5_EXEC_PATH", None)
 
-    # ── Risk mode ──────────────────────────────────────────────────────────
-    RISK_MODE: str = _optional("RISK_MODE", "percentage")
-    RISK_PERCENT_PER_TRADE: float = _optional_float("RISK_PERCENT_PER_TRADE", 1.0)
-    RISK_FIXED_AMOUNT: float = _optional_float("RISK_FIXED_AMOUNT", 100.0)
-
     # ── Risk limits ────────────────────────────────────────────────────────
-    MAX_OPEN_TRADES: int = _optional_int("MAX_OPEN_TRADES", 5)
+    MAX_LOSING_STREAK: int = _optional_int("MAX_LOSING_STREAK", 4)
     MAX_DAILY_LOSS_PERCENT: float = _optional_float("MAX_DAILY_LOSS_PERCENT", 5.0)
     MAX_EXPOSURE_PER_SYMBOL: int = _optional_int("MAX_EXPOSURE_PER_SYMBOL", 2)
     MIN_RR_RATIO: float = _optional_float("MIN_RR_RATIO", 1.5)
@@ -122,7 +117,16 @@ class Env:
     MONITORING_PORT: int = _optional_int("MONITORING_PORT", 8080)
 
 
+def _validate_env(e: Env) -> None:
+    if e.MAX_LOSING_STREAK < 1:
+        raise ValueError(
+            f"MAX_LOSING_STREAK must be >= 1, got: {e.MAX_LOSING_STREAK}. "
+            "Set it to your system's worst recorded consecutive losing streak."
+        )
+
+
 env = Env()
+_validate_env(env)
 
 
 

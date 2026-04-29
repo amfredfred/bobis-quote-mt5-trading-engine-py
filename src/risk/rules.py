@@ -27,7 +27,6 @@ from src.domain.signal_interface import InboundSignal, SignalDirection
 from src.domain.trade import Trade, OrderSide, TradeStatus
 from src.domain.position import SymbolInfo
 from src.config.settings import RiskConfig
-from src.utils.lot_calculator import RiskMode
 from src.utils.price import pip_size
 
 
@@ -113,10 +112,14 @@ def no_hedging_rule(ctx: RuleContext) -> RuleResult:
 
 
 def max_open_trades_rule(ctx: RuleContext) -> RuleResult:
-    if ctx.effective_open >= ctx.config.max_open_trades:
+    # max_open_trades is derived — not a separate config value.
+    # With MAX_LOSING_STREAK=N, you can open at most N+1 trades simultaneously.
+    # This guarantees: max_exposure = (N+1) × risk_per_trade = daily_budget exactly.
+    max_open = ctx.config.max_losing_streak + 1
+    if ctx.effective_open >= max_open:
         return RuleResult(
             approved=False,
-            reason=f"Max open trades reached ({ctx.effective_open}/{ctx.config.max_open_trades})",
+            reason=f"Max open trades reached ({ctx.effective_open}/{max_open})",
         )
     return RuleResult(approved=True)
 
@@ -153,31 +156,34 @@ def duplicate_signal_rule(ctx: RuleContext) -> RuleResult:
 def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
     """Monetary daily drawdown guard — sourced from MT5 account equity (start-of-day basis).
 
-    Two layers of protection that work with MAX_OPEN_TRADES to ensure the
-    configured limit is never fully hit:
+    Two layers of protection:
 
-    Layer 1 — Hard safety stop at 95 % of MAX_DAILY_LOSS_PERCENT.
-        New trades are refused once the realised loss reaches 95 % of the
-        configured limit.  This leaves a 5 % buffer so that any trades already
-        open at the time of the stop cannot push the account past 100 % of the
-        daily limit even if they all hit SL simultaneously.
+    Layer 1 — Hard safety stop at 95% of MAX_DAILY_LOSS_PERCENT.
+        New trades are refused once the realised loss reaches 95% of the
+        configured limit. This leaves a 5% buffer so open positions cannot
+        push the account past 100% of the daily limit even if they all hit
+        SL simultaneously.
 
-    Layer 2 — Pre-trade budget projection (percentage mode only).
-        Before opening a trade we check whether the risk budget for that single
-        trade, added to what has already been lost today, would exceed the 95 %
-        safety threshold.  This links MAX_OPEN_TRADES and MAX_DAILY_LOSS_PERCENT:
-        with 5 trades at 1 % risk each and a 5 % daily limit the engine will
-        naturally stop accepting new trades once 4 % has been realised, because
-        the next 1 % would cross 95 % of 5 % (= 4.75 %).
+    Layer 2 — Pre-trade budget projection.
+        Before opening a trade we check whether this trade's per-trade risk,
+        added to what has already been lost today, would exceed the 95%
+        safety threshold.
 
-        Example (MAX_DAILY_LOSS_PERCENT=5, RISK_PERCENT_PER_TRADE=1):
-            safety_threshold = 4.75 %
-            daily_loss_pct=3.8 % → 3.8 + 1.0 = 4.8 > 4.75 → REJECTED
-            daily_loss_pct=3.7 % → 3.7 + 1.0 = 4.7 < 4.75 → ALLOWED
+        per_trade_risk_pct = MAX_DAILY_LOSS_PERCENT / (MAX_LOSING_STREAK + 1)
+
+        This is the same formula used by LossTracker.daily_risk_amount() —
+        one source of truth for how the budget is divided.
+
+        Example (MAX_DAILY_LOSS_PERCENT=5, MAX_LOSING_STREAK=4):
+            per_trade_risk_pct = 5 / 5 = 1%
+            safety_threshold   = 4.75%
+            daily_loss_pct=3.8% → 3.8 + 1.0 = 4.8 > 4.75 → REJECTED
+            daily_loss_pct=3.7% → 3.7 + 1.0 = 4.7 < 4.75 → ALLOWED
     """
-    budget = ctx.config.max_daily_loss_percent
+    budget           = ctx.config.max_daily_loss_percent
     safety_threshold = budget * 0.95
 
+    # Layer 1 — hard stop
     if ctx.daily_loss_pct >= safety_threshold:
         return RuleResult(
             approved=False,
@@ -187,19 +193,19 @@ def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
             ),
         )
 
-    if ctx.config.risk_mode == RiskMode.PERCENTAGE:
-        per_trade_risk = ctx.config.risk_percent_per_trade
-        projected = ctx.daily_loss_pct + per_trade_risk
-        if projected > safety_threshold:
-            return RuleResult(
-                approved=False,
-                reason=(
-                    f"Opening this trade would exceed daily safety threshold: "
-                    f"{ctx.daily_loss_pct:.2f}% + {per_trade_risk:.2f}% risk "
-                    f"= {projected:.2f}% > {safety_threshold:.2f}% "
-                    f"(95% of {budget}% limit)"
-                ),
-            )
+    # Layer 2 — budget projection using streak-derived per-trade risk
+    per_trade_risk_pct = budget / (ctx.config.max_losing_streak + 1)
+    projected = ctx.daily_loss_pct + per_trade_risk_pct
+    if projected > safety_threshold:
+        return RuleResult(
+            approved=False,
+            reason=(
+                f"Opening this trade would exceed daily safety threshold: "
+                f"{ctx.daily_loss_pct:.2f}% + {per_trade_risk_pct:.2f}% risk "
+                f"= {projected:.2f}% > {safety_threshold:.2f}% "
+                f"(95% of {budget}% limit)"
+            ),
+        )
 
     return RuleResult(approved=True)
 
@@ -246,7 +252,7 @@ def min_rr_rule(ctx: RuleContext) -> RuleResult:
     fill_price = _resolve_fill_price(si, ctx.signal.direction)
 
     sl_pips = abs(fill_price - ctx.signal.stop_loss) / pip
-    tp_pips = abs(fill_price - ctx.signal.take_profit) / pip
+    tp_pips = abs(fill_price - ctx.signal.tp2) / pip
 
     if sl_pips == 0:
         return RuleResult(approved=False, reason="SL distance is zero")

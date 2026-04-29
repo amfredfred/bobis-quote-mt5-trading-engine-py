@@ -35,10 +35,10 @@ NSSM (Non-Sucking Service Manager) is the **recommended approach for Windows** b
    # Create virtual environment
    python -m venv venv
    venv\Scripts\activate
-   
+
    # Install dependencies
    pip install -e .[dev]
-   
+
    # Validate configuration
    python scripts/check_env.py
    ```
@@ -64,10 +64,10 @@ NSSM (Non-Sucking Service Manager) is the **recommended approach for Windows** b
    ```powershell
    # Check service status
    nssm status ExecutionEngine
-   
+
    # View logs
    Get-Content logs\service_stderr.log -Tail 50 -Wait
-   
+
    # Windows Services: services.msc
    ```
 
@@ -137,6 +137,14 @@ nssm remove ExecutionEngine confirm
 # Reinstall
 powershell -ExecutionPolicy Bypass -File install_service.ps1
 ```
+
+**`MAX_LOSING_STREAK` validation error on startup**:
+```
+ValueError: MAX_LOSING_STREAK must be >= 1
+```
+Set `MAX_LOSING_STREAK` to your system's worst recorded consecutive losing streak (minimum `1`) in `.env` and restart the service.
+
+---
 
 ## Docker Deployment
 
@@ -220,6 +228,8 @@ docker run -it \
   execution-engine:latest
 ```
 
+---
+
 ## Linux Systemd Service
 
 Deploy on Linux/Mac with systemd:
@@ -236,11 +246,11 @@ Deploy on Linux/Mac with systemd:
    ```bash
    git clone https://github.com/amfredfred/bobis-quote-mt5-trading-engine-py.git
    cd execution-engine
-   
+
    python3 -m venv venv
    source venv/bin/activate
    pip install -e .
-   
+
    cp .env.example .env
    # Edit .env with your settings
    ```
@@ -278,43 +288,39 @@ Deploy on Linux/Mac with systemd:
    ```bash
    # Status
    systemctl status execution-engine
-   
+
    # Logs
    journalctl -u execution-engine -f
-   
+
    # Full logs
    journalctl -u execution-engine --since "1 hour ago"
    ```
 
+---
+
 ## Health Monitoring
 
-### WebSocket Health Check
+### Health Endpoint
 
-```python
-import websockets
-import json
-
-async def health_check():
-    uri = "ws://localhost:8080/ws"
-    try:
-        async with websockets.connect(uri) as websocket:
-            await websocket.send(json.dumps({"type": "ping"}))
-            response = await asyncio.wait_for(websocket.recv(), timeout=5)
-            print("✓ Engine healthy")
-            return True
-    except Exception as e:
-        print(f"✗ Engine unhealthy: {e}")
-        return False
-
-asyncio.run(health_check())
+```bash
+# Check health and config (when running)
+curl http://localhost:8080/health
 ```
+
+Response includes:
+- MT5 connection status
+- Daily loss percentage
+- Open trade count
+- Derived `max_open_trades` (`MAX_LOSING_STREAK + 1`)
+- Risk configuration summary
 
 ### Metrics Endpoint
 
 ```bash
-# Check metrics (when running)
 curl http://localhost:8080/metrics
 ```
+
+---
 
 ## Backup & Recovery
 
@@ -343,6 +349,8 @@ cp .env .env.backup
 tar czf logs-$(date +%Y%m%d).tar.gz logs/
 ```
 
+---
+
 ## Performance Tuning
 
 ### Memory Usage
@@ -369,6 +377,8 @@ If CPU is consistently high:
 - Check for tight loops in rules
 - Monitor database query performance
 
+---
+
 ## Scaling
 
 ### Multiple Instances
@@ -393,6 +403,8 @@ services:
           memory: 256M
 ```
 
+---
+
 ## Security
 
 ### Service Isolation
@@ -413,6 +425,8 @@ services:
 - Rotate logs regularly
 - Encrypt sensitive data in logs
 - Restrict log file access permissions
+
+---
 
 ## Disaster Recovery
 
@@ -443,6 +457,10 @@ Register-ScheduledTask `
 # Daily restart at 2 AM
 0 2 * * * systemctl restart execution-engine
 ```
+
+Note: `LossTracker` automatically resets its daily state at midnight via the internal `paused_until` rollover mechanism. A daily service restart is optional but recommended to clear any in-memory accumulation.
+
+---
 
 ## Choosing Your Deployment
 

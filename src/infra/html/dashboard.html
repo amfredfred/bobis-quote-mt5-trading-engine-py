@@ -1,809 +1,1519 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Execution Engine</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --bg:        #1a1714;
-  --bg-2:      #221e1a;
-  --surface:   #2a2520;
-  --surface-2: #312c27;
-  --border:    #3d3830;
-  --border-2:  #4a4438;
-  --text:      #f0ede8;
-  --text-2:    #c8c4be;
-  --muted:     #7a7268;
-  --muted-2:   #5a5248;
-
-  --green:        #3dd68c;
-  --green-bg:     rgba(61,214,140,.12);
-  --green-border: rgba(61,214,140,.25);
-
-  --red:        #ff6b6b;
-  --red-bg:     rgba(255,107,107,.12);
-  --red-border: rgba(255,107,107,.25);
-
-  --yellow:        #ffd166;
-  --yellow-bg:     rgba(255,209,102,.12);
-  --yellow-border: rgba(255,209,102,.25);
-
-  --blue:        #74b9ff;
-  --blue-bg:     rgba(116,185,255,.12);
-  --blue-border: rgba(116,185,255,.25);
-
-  --font-sans: 'IBM Plex Sans', sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
-  --radius: 4px;
-  --shadow: 0 1px 3px rgba(0,0,0,.3);
-  --shadow-md: 0 4px 16px rgba(0,0,0,.4);
-}
-
-html, body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  line-height: 1.5;
-  min-height: 100vh;
-}
-
-/* ── HEADER ──────────────────────────────────────────────── */
-header {
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  padding: 0 24px;
-  height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  position: sticky;
-  top: 0;
-  z-index: 200;
-  box-shadow: 0 1px 0 var(--border);
-}
-
-.logo {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.logo-mark {
-  width: 26px; height: 26px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-2);
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.header-nav {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.nav-pill {
-  padding: 5px 14px;
-  border-radius: 3px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--muted);
-  cursor: pointer;
-  transition: color .15s, background .15s;
-  white-space: nowrap;
-  user-select: none;
-}
-.nav-pill:hover  { color: var(--text-2); background: var(--surface); }
-.nav-pill.active { color: var(--text);   background: var(--surface-2); border: 1px solid var(--border); }
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-shrink: 0;
-}
-
-.status-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 3px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.status-badge.connected    { background: var(--green-bg);  color: var(--green);  border: 1px solid var(--green-border); }
-.status-badge.disconnected { background: var(--red-bg);    color: var(--red);    border: 1px solid var(--red-border); }
-
-.dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: blink 2s ease-in-out infinite;
-}
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-.clock {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-/* ── SECTIONS ────────────────────────────────────────────── */
-main { padding: 20px 24px 60px; max-width: 1600px; margin: 0 auto; }
-
-.section { display: none; flex-direction: column; gap: 16px; }
-.section.active { display: flex; }
-
-/* ── KPI STRIP ───────────────────────────────────────────── */
-.kpi-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-}
-@media (max-width: 960px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 480px) { .kpi-strip { grid-template-columns: 1fr 1fr; } }
-
-.kpi {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 16px 14px;
-  box-shadow: var(--shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  position: relative;
-  overflow: hidden;
-  transition: border-color .15s;
-}
-.kpi:hover { border-color: var(--border-2); }
-.kpi::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
-  background: var(--kpi-accent, var(--border-2));
-}
-
-.kpi-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-top: 4px;
-}
-.kpi-value {
-  font-family: var(--font-mono);
-  font-size: 28px;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--text);
-  letter-spacing: -.02em;
-}
-.kpi-sub { font-size: 11px; color: var(--muted); }
-.kpi-bar-track { height: 2px; background: var(--bg-2); border-radius: 1px; margin-top: 8px; overflow: hidden; }
-.kpi-bar-fill  { height: 100%; border-radius: 1px; transition: width .6s ease; }
-
-/* ── MAIN GRID ───────────────────────────────────────────── */
-.main-grid {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: 16px;
-  align-items: start;
-}
-@media (max-width: 960px) { .main-grid { grid-template-columns: 1fr; } }
-
-/* ── CARD ────────────────────────────────────────────────── */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-.card-header {
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--bg-2);
-}
-.card-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--text-2);
-}
-.card-meta {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-}
-
-/* ── TABLE ───────────────────────────────────────────────── */
-.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table { width: 100%; border-collapse: collapse; min-width: 600px; }
-th {
-  background: var(--bg);
-  padding: 9px 14px;
-  text-align: left;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--muted);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-td {
-  padding: 11px 14px;
-  border-bottom: 1px solid rgba(255,255,255,.04);
-  font-size: 12px;
-  vertical-align: middle;
-  white-space: nowrap;
-}
-tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover td { background: var(--surface-2); }
-
-.mono { font-family: var(--font-mono); font-size: 11px; }
-
-.empty-row {
-  text-align: center;
-  padding: 40px 14px;
-  color: var(--muted);
-  font-size: 12px;
-  letter-spacing: .05em;
-}
-
-/* ── BADGES ──────────────────────────────────────────────── */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  font-family: var(--font-mono);
-  border: 1px solid transparent;
-}
-.badge-buy  { background: var(--green-bg);  color: var(--green);  border-color: var(--green-border); }
-.badge-sell { background: var(--red-bg);    color: var(--red);    border-color: var(--red-border); }
-.badge-open { background: var(--blue-bg);   color: var(--blue);   border-color: var(--blue-border); }
-.badge-tp1  { background: var(--green-bg);  color: var(--green);  border-color: var(--green-border); font-size:9px; margin-left:5px; }
-.badge-stub { background: var(--surface-2); color: var(--muted);  border-color: var(--border); margin-left:5px; font-size:9px; }
-
-.sym-label { font-family: var(--font-mono); font-weight: 600; font-size: 12px; color: var(--text); letter-spacing: .04em; }
-
-/* ── SIDEBAR ─────────────────────────────────────────────── */
-.sidebar { display: flex; flex-direction: column; gap: 10px; }
-
-.gauge-block { padding: 14px 16px; }
-.gauge-block-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-}
-.gauge-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
-.gauge-row:last-child { margin-bottom: 0; }
-.g-label { font-size: 11px; color: var(--text-2); width: 86px; flex-shrink: 0; }
-.g-track { flex: 1; height: 4px; background: var(--bg-2); border-radius: 2px; overflow: hidden; }
-.g-fill  { height: 100%; border-radius: 2px; transition: width .5s ease; }
-.g-val   { font-family: var(--font-mono); font-size: 11px; font-weight: 500; width: 60px; text-align: right; flex-shrink: 0; }
-
-/* exposure */
-.exp-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
-.exp-row:last-child { border-bottom: none; }
-.exp-sym   { font-family: var(--font-mono); font-weight: 600; font-size: 11px; width: 66px; flex-shrink: 0; }
-.exp-track { flex: 1; height: 5px; background: var(--bg-2); border-radius: 2px; overflow: hidden; }
-.exp-fill  { height: 100%; border-radius: 2px; }
-.exp-count { font-family: var(--font-mono); font-size: 10px; color: var(--muted); width: 34px; text-align: right; }
-
-/* ── BOTTOM GRID ─────────────────────────────────────────── */
-.bottom-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
-@media (max-width: 1100px) { .bottom-grid { grid-template-columns: repeat(2,1fr); } }
-@media (max-width: 600px)  { .bottom-grid { grid-template-columns: 1fr; } }
-
-/* metric list */
-.metric-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 9px 16px;
-  border-bottom: 1px solid rgba(255,255,255,.04);
-  transition: background .1s;
-}
-.metric-row:last-child { border-bottom: none; }
-.metric-row:hover { background: var(--surface-2); }
-.m-key { font-size: 11px; color: var(--muted); }
-.m-val { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--text); }
-
-/* config cells */
-.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); }
-.config-cell { background: var(--surface); padding: 11px 13px; transition: background .1s; }
-.config-cell:hover { background: var(--surface-2); }
-.c-label { font-size: 9px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
-.c-val   { font-family: var(--font-mono); font-size: 16px; font-weight: 600; color: var(--text); }
-
-/* ── POSITIONS PAGE ──────────────────────────────────────── */
-.positions-full .table-scroll { max-height: calc(100vh - 160px); overflow-y: auto; }
-
-/* ── METRICS PAGE ────────────────────────────────────────── */
-.metrics-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
-@media (max-width: 900px) { .metrics-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 500px) { .metrics-grid { grid-template-columns: 1fr; } }
-
-.metrics-big { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; margin-bottom: 0; }
-@media (max-width: 700px) { .metrics-big { grid-template-columns: 1fr; } }
-
-.stat-block {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  box-shadow: var(--shadow);
-}
-.stat-block-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 16px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
-}
-.stat-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 7px 0;
-  border-bottom: 1px solid rgba(255,255,255,.04);
-}
-.stat-row:last-child { border-bottom: none; }
-.stat-key { font-size: 11px; color: var(--text-2); }
-.stat-val { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); }
-
-/* ── SECTION SEP ─────────────────────────────────────────── */
-.section-sep {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.section-sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-/* ── COLOR HELPERS ───────────────────────────────────────── */
-.c-green  { color: var(--green) !important; }
-.c-red    { color: var(--red) !important; }
-.c-yellow { color: var(--yellow) !important; }
-.c-blue   { color: var(--blue) !important; }
-.c-muted  { color: var(--muted) !important; }
-
-/* ── SCROLLBAR ───────────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
-
-/* ── ANIMATIONS ──────────────────────────────────────────── */
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.section.active > * { animation: fadeUp .25s ease both; }
-.section.active > *:nth-child(2) { animation-delay: .05s; }
-.section.active > *:nth-child(3) { animation-delay: .1s; }
-
-@media (max-width: 700px) {
-  header { padding: 0 16px; }
-  .clock { display: none; }
-  main   { padding: 16px 16px 60px; }
-}
-</style>
-</head>
-<body>
-
-<header>
-  <div class="logo">
-    <div class="logo-mark">▸</div>
-    ExecEngine
-  </div>
-
-  <nav class="header-nav">
-    <div class="nav-pill active" onclick="showSection('overview',this)">Overview</div>
-    <div class="nav-pill" onclick="showSection('positions',this)">Positions</div>
-    <div class="nav-pill" onclick="showSection('metrics',this)">Metrics</div>
-  </nav>
-
-  <div class="header-right">
-    <div class="clock" id="clock"></div>
-    <div class="status-badge {conn_class}">
-      <div class="dot"></div>
-      {conn_label}
-    </div>
-  </div>
-</header>
-
-<main>
-
-<!-- ════════════════════════════════════════════════════════
-     OVERVIEW
-════════════════════════════════════════════════════════ -->
-<div class="section active" id="section-overview">
-
-  <div class="kpi-strip">
-    <div class="kpi" style="--kpi-accent:{trades_bar_color}">
-      <div class="kpi-label">Open Trades</div>
-      <div class="kpi-value">{open_count}</div>
-      <div class="kpi-sub">of {max_trades} maximum</div>
-      <div class="kpi-bar-track"><div class="kpi-bar-fill" style="width:{trades_bar_w}%;background:{trades_bar_color}"></div></div>
-    </div>
-    <div class="kpi" style="--kpi-accent:{loss_color}">
-      <div class="kpi-label">Daily Loss</div>
-      <div class="kpi-value" style="color:{loss_color}">{daily_loss:.2f}%</div>
-      <div class="kpi-sub">limit {max_daily_loss}%</div>
-      <div class="kpi-bar-track"><div class="kpi-bar-fill" style="width:{loss_bar_w}%;background:{loss_color}"></div></div>
-    </div>
-    <div class="kpi" style="--kpi-accent:var(--blue)">
-      <div class="kpi-label">Win Rate</div>
-      <div class="kpi-value" style="color:{winrate_color}">{winrate}</div>
-      <div class="kpi-sub">{win_total}W · {loss_total}L · {tp2_count} full closes</div>
-    </div>
-    <div class="kpi" style="--kpi-accent:var(--border-2)">
-      <div class="kpi-label">Approval Rate</div>
-      <div class="kpi-value">{approval_rate}</div>
-      <div class="kpi-sub">{approved_count} approved / {rejected_count} rejected</div>
-    </div>
-    <div class="kpi" style="--kpi-accent:var(--green)">
-      <div class="kpi-label">Trades Opened</div>
-      <div class="kpi-value">{opened_count}</div>
-      <div class="kpi-sub">TP1 {tp1_count} · TP2 {tp2_count} · SL {sl_count}</div>
-    </div>
-    <div class="kpi" style="--kpi-accent:{queue_color}">
-      <div class="kpi-label">Queue Depth</div>
-      <div class="kpi-value" style="color:{queue_color}">{queue_depth}</div>
-      <div class="kpi-sub">signals pending</div>
-    </div>
-    <div class="kpi" style="--kpi-accent:var(--border-2)">
-      <div class="kpi-label">Pipeline</div>
-      <div class="kpi-value" style="font-size:22px;padding-top:5px;color:{lat_pip_color}">{lat_pip_fmt}</div>
-      <div class="kpi-sub">broker RT {lat_brt_fmt}</div>
-    </div>
-    <div class="kpi" style="--kpi-accent:var(--muted-2)">
-      <div class="kpi-label">Uptime</div>
-      <div class="kpi-value" style="font-size:22px;padding-top:5px">{uptime_fmt}</div>
-      <div class="kpi-sub">since engine start</div>
-    </div>
-  </div>
-
-  <div class="main-grid">
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Open Positions</div>
-        <div class="card-meta">{open_count} active</div>
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Symbol</th><th>Side</th><th>Entry</th><th>Stop Loss</th>
-              <th>TP1</th><th>TP2</th><th>Lots</th><th>Status</th><th>Ticket</th><th>Opened</th>
-            </tr>
-          </thead>
-          <tbody>{trades_rows}</tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="sidebar">
-      <div class="card">
-        <div class="gauge-block">
-          <div class="gauge-block-title">Risk Utilisation</div>
-          <div class="gauge-row">
-            <div class="g-label">Open trades</div>
-            <div class="g-track"><div class="g-fill" style="width:{trades_bar_w}%;background:{trades_bar_color}"></div></div>
-            <div class="g-val" style="color:{trades_bar_color}">{open_count}/{max_trades}</div>
-          </div>
-          <div class="gauge-row">
-            <div class="g-label">Daily loss</div>
-            <div class="g-track"><div class="g-fill" style="width:{loss_bar_w}%;background:{loss_color}"></div></div>
-            <div class="g-val" style="color:{loss_color}">{daily_loss:.2f}%</div>
-          </div>
-          <div class="gauge-row">
-            <div class="g-label">Queue</div>
-            <div class="g-track"><div class="g-fill" style="width:{queue_bar_w}%;background:{queue_color}"></div></div>
-            <div class="g-val" style="color:{queue_color}">{queue_depth}/50</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="gauge-block">
-          <div class="gauge-block-title">Latency</div>
-          <div class="gauge-row">
-            <div class="g-label">Signal→trade</div>
-            <div class="g-track"><div class="g-fill" style="width:{lat_sig_w}%;background:{lat_sig_color}"></div></div>
-            <div class="g-val" style="color:{lat_sig_color}">{lat_sig_fmt}</div>
-          </div>
-          <div class="gauge-row">
-            <div class="g-label">Pipeline</div>
-            <div class="g-track"><div class="g-fill" style="width:{lat_pip_w}%;background:{lat_pip_color}"></div></div>
-            <div class="g-val" style="color:{lat_pip_color}">{lat_pip_fmt}</div>
-          </div>
-          <div class="gauge-row">
-            <div class="g-label">Broker RT</div>
-            <div class="g-track"><div class="g-fill" style="width:{lat_brt_w}%;background:{lat_brt_color}"></div></div>
-            <div class="g-val" style="color:{lat_brt_color}">{lat_brt_fmt}</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="gauge-block">
-          <div class="gauge-block-title">Symbol Exposure</div>
-          {symbol_exposure_rows}
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="section-sep">Details</div>
-
-  <div class="bottom-grid">
-    <div class="card">
-      <div class="card-header"><div class="card-title">Risk Config</div></div>
-      <div class="config-grid">
-        <div class="config-cell"><div class="c-label">Risk / Trade</div><div class="c-val c-green">{risk_pct}%</div></div>
-        <div class="config-cell"><div class="c-label">Mode</div><div class="c-val">{risk_mode}</div></div>
-        <div class="config-cell"><div class="c-label">Max Trades</div><div class="c-val">{max_trades}</div></div>
-        <div class="config-cell"><div class="c-label">Max / Symbol</div><div class="c-val">{max_per_symbol}</div></div>
-        <div class="config-cell"><div class="c-label">Daily Limit</div><div class="c-val c-red">{max_daily_loss}%</div></div>
-        <div class="config-cell"><div class="c-label">Min R:R</div><div class="c-val c-yellow">{min_rr}</div></div>
-        <div class="config-cell"><div class="c-label">Poll Interval</div><div class="c-val">{poll_interval}s</div></div>
-        <div class="config-cell"><div class="c-label">SL Rejected</div><div class="c-val c-red">{rejected_count}</div></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header"><div class="card-title">Session</div></div>
-      <div class="metric-row"><div class="m-key">Signals received</div><div class="m-val">{signals_total}</div></div>
-      <div class="metric-row"><div class="m-key">Approved</div><div class="m-val c-green">{approved_count}</div></div>
-      <div class="metric-row"><div class="m-key">Rejected</div><div class="m-val c-yellow">{rejected_count}</div></div>
-      <div class="metric-row"><div class="m-key">Trades opened</div><div class="m-val">{opened_count}</div></div>
-      <div class="metric-row"><div class="m-key">TP1 hits</div><div class="m-val c-green">{tp1_count}</div></div>
-      <div class="metric-row"><div class="m-key">TP2 hits</div><div class="m-val c-green">{tp2_count}</div></div>
-      <div class="metric-row"><div class="m-key">SL hits</div><div class="m-val c-red">{sl_count}</div></div>
-      <div class="metric-row"><div class="m-key">Partial fills</div><div class="m-val c-yellow">{partial_fills}</div></div>
-      <div class="metric-row"><div class="m-key">Orders retried</div><div class="m-val c-yellow">{orders_retried}</div></div>
-      <div class="metric-row"><div class="m-key">Emergency closes</div><div class="m-val c-red">{emergency_closes}</div></div>
-    </div>
-    <div class="card">
-      <div class="card-header"><div class="card-title">Counters</div></div>
-      <div style="max-height:270px;overflow-y:auto">{counter_rows}</div>
-    </div>
-    <div class="card">
-      <div class="card-header"><div class="card-title">Gauges</div></div>
-      <div style="max-height:270px;overflow-y:auto">{gauge_rows}</div>
-    </div>
-  </div>
-
-</div><!-- /overview -->
-
-
-<!-- ════════════════════════════════════════════════════════
-     POSITIONS
-════════════════════════════════════════════════════════ -->
-<div class="section" id="section-positions">
-  <div class="card positions-full">
-    <div class="card-header">
-      <div class="card-title">All Open Positions</div>
-      <div class="card-meta">{open_count} active</div>
-    </div>
-    <div class="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>Symbol</th><th>Side</th><th>Entry</th><th>Stop Loss</th>
-            <th>TP1</th><th>TP2</th><th>Lots</th><th>Status</th><th>Ticket</th><th>Opened</th>
-          </tr>
-        </thead>
-        <tbody>{trades_rows}</tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="bottom-grid">
-    <div class="card">
-      <div class="gauge-block">
-        <div class="gauge-block-title">Risk Utilisation</div>
-        <div class="gauge-row">
-          <div class="g-label">Open trades</div>
-          <div class="g-track"><div class="g-fill" style="width:{trades_bar_w}%;background:{trades_bar_color}"></div></div>
-          <div class="g-val" style="color:{trades_bar_color}">{open_count}/{max_trades}</div>
-        </div>
-        <div class="gauge-row">
-          <div class="g-label">Daily loss</div>
-          <div class="g-track"><div class="g-fill" style="width:{loss_bar_w}%;background:{loss_color}"></div></div>
-          <div class="g-val" style="color:{loss_color}">{daily_loss:.2f}%</div>
-        </div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="gauge-block">
-        <div class="gauge-block-title">Symbol Exposure</div>
-        {symbol_exposure_rows}
-      </div>
-    </div>
-  </div>
-</div><!-- /positions -->
-
-
-<!-- ════════════════════════════════════════════════════════
-     METRICS
-════════════════════════════════════════════════════════ -->
-<div class="section" id="section-metrics">
-
-  <div class="metrics-big">
-    <div class="stat-block">
-      <div class="stat-block-title">Latency</div>
-      <div class="stat-row"><div class="stat-key">Signal → Trade</div><div class="stat-val" style="color:{lat_sig_color}">{lat_sig_fmt}</div></div>
-      <div class="stat-row"><div class="stat-key">Pipeline only</div><div class="stat-val" style="color:{lat_pip_color}">{lat_pip_fmt}</div></div>
-      <div class="stat-row"><div class="stat-key">Broker round-trip</div><div class="stat-val" style="color:{lat_brt_color}">{lat_brt_fmt}</div></div>
-    </div>
-    <div class="stat-block">
-      <div class="stat-block-title">Performance</div>
-      <div class="stat-row"><div class="stat-key">Win rate</div><div class="stat-val" style="color:{winrate_color}">{winrate}</div></div>
-      <div class="stat-row"><div class="stat-key">TP1 hits</div><div class="stat-val c-green">{tp1_count}</div></div>
-      <div class="stat-row"><div class="stat-key">TP2 hits</div><div class="stat-val c-green">{tp2_count}</div></div>
-      <div class="stat-row"><div class="stat-key">SL hits</div><div class="stat-val c-red">{sl_count}</div></div>
-      <div class="stat-row"><div class="stat-key">Approval rate</div><div class="stat-val">{approval_rate}</div></div>
-    </div>
-  </div>
-
-  <div class="metrics-grid">
-    <div class="stat-block">
-      <div class="stat-block-title">Signals</div>
-      <div class="stat-row"><div class="stat-key">Total received</div><div class="stat-val">{signals_total}</div></div>
-      <div class="stat-row"><div class="stat-key">Approved</div><div class="stat-val c-green">{approved_count}</div></div>
-      <div class="stat-row"><div class="stat-key">Rejected</div><div class="stat-val c-yellow">{rejected_count}</div></div>
-    </div>
-    <div class="stat-block">
-      <div class="stat-block-title">Orders</div>
-      <div class="stat-row"><div class="stat-key">Trades opened</div><div class="stat-val">{opened_count}</div></div>
-      <div class="stat-row"><div class="stat-key">Partial fills</div><div class="stat-val c-yellow">{partial_fills}</div></div>
-      <div class="stat-row"><div class="stat-key">Retried</div><div class="stat-val c-yellow">{orders_retried}</div></div>
-      <div class="stat-row"><div class="stat-key">Emergency closes</div><div class="stat-val c-red">{emergency_closes}</div></div>
-    </div>
-    <div class="stat-block">
-      <div class="stat-block-title">Risk</div>
-      <div class="stat-row"><div class="stat-key">Daily loss</div><div class="stat-val" style="color:{loss_color}">{daily_loss:.2f}%</div></div>
-      <div class="stat-row"><div class="stat-key">Open trades</div><div class="stat-val">{open_count}/{max_trades}</div></div>
-      <div class="stat-row"><div class="stat-key">Queue depth</div><div class="stat-val">{queue_depth}</div></div>
-    </div>
-  </div>
-
-  <div class="section-sep">Raw Metrics</div>
-
-  <div class="bottom-grid">
-    <div class="card" style="grid-column:span 2">
-      <div class="card-header"><div class="card-title">Counters</div></div>
-      <div style="max-height:320px;overflow-y:auto">{counter_rows}</div>
-    </div>
-    <div class="card" style="grid-column:span 2">
-      <div class="card-header"><div class="card-title">Gauges</div></div>
-      <div style="max-height:320px;overflow-y:auto">{gauge_rows}</div>
-    </div>
-  </div>
-
-</div><!-- /metrics -->
-
-</main>
-
-<script>
-function showSection(name, el) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.nav-pill').forEach(p => p.classList.remove('active'));
-  document.getElementById('section-' + name).classList.add('active');
-  el.classList.add('active');
-}
-
-// ── Clock ────────────────────────────────────────────────────
-function updateClock() {
-  const now = new Date();
-  const p = n => String(n).padStart(2,'0');
-  const el = document.getElementById('clock');
-  if (el) el.textContent =
-    now.getFullYear()+'-'+p(now.getMonth()+1)+'-'+p(now.getDate())+
-    ' '+p(now.getHours())+':'+p(now.getMinutes())+':'+p(now.getSeconds());
-}
-updateClock();
-setInterval(updateClock, 1000);
-
-// ── Live data refresh — no flicker, no tab reset ─────────────
-// Fetches fresh HTML from the server and surgically updates only
-// the data regions. Active tab and scroll positions are preserved.
-const REFRESH_INTERVAL_MS = 5000;
-
-const DATA_SELECTORS = [
-  // KPI strip — entire block
-  '.kpi-strip',
-  // Sidebar gauges
-  '#section-overview .sidebar',
-  // Positions tbody (overview + positions tab)
-  '#section-overview .card tbody',
-  '#section-positions .card tbody',
-  '#section-positions .card .card-meta',
-  // Bottom detail cards (overview)
-  '#section-overview .bottom-grid',
-  // Positions bottom grid
-  '#section-positions .bottom-grid',
-  // Metrics section
-  '#section-metrics',
-  // Status badge
-  '.status-badge',
-];
-
-async function refreshData() {
-  try {
-    const res = await fetch('/', { cache: 'no-store' });
-    if (!res.ok) return;
-    const text = await res.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, 'text/html');
-
-    for (const sel of DATA_SELECTORS) {
-      const current = document.querySelector(sel);
-      const incoming = doc.querySelector(sel);
-      if (current && incoming && current.innerHTML !== incoming.innerHTML) {
-        current.innerHTML = incoming.innerHTML;
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Execution Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet">
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #1a1714;
+      --bg-2: #221e1a;
+      --surface: #2a2520;
+      --surface-2: #312c27;
+      --border: #3d3830;
+      --border-2: #4a4438;
+      --text: #f0ede8;
+      --text-2: #c8c4be;
+      --muted: #7a7268;
+      --muted-2: #5a5248;
+
+      --green: #3dd68c;
+      --green-bg: rgba(61, 214, 140, .12);
+      --green-border: rgba(61, 214, 140, .25);
+
+      --red: #ff6b6b;
+      --red-bg: rgba(255, 107, 107, .12);
+      --red-border: rgba(255, 107, 107, .25);
+
+      --yellow: #ffd166;
+      --yellow-bg: rgba(255, 209, 102, .12);
+      --yellow-border: rgba(255, 209, 102, .25);
+
+      --blue: #74b9ff;
+      --blue-bg: rgba(116, 185, 255, .12);
+      --blue-border: rgba(116, 185, 255, .25);
+
+      --font-sans: 'IBM Plex Sans', sans-serif;
+      --font-mono: 'IBM Plex Mono', monospace;
+      --radius: 4px;
+      --shadow: 0 1px 3px rgba(0, 0, 0, .3);
+      --shadow-md: 0 4px 16px rgba(0, 0, 0, .4);
+    }
+
+    html,
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ──────────────────────────────────────────────── */
+    header {
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 200;
+      box-shadow: 0 1px 0 var(--border);
+    }
+
+    .logo {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .logo-mark {
+      width: 26px;
+      height: 26px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    .header-nav {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .nav-pill {
+      padding: 5px 14px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      cursor: pointer;
+      transition: color .15s, background .15s;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .nav-pill:hover {
+      color: var(--text-2);
+      background: var(--surface);
+    }
+
+    .nav-pill.active {
+      color: var(--text);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .status-badge.connected {
+      background: var(--green-bg);
+      color: var(--green);
+      border: 1px solid var(--green-border);
+    }
+
+    .status-badge.disconnected {
+      background: var(--red-bg);
+      color: var(--red);
+      border: 1px solid var(--red-border);
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: blink 2s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .3
       }
     }
-  } catch (e) {
-    // network error — silently skip, try again next interval
-  }
-}
 
-setInterval(refreshData, REFRESH_INTERVAL_MS);
-</script>
+    .clock {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ── SECTIONS ────────────────────────────────────────────── */
+    main {
+      padding: 20px 24px 60px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .section {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section.active {
+      display: flex;
+    }
+
+    /* ── KPI STRIP ───────────────────────────────────────────── */
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    @media (max-width: 960px) {
+      .kpi-strip {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 480px) {
+      .kpi-strip {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .kpi {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 16px 14px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .15s;
+    }
+
+    .kpi:hover {
+      border-color: var(--border-2);
+    }
+
+    .kpi::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--kpi-accent, var(--border-2));
+    }
+
+    .kpi-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .kpi-value {
+      font-family: var(--font-mono);
+      font-size: 28px;
+      font-weight: 600;
+      line-height: 1.1;
+      color: var(--text);
+      letter-spacing: -.02em;
+    }
+
+    .kpi-sub {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .kpi-bar-track {
+      height: 2px;
+      background: var(--bg-2);
+      border-radius: 1px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+
+    .kpi-bar-fill {
+      height: 100%;
+      border-radius: 1px;
+      transition: width .6s ease;
+    }
+
+    /* ── MAIN GRID ───────────────────────────────────────────── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    @media (max-width: 960px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ── CARD ────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-2);
+    }
+
+    .card-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-2);
+    }
+
+    .card-meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── TABLE ───────────────────────────────────────────────── */
+    .table-scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 600px;
+    }
+
+    th {
+      background: var(--bg);
+      padding: 9px 14px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 11px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+      font-size: 12px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    tbody tr:hover td {
+      background: var(--surface-2);
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .empty-row {
+      text-align: center;
+      padding: 40px 14px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .05em;
+    }
+
+    /* ── BADGES ──────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      border: 1px solid transparent;
+    }
+
+    .badge-buy {
+      background: var(--green-bg);
+      color: var(--green);
+      border-color: var(--green-border);
+    }
+
+    .badge-sell {
+      background: var(--red-bg);
+      color: var(--red);
+      border-color: var(--red-border);
+    }
+
+    .badge-open {
+      background: var(--blue-bg);
+      color: var(--blue);
+      border-color: var(--blue-border);
+    }
+
+    .badge-tp1 {
+      background: var(--green-bg);
+      color: var(--green);
+      border-color: var(--green-border);
+      font-size: 9px;
+      margin-left: 5px;
+    }
+
+    .badge-stub {
+      background: var(--surface-2);
+      color: var(--muted);
+      border-color: var(--border);
+      margin-left: 5px;
+      font-size: 9px;
+    }
+
+    .sym-label {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--text);
+      letter-spacing: .04em;
+    }
+
+    /* ── SIDEBAR ─────────────────────────────────────────────── */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .gauge-block {
+      padding: 14px 16px;
+    }
+
+    .gauge-block-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .gauge-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 9px;
+    }
+
+    .gauge-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .g-label {
+      font-size: 11px;
+      color: var(--text-2);
+      width: 86px;
+      flex-shrink: 0;
+    }
+
+    .g-track {
+      flex: 1;
+      height: 4px;
+      background: var(--bg-2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .g-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width .5s ease;
+    }
+
+    .g-val {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      width: 60px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* exposure */
+    .exp-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .exp-row:last-child {
+      border-bottom: none;
+    }
+
+    .exp-sym {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 11px;
+      width: 66px;
+      flex-shrink: 0;
+    }
+
+    .exp-track {
+      flex: 1;
+      height: 5px;
+      background: var(--bg-2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .exp-fill {
+      height: 100%;
+      border-radius: 2px;
+    }
+
+    .exp-count {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--muted);
+      width: 34px;
+      text-align: right;
+    }
+
+    /* ── BOTTOM GRID ─────────────────────────────────────────── */
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 1100px) {
+      .bottom-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 600px) {
+      .bottom-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* metric list */
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+      transition: background .1s;
+    }
+
+    .metric-row:last-child {
+      border-bottom: none;
+    }
+
+    .metric-row:hover {
+      background: var(--surface-2);
+    }
+
+    .m-key {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .m-val {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    /* config cells */
+    .config-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+    }
+
+    .config-cell {
+      background: var(--surface);
+      padding: 11px 13px;
+      transition: background .1s;
+    }
+
+    .config-cell:hover {
+      background: var(--surface-2);
+    }
+
+    .c-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+
+    .c-val {
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    /* ── POSITIONS PAGE ──────────────────────────────────────── */
+    .positions-full .table-scroll {
+      max-height: calc(100vh - 160px);
+      overflow-y: auto;
+    }
+
+    /* ── METRICS PAGE ────────────────────────────────────────── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+      .metrics-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 500px) {
+      .metrics-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .metrics-big {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin-bottom: 0;
+    }
+
+    @media (max-width: 700px) {
+      .metrics-big {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .stat-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .stat-block-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .stat-row:last-child {
+      border-bottom: none;
+    }
+
+    .stat-key {
+      font-size: 11px;
+      color: var(--text-2);
+    }
+
+    .stat-val {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    /* ── SECTION SEP ─────────────────────────────────────────── */
+    .section-sep {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .section-sep::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── COLOR HELPERS ───────────────────────────────────────── */
+    .c-green {
+      color: var(--green) !important;
+    }
+
+    .c-red {
+      color: var(--red) !important;
+    }
+
+    .c-yellow {
+      color: var(--yellow) !important;
+    }
+
+    .c-blue {
+      color: var(--blue) !important;
+    }
+
+    .c-muted {
+      color: var(--muted) !important;
+    }
+
+    /* ── SCROLLBAR ───────────────────────────────────────────── */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--bg);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-2);
+      border-radius: 3px;
+    }
+
+    /* ── ANIMATIONS ──────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .section.active>* {
+      animation: fadeUp .25s ease both;
+    }
+
+    .section.active>*:nth-child(2) {
+      animation-delay: .05s;
+    }
+
+    .section.active>*:nth-child(3) {
+      animation-delay: .1s;
+    }
+
+    @media (max-width: 700px) {
+      header {
+        padding: 0 16px;
+      }
+
+      .clock {
+        display: none;
+      }
+
+      main {
+        padding: 16px 16px 60px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <div class="logo">
+      <div class="logo-mark">▸</div>
+      ExecEngine
+    </div>
+
+    <nav class="header-nav">
+      <div class="nav-pill active" onclick="showSection('overview',this)">Overview</div>
+      <div class="nav-pill" onclick="showSection('positions',this)">Positions</div>
+      <div class="nav-pill" onclick="showSection('metrics',this)">Metrics</div>
+      <div class="nav-pill" onclick="showSection('logs',this)">
+        Logs
+        <span id="log-dot"
+          style="display:none;width:6px;height:6px;border-radius:50%;background:var(--green);margin-left:5px;vertical-align:middle;display:inline-block"></span>
+      </div>
+    </nav>
+
+    <div class="header-right">
+      <div class="clock" id="clock"></div>
+      <div class="status-badge {conn_class}">
+        <div class="dot"></div>
+        {conn_label}
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ════════════════════════════════════════════════════════
+     OVERVIEW
+════════════════════════════════════════════════════════ -->
+    <div class="section active" id="section-overview">
+
+      <div class="kpi-strip">
+        <div class="kpi" style="--kpi-accent:{trades_bar_color}">
+          <div class="kpi-label">Open Trades</div>
+          <div class="kpi-value">{open_count}</div>
+          <div class="kpi-sub">of {max_trades} maximum</div>
+          <div class="kpi-bar-track">
+            <div class="kpi-bar-fill" style="width:{trades_bar_w}%;background:{trades_bar_color}"></div>
+          </div>
+        </div>
+        <div class="kpi" style="--kpi-accent:{loss_color}">
+          <div class="kpi-label">Daily Loss</div>
+          <div class="kpi-value" style="color:{loss_color}">{daily_loss:.2f}%</div>
+          <div class="kpi-sub" style="display:flex;gap:10px;flex-wrap:wrap">
+            <span style="color:{loss_color}">-${daily_loss_usd}</span>
+            <span style="color:{daily_pnl_color}">P&amp;L {daily_pnl_usd}</span>
+            <span style="color:var(--muted)">budget ${daily_budget_usd}</span>
+            <span style="color:var(--muted)">limit {max_daily_loss}%</span>
+          </div>
+          <div class="kpi-bar-track">
+            <div class="kpi-bar-fill" style="width:{loss_bar_w}%;background:{loss_color}"></div>
+          </div>
+        </div>
+        <div class="kpi" style="--kpi-accent:var(--blue)">
+          <div class="kpi-label">Win Rate</div>
+          <div class="kpi-value" style="color:{winrate_color}">{winrate}</div>
+          <div class="kpi-sub">{win_total}W · {loss_total}L · {tp2_count} full closes</div>
+        </div>
+        <div class="kpi" style="--kpi-accent:var(--border-2)">
+          <div class="kpi-label">Approval Rate</div>
+          <div class="kpi-value">{approval_rate}</div>
+          <div class="kpi-sub">{approved_count} approved / {rejected_count} rejected</div>
+        </div>
+        <div class="kpi" style="--kpi-accent:var(--green)">
+          <div class="kpi-label">Trades Opened</div>
+          <div class="kpi-value">{opened_count}</div>
+          <div class="kpi-sub">TP1 {tp1_count} · TP2 {tp2_count} · SL {sl_count}</div>
+        </div>
+        <div class="kpi" style="--kpi-accent:{queue_color}">
+          <div class="kpi-label">Queue Depth</div>
+          <div class="kpi-value" style="color:{queue_color}">{queue_depth}</div>
+          <div class="kpi-sub">signals pending</div>
+        </div>
+        <div class="kpi" style="--kpi-accent:var(--border-2)">
+          <div class="kpi-label">Pipeline</div>
+          <div class="kpi-value" style="font-size:22px;padding-top:5px;color:{lat_pip_color}">{lat_pip_fmt}</div>
+          <div class="kpi-sub">broker RT {lat_brt_fmt}</div>
+        </div>
+        <div class="kpi" style="--kpi-accent:var(--muted-2)">
+          <div class="kpi-label">Uptime</div>
+          <div class="kpi-value" style="font-size:22px;padding-top:5px">{uptime_fmt}</div>
+          <div class="kpi-sub">since engine start</div>
+        </div>
+      </div>
+
+      <div class="main-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Open Positions</div>
+            <div class="card-meta">{open_count} active</div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Side</th>
+                  <th>Entry</th>
+                  <th>Stop Loss</th>
+                  <th>TP1</th>
+                  <th>TP2</th>
+                  <th>Lots</th>
+                  <th>P&amp;L</th>
+                  <th>Status</th>
+                  <th>Ticket</th>
+                  <th>Opened</th>
+                </tr>
+              </thead>
+              <tbody>{trades_rows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="sidebar">
+          <div class="card">
+            <div class="gauge-block">
+              <div class="gauge-block-title">Risk Utilisation</div>
+              <div class="gauge-row">
+                <div class="g-label">Open trades</div>
+                <div class="g-track">
+                  <div class="g-fill" style="width:{trades_bar_w}%;background:{trades_bar_color}"></div>
+                </div>
+                <div class="g-val" style="color:{trades_bar_color}">{open_count}/{max_trades}</div>
+              </div>
+              <div class="gauge-row">
+                <div class="g-label">Daily loss</div>
+                <div class="g-track">
+                  <div class="g-fill" style="width:{loss_bar_w}%;background:{loss_color}"></div>
+                </div>
+                <div class="g-val" style="color:{loss_color}">{daily_loss:.2f}% / -${daily_loss_usd}</div>
+              </div>
+              <div class="gauge-row">
+                <div class="g-label">Daily P&amp;L</div>
+                <div class="g-track">
+                  <div class="g-fill" style="width:{loss_bar_w}%;background:{daily_pnl_color}"></div>
+                </div>
+                <div class="g-val" style="color:{daily_pnl_color}">{daily_pnl_usd}</div>
+              </div>
+              <div class="gauge-row">
+                <div class="g-label">Queue</div>
+                <div class="g-track">
+                  <div class="g-fill" style="width:{queue_bar_w}%;background:{queue_color}"></div>
+                </div>
+                <div class="g-val" style="color:{queue_color}">{queue_depth}/50</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="gauge-block">
+              <div class="gauge-block-title">Latency</div>
+              <div class="gauge-row">
+                <div class="g-label">Signal→trade</div>
+                <div class="g-track">
+                  <div class="g-fill" style="width:{lat_sig_w}%;background:{lat_sig_color}"></div>
+                </div>
+                <div class="g-val" style="color:{lat_sig_color}">{lat_sig_fmt}</div>
+              </div>
+              <div class="gauge-row">
+                <div class="g-label">Pipeline</div>
+                <div class="g-track">
+                  <div class="g-fill" style="width:{lat_pip_w}%;background:{lat_pip_color}"></div>
+                </div>
+                <div class="g-val" style="color:{lat_pip_color}">{lat_pip_fmt}</div>
+              </div>
+              <div class="gauge-row">
+                <div class="g-label">Broker RT</div>
+                <div class="g-track">
+                  <div class="g-fill" style="width:{lat_brt_w}%;background:{lat_brt_color}"></div>
+                </div>
+                <div class="g-val" style="color:{lat_brt_color}">{lat_brt_fmt}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="gauge-block">
+              <div class="gauge-block-title">Symbol Exposure</div>
+              {symbol_exposure_rows}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-sep">Details</div>
+
+      <div class="bottom-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Risk Config</div>
+          </div>
+          <div class="config-grid">
+            <div class="config-cell">
+              <div class="c-label">Risk / Trade %</div>
+              <div class="c-val c-green">{risk_pct}%</div>
+            </div>
+            <div class="config-cell">
+              <div class="c-label">Risk / Trade $</div>
+              <div class="c-val c-green">${risk_amount_usd}</div>
+            </div>
+            <div class="config-cell">
+              <div class="c-label">Max Trades</div>
+              <div class="c-val">{max_trades}</div>
+            </div>
+            <div class="config-cell">
+              <div class="c-label">Max / Symbol</div>
+              <div class="c-val">{max_per_symbol}</div>
+            </div>
+            <div class="config-cell">
+              <div class="c-label">Daily Limit %</div>
+              <div class="c-val c-red">{max_daily_loss}%</div>
+            </div>
+            <div class="config-cell">
+              <div class="c-label">Daily Budget $</div>
+              <div class="c-val c-red">${daily_budget_usd}</div>
+            </div>
+            <div class="config-cell">
+              <div class="c-label">Min R:R</div>
+              <div class="c-val c-yellow">{min_rr}</div>
+            </div>
+            <div class="config-cell">
+              <div class="c-label">Poll Interval</div>
+              <div class="c-val">{poll_interval}s</div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Session</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">Signals received</div>
+            <div class="m-val">{signals_total}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">Approved</div>
+            <div class="m-val c-green">{approved_count}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">Rejected</div>
+            <div class="m-val c-yellow">{rejected_count}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">Trades opened</div>
+            <div class="m-val">{opened_count}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">TP1 hits</div>
+            <div class="m-val c-green">{tp1_count}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">TP2 hits</div>
+            <div class="m-val c-green">{tp2_count}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">SL hits</div>
+            <div class="m-val c-red">{sl_count}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">Partial fills</div>
+            <div class="m-val c-yellow">{partial_fills}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">Orders retried</div>
+            <div class="m-val c-yellow">{orders_retried}</div>
+          </div>
+          <div class="metric-row">
+            <div class="m-key">Emergency closes</div>
+            <div class="m-val c-red">{emergency_closes}</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Counters</div>
+          </div>
+          <div style="max-height:270px;overflow-y:auto">{counter_rows}</div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Gauges</div>
+          </div>
+          <div style="max-height:270px;overflow-y:auto">{gauge_rows}</div>
+        </div>
+      </div>
+
+    </div><!-- /overview -->
+
+
+    <!-- ════════════════════════════════════════════════════════
+     POSITIONS
+════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-positions">
+      <div class="card positions-full">
+        <div class="card-header">
+          <div class="card-title">All Open Positions</div>
+          <div class="card-meta">{open_count} active</div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Entry</th>
+                <th>Stop Loss</th>
+                <th>TP1</th>
+                <th>TP2</th>
+                <th>Lots</th>
+                <th>P&amp;L</th>
+                <th>Status</th>
+                <th>Ticket</th>
+                <th>Opened</th>
+              </tr>
+            </thead>
+            <tbody>{trades_rows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bottom-grid">
+        <div class="card">
+          <div class="gauge-block">
+            <div class="gauge-block-title">Risk Utilisation</div>
+            <div class="gauge-row">
+              <div class="g-label">Open trades</div>
+              <div class="g-track">
+                <div class="g-fill" style="width:{trades_bar_w}%;background:{trades_bar_color}"></div>
+              </div>
+              <div class="g-val" style="color:{trades_bar_color}">{open_count}/{max_trades}</div>
+            </div>
+            <div class="gauge-row">
+              <div class="g-label">Daily loss</div>
+              <div class="g-track">
+                <div class="g-fill" style="width:{loss_bar_w}%;background:{loss_color}"></div>
+              </div>
+              <div class="g-val" style="color:{loss_color}">{daily_loss:.2f}% / -${daily_loss_usd}</div>
+            </div>
+            <div class="gauge-row">
+              <div class="g-label">Daily P&amp;L</div>
+              <div class="g-track">
+                <div class="g-fill" style="width:{loss_bar_w}%;background:{daily_pnl_color}"></div>
+              </div>
+              <div class="g-val" style="color:{daily_pnl_color}">{daily_pnl_usd}</div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="gauge-block">
+            <div class="gauge-block-title">Symbol Exposure</div>
+            {symbol_exposure_rows}
+          </div>
+        </div>
+      </div>
+    </div><!-- /positions -->
+
+
+    <!-- ════════════════════════════════════════════════════════
+     METRICS
+════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-metrics">
+
+      <div class="metrics-big">
+        <div class="stat-block">
+          <div class="stat-block-title">Latency</div>
+          <div class="stat-row">
+            <div class="stat-key">Signal → Trade</div>
+            <div class="stat-val" style="color:{lat_sig_color}">{lat_sig_fmt}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Pipeline only</div>
+            <div class="stat-val" style="color:{lat_pip_color}">{lat_pip_fmt}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Broker round-trip</div>
+            <div class="stat-val" style="color:{lat_brt_color}">{lat_brt_fmt}</div>
+          </div>
+        </div>
+        <div class="stat-block">
+          <div class="stat-block-title">Performance</div>
+          <div class="stat-row">
+            <div class="stat-key">Win rate</div>
+            <div class="stat-val" style="color:{winrate_color}">{winrate}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">TP1 hits</div>
+            <div class="stat-val c-green">{tp1_count}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">TP2 hits</div>
+            <div class="stat-val c-green">{tp2_count}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">SL hits</div>
+            <div class="stat-val c-red">{sl_count}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Approval rate</div>
+            <div class="stat-val">{approval_rate}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="stat-block">
+          <div class="stat-block-title">Signals</div>
+          <div class="stat-row">
+            <div class="stat-key">Total received</div>
+            <div class="stat-val">{signals_total}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Approved</div>
+            <div class="stat-val c-green">{approved_count}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Rejected</div>
+            <div class="stat-val c-yellow">{rejected_count}</div>
+          </div>
+        </div>
+        <div class="stat-block">
+          <div class="stat-block-title">Orders</div>
+          <div class="stat-row">
+            <div class="stat-key">Trades opened</div>
+            <div class="stat-val">{opened_count}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Partial fills</div>
+            <div class="stat-val c-yellow">{partial_fills}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Retried</div>
+            <div class="stat-val c-yellow">{orders_retried}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Emergency closes</div>
+            <div class="stat-val c-red">{emergency_closes}</div>
+          </div>
+        </div>
+        <div class="stat-block">
+          <div class="stat-block-title">Risk</div>
+          <div class="stat-row">
+            <div class="stat-key">Daily loss</div>
+            <div class="stat-val" style="color:{loss_color}">{daily_loss:.2f}% -${daily_loss_usd}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Daily P&amp;L</div>
+            <div class="stat-val" style="color:{daily_pnl_color}">{daily_pnl_usd}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Daily budget</div>
+            <div class="stat-val">${daily_budget_usd}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Risk / trade</div>
+            <div class="stat-val">{risk_pct}% ${risk_amount_usd}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Open trades</div>
+            <div class="stat-val">{open_count}/{max_trades}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-key">Queue depth</div>
+            <div class="stat-val">{queue_depth}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-sep">Raw Metrics</div>
+
+      <div class="bottom-grid">
+        <div class="card" style="grid-column:span 2">
+          <div class="card-header">
+            <div class="card-title">Counters</div>
+          </div>
+          <div style="max-height:320px;overflow-y:auto">{counter_rows}</div>
+        </div>
+        <div class="card" style="grid-column:span 2">
+          <div class="card-header">
+            <div class="card-title">Gauges</div>
+          </div>
+          <div style="max-height:320px;overflow-y:auto">{gauge_rows}</div>
+        </div>
+      </div>
+
+    </div><!-- /metrics -->
+
+    <!-- ════════════════════════════════════════════════════════
+     LOGS
+════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-logs">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span
+            style="font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Terminal</span>
+          <span id="sse-status"
+            style="font-size:10px;padding:2px 8px;border-radius:10px;background:var(--surface);color:var(--muted);border:1px solid var(--border)">connecting…</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);cursor:pointer">
+            <input type="checkbox" id="log-autoscroll" checked style="accent-color:var(--green)"> autoscroll
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);cursor:pointer">
+            <input type="checkbox" id="log-events-only"> events only
+          </label>
+          <select id="log-level-filter"
+            style="font-size:11px;background:var(--surface);color:var(--text-2);border:1px solid var(--border);border-radius:var(--radius);padding:2px 6px">
+            <option value="">all levels</option>
+            <option value="WARNING">WARNING+</option>
+            <option value="ERROR">ERROR only</option>
+          </select>
+          <button onclick="clearTerminal()"
+            style="font-size:11px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:var(--radius);padding:3px 10px;cursor:pointer">clear</button>
+        </div>
+      </div>
+
+      <div id="terminal" style="background:#0e0c0a;border:1px solid var(--border);border-radius:var(--radius);
+              height:calc(100vh - 200px);overflow-y:auto;padding:12px 14px;
+              font-family:var(--font-mono);font-size:11.5px;line-height:1.65">
+        <div style="color:var(--muted);font-size:11px">Connecting to event stream…</div>
+      </div>
+
+    </div><!-- /logs -->
+
+  </main>
+
+  <script>
+    function showSection(name, el) {
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.nav-pill').forEach(p => p.classList.remove('active'));
+      document.getElementById('section-' + name).classList.add('active');
+      el.classList.add('active');
+    }
+
+    // ── Clock ─────────────────────────────────────────────────────
+    function updateClock() {
+      const now = new Date();
+      const p = n => String(n).padStart(2, '0');
+      const el = document.getElementById('clock');
+      if (el) el.textContent =
+        now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) +
+        ' ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds());
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    // ── Live data refresh — no flicker, no tab reset ──────────────
+    const REFRESH_INTERVAL_MS = 5000;
+
+    const DATA_SELECTORS = [
+      '.kpi-strip',
+      '#section-overview .sidebar',
+      '#section-overview .card tbody',
+      '#section-positions .card tbody',
+      '#section-positions .card .card-meta',
+      '#section-overview .bottom-grid',
+      '#section-positions .bottom-grid',
+      '#section-metrics',
+      '.status-badge',
+    ];
+
+    async function refreshData() {
+      try {
+        const res = await fetch('/', { cache: 'no-store' });
+        if (!res.ok) return;
+        const text = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+        for (const sel of DATA_SELECTORS) {
+          const current = document.querySelector(sel);
+          const incoming = doc.querySelector(sel);
+          if (current && incoming && current.innerHTML !== incoming.innerHTML) {
+            current.innerHTML = incoming.innerHTML;
+          }
+        }
+      } catch (e) { /* silently skip */ }
+    }
+    setInterval(refreshData, REFRESH_INTERVAL_MS);
+
+    // ── Live P&L patches — via SSE pnl events ─────────────────────
+    // Updates only the .pnl-cell[data-ticket] cells in trade rows,
+    // leaving the rest of the row untouched to avoid re-render flicker.
+    function applyPnl(positions) {
+      for (const [ticket, data] of Object.entries(positions)) {
+        document.querySelectorAll(`.pnl-cell[data-ticket="${ticket}"]`).forEach(cell => {
+          const pnl = data.profit;
+          const sign = pnl >= 0 ? '+' : '';
+          cell.textContent = sign + pnl.toFixed(2);
+          cell.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+          cell.style.fontWeight = '500';
+        });
+      }
+    }
+
+    // ── Terminal (Logs tab) ────────────────────────────────────────
+    const MAX_TERMINAL_LINES = 600;
+
+    function clearTerminal() {
+      const t = document.getElementById('terminal');
+      if (t) t.innerHTML = '<div style="color:var(--muted);font-size:11px">— cleared —</div>';
+    }
+
+    function _termLine(color, prefix, name, msg) {
+      const eventsOnly = document.getElementById('log-events-only')?.checked;
+      const levelFilter = document.getElementById('log-level-filter')?.value;
+      if (eventsOnly && prefix !== 'BUS') return;
+      if (levelFilter && prefix !== 'BUS') {
+        const order = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'];
+        if (order.indexOf(prefix) < order.indexOf(levelFilter)) return;
+      }
+
+      const t = document.getElementById('terminal');
+      if (!t) return;
+
+      const now = new Date();
+      const p = n => String(n).padStart(2, '0');
+      const ts = p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds());
+
+      const line = document.createElement('div');
+      line.style.cssText = 'white-space:pre-wrap;word-break:break-all;margin-bottom:1px';
+      line.innerHTML =
+        `<span style="color:var(--muted)">${ts}</span> ` +
+        `<span style="color:${color};font-weight:600;min-width:52px;display:inline-block">${prefix}</span> ` +
+        `<span style="color:var(--muted-2)">${name}</span> ` +
+        `<span style="color:var(--text-2)">${escHtml(msg)}</span>`;
+
+      t.appendChild(line);
+
+      // Trim old lines to cap memory
+      while (t.children.length > MAX_TERMINAL_LINES) {
+        t.removeChild(t.firstChild);
+      }
+
+      // Autoscroll
+      const autoScroll = document.getElementById('log-autoscroll')?.checked !== false;
+      if (autoScroll) t.scrollTop = t.scrollHeight;
+
+      // Flash Logs dot if tab not active
+      const logsSection = document.getElementById('section-logs');
+      if (!logsSection?.classList.contains('active')) {
+        const dot = document.getElementById('log-dot');
+        if (dot) { dot.style.background = 'var(--green)'; setTimeout(() => dot.style.background = 'transparent', 800); }
+      }
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ── SSE connection ─────────────────────────────────────────────
+    let _sseRetries = 0;
+
+    function connectSSE() {
+      const sseStatus = document.getElementById('sse-status');
+      const es = new EventSource('/stream');
+
+      es.onopen = () => {
+        _sseRetries = 0;
+        if (sseStatus) { sseStatus.textContent = 'live'; sseStatus.style.color = 'var(--green)'; }
+      };
+
+      es.addEventListener('log', e => {
+        const d = JSON.parse(e.data);
+        _termLine(d.color, d.level, d.name, d.msg);
+      });
+
+      es.addEventListener('bus', e => {
+        const d = JSON.parse(e.data);
+        const msg = d.summary ? `${d.event}  ${d.summary}` : d.event;
+        _termLine(d.color, 'BUS', 'event', msg);
+      });
+
+      es.addEventListener('pnl', e => {
+        const d = JSON.parse(e.data);
+        applyPnl(d.positions || {});
+      });
+
+      es.addEventListener('ping', () => { /* keepalive — no-op */ });
+
+      es.onerror = () => {
+        es.close();
+        if (sseStatus) { sseStatus.textContent = 'reconnecting…'; sseStatus.style.color = 'var(--yellow)'; }
+        const delay = Math.min(1000 * Math.pow(2, _sseRetries++), 30000);
+        setTimeout(connectSSE, delay);
+      };
+    }
+
+    connectSSE();
+  </script>
 </body>
+
 </html>

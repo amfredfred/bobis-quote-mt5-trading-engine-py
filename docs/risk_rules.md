@@ -14,331 +14,393 @@ Rules that run first and can short-circuit all other checks:
 - **Loss Guard Rule**: Circuit breaker based on daily loss percentage
 - **No Hedging Rule**: Prevents opposing positions on the same symbol
 
-### Validation Rules
-Core risk validation rules:
+### Memory-Only Rules
+Fast validation against in-memory state — no broker I/O:
 
-- **Minimum Risk-Reward Ratio**: Ensures adequate profit potential
-- **Maximum Open Trades**: Limits concurrent positions
+- **Maximum Open Trades**: Limits concurrent positions (derived from `MAX_LOSING_STREAK`)
 - **Maximum Symbol Exposure**: Limits positions per symbol
 - **Duplicate Signal**: Prevents duplicate signal processing
 - **Daily Loss Limit**: Monetary loss threshold with safety buffers
-- **Spread Quality**: Validates spread vs stop loss ratio
+
+### Live Market Rules
+Run last — require a live broker tick:
+
+- **Minimum Risk-Reward Ratio**: Validates actual R:R from current fill price
+- **Spread Quality**: Validates spread vs stop loss ratio from current fill price
 
 ## Rule Details
 
 ### Loss Guard Rule
 
-**Purpose**: Emergency circuit breaker for excessive daily losses.
+**Purpose**: Emergency circuit breaker — pauses all trading when the daily loss limit is hit.
 
 **Configuration**:
-```python
-# In RiskConfig
-max_daily_loss_percent: float  # Daily loss threshold (percentage)
+```
+MAX_DAILY_LOSS_PERCENT=5.0
 ```
 
 **Behavior**:
-- Monitors realized losses against account equity
-- Automatically pauses trading when threshold reached
-- Resumes at midnight (account reset)
-- Provides buffer zone to prevent overshoot
+- Runs first in the pipeline; short-circuits all other checks when paused
+- Monitors realised + unrealised losses against start-of-day equity
+- Automatically pauses trading when threshold is reached
+- Resumes at midnight (engine timezone)
 
 **Tuning**:
-- Conservative: 1-2% for high-frequency strategies
-- Aggressive: 3-5% for swing trading
-- Consider account size and risk tolerance
+- Conservative: 1–2% for high-frequency strategies
+- Standard: 3–5% for swing/intraday trading
+- Consider account size and strategy drawdown characteristics
+
+---
 
 ### No Hedging Rule
 
 **Purpose**: Prevents conflicting positions on the same symbol.
 
 **Configuration**:
-```python
-# In RiskConfig
-no_hedging: bool = True  # Enable/disable hedging prevention
+```
+NO_HEDGING=true
 ```
 
 **Behavior**:
-- Blocks BUY signals when SELL position exists (and vice versa)
-- Checks all open and planned trades
-- Allows multiple positions in same direction
+- Blocks BUY signals when a SELL position is open (and vice versa)
+- Checks PLANNED, OPEN, and PARTIALLY_CLOSED trades
+- Allows multiple positions in the same direction
 
 **Tuning**:
-- Enable for directional strategies
-- Disable for arbitrage or hedging strategies
+- `true` for directional strategies (recommended)
+- `false` for arbitrage or intentional hedging strategies
 
-### Minimum Risk-Reward Ratio Rule
-
-**Purpose**: Ensures trades have adequate profit potential.
-
-**Configuration**:
-```python
-# In RiskConfig
-min_rr_ratio: float  # Minimum R:R ratio (e.g., 1.5)
-```
-
-**Behavior**:
-- Compares signal's risk-reward ratio
-- Requires signal to provide R:R calculation
-- Blocks trades below threshold
-
-**Tuning**:
-- Conservative: 2.0+ (2:1 reward-to-risk)
-- Balanced: 1.5-2.0
-- Aggressive: 1.0-1.5
+---
 
 ### Maximum Open Trades Rule
 
 **Purpose**: Limits portfolio exposure through position count.
 
 **Configuration**:
-```python
-# In RiskConfig
-max_open_trades: int  # Maximum concurrent positions
+```
+MAX_LOSING_STREAK=4
 ```
 
 **Behavior**:
-- Counts all open and planned trades
-- Blocks new trades when limit reached
-- Works with daily loss limits for budget control
+- `max_open_trades` is **derived**, not configured directly:
+  ```
+  max_open_trades = MAX_LOSING_STREAK + 1
+  ```
+- This is a mathematical guarantee: if every open trade hits SL simultaneously,
+  total loss equals exactly the daily budget — never more.
 
-**Tuning**:
-- Scalping: 5-10 positions
-- Day trading: 3-5 positions
-- Swing trading: 1-3 positions
+**Budget coherence proof** (with `MAX_LOSING_STREAK=4`, `MAX_DAILY_LOSS_PERCENT=5%`, $10,000 account):
+```
+daily_budget    = $10,000 × 5%  = $500
+risk_per_trade  = $500 / 5      = $100
+max_open_trades = 5
+max_exposure    = 5 × $100      = $500  ✓
+```
+
+**Tuning**: Set `MAX_LOSING_STREAK` to your system's worst recorded consecutive losing streak.
+- Losing streak of 3 → max 4 concurrent trades
+- Losing streak of 6 → max 7 concurrent trades
+- Minimum value: 1 (enforced at startup)
+
+---
 
 ### Maximum Symbol Exposure Rule
 
-**Purpose**: Prevents over-concentration in single symbols.
+**Purpose**: Prevents over-concentration in a single symbol.
 
 **Configuration**:
-```python
-# In RiskConfig
-max_exposure_per_symbol: int  # Max positions per symbol
+```
+MAX_EXPOSURE_PER_SYMBOL=2
 ```
 
 **Behavior**:
-- Counts positions per symbol
-- Allows multiple entries in same direction
-- Independent of hedging rules
+- Counts all open and planned positions per symbol
+- Independent of the hedging rule
+- Allows multiple same-direction entries up to the limit
 
 **Tuning**:
-- Major pairs: 2-3 positions
-- Exotic pairs: 1 position
-- Crypto: 1 position (high volatility)
+- Major pairs: 2 positions
+- Exotic pairs / crypto: 1 position (higher volatility)
+
+---
 
 ### Duplicate Signal Rule
 
-**Purpose**: Prevents processing the same signal multiple times.
+**Purpose**: Prevents the same signal from being executed more than once.
 
-**Configuration**: Automatic (no configuration needed)
+**Configuration**: None — automatic.
 
 **Behavior**:
-- Checks signal ID against open trades
-- Requires unique signal identifiers
-- Handles "unknown" IDs gracefully
+- Checks signal ID against all open trades
+- Signals with ID `"unknown"` are excluded from duplicate checking
+- Idempotent: safe to receive the same signal twice
 
-**Tuning**: Ensure signal sources provide unique IDs
+---
 
 ### Daily Loss Limit Rule
 
-**Purpose**: Monetary loss control with safety buffers.
+**Purpose**: Monetary loss control with two safety layers.
 
 **Configuration**:
-```python
-# In RiskConfig
-max_daily_loss_percent: float  # Daily loss limit
-risk_percent_per_trade: float  # Risk per trade (for budget projection)
+```
+MAX_DAILY_LOSS_PERCENT=5.0
+MAX_LOSING_STREAK=4
+```
+
+**Behavior — two layers**:
+
+**Layer 1 — Hard safety stop at 95% of limit**:
+New trades are refused once realised loss reaches 95% of the configured limit. The 5% buffer ensures open positions cannot push the account past 100% of the limit even if they all hit SL simultaneously.
+
+**Layer 2 — Pre-trade budget projection**:
+Before opening a trade, the engine checks whether adding this trade's per-trade risk to today's loss would exceed the 95% threshold.
+
+```
+per_trade_risk_pct = MAX_DAILY_LOSS_PERCENT / (MAX_LOSING_STREAK + 1)
+```
+
+Example (`MAX_DAILY_LOSS_PERCENT=5`, `MAX_LOSING_STREAK=4`):
+```
+per_trade_risk_pct = 5 / 5      = 1%
+safety_threshold   = 5 × 0.95  = 4.75%
+
+daily_loss_pct=3.8% → 3.8 + 1.0 = 4.8 > 4.75 → REJECTED
+daily_loss_pct=3.7% → 3.7 + 1.0 = 4.7 < 4.75 → ALLOWED
+```
+
+---
+
+### Minimum Risk-Reward Ratio Rule
+
+**Purpose**: Ensures trades have adequate profit potential at the **actual fill price**.
+
+**Configuration**:
+```
+MIN_RR_RATIO=1.0
 ```
 
 **Behavior**:
-- Two-layer protection:
-  1. Hard stop at 95% of limit
-  2. Pre-trade budget projection
-- Prevents account from reaching full limit
-- Works with position limits for natural throttling
+- Computes R:R from the live `si.ask` (long) or `si.bid` (short) — not the stale `signal.entry_price`
+- A signal generated at one price may arrive at a materially different ask/bid by execution time
+- If actual R:R from fill price is below the minimum, the trade is rejected
+- The rejection reason surfaces both the actual R:R and the signal's original R:R for comparison
 
 **Tuning**:
-- Daily limit: 1-5% of account
-- Per-trade risk: 0.5-2% of account
-- Balance with max_open_trades
+- Conservative: 2.0+ (2:1 reward-to-risk)
+- Balanced: 1.5–2.0
+- Aggressive: 1.0–1.5
+
+---
 
 ### Spread Quality Rule
 
-**Purpose**: Validates market conditions before trading.
+**Purpose**: Validates market conditions by comparing current spread to actual risk distance.
 
 **Configuration**:
-```python
-# In RiskConfig
-sl_ratio_threshold: float  # Spread/SL ratio limit (default: 0.5)
+```
+SL_RATIO_THRESHOLD=0.34
 ```
 
 **Behavior**:
-- Compares current spread to stop loss distance
-- Blocks trades when spread is too wide
-- Requires live market data
+- Uses live fill price (`si.ask` for long, `si.bid` for short) as the anchor
+- Computes `spread_pips / sl_pips` from fill price — not stale signal entry price
+- Rejects if ratio exceeds `SL_RATIO_THRESHOLD`
+- Includes production guards: zero/negative prices, zero pip size, negative spread, zero SL distance
 
 **Tuning**:
-- Conservative: 0.3 (spread ≤ 30% of SL)
-- Balanced: 0.5 (spread ≤ 50% of SL)
-- Aggressive: 1.0 (spread ≤ SL distance)
+- Conservative: 0.25 (spread ≤ 25% of SL — tight, suitable for wide-SL swing setups)
+- Balanced: 0.34 (spread ≤ 34% of SL)
+- Aggressive: 0.50 (spread ≤ 50% of SL)
 
-## Configuration Examples
+At `SL_RATIO_THRESHOLD=0.25`:
 
-### Conservative Configuration
-```python
-RiskConfig(
-    risk_mode=RiskMode.PERCENTAGE,
-    risk_percent_per_trade=0.5,  # 0.5% per trade
-    max_daily_loss_percent=1.0,  # 1% daily limit
-    max_open_trades=3,
-    max_exposure_per_symbol=1,
-    min_rr_ratio=2.0,
-    sl_ratio_threshold=0.3,
-    no_hedging=True,
-)
+| SL (pips) | Max allowed spread | Verdict |
+|---|---|---|
+| 20 | 5.0 pips | Fine for any major |
+| 10 | 2.5 pips | Fine for majors, tight for minors |
+| 5  | 1.25 pips | Rejects most non-majors |
+
+---
+
+## Configuration Reference
+
+All risk parameters live in `.env`:
+
+```dotenv
+# Streak-based position sizing
+MAX_LOSING_STREAK=4          # Worst recorded consecutive losing streak (min: 1)
+                             # Derives: max_open_trades = MAX_LOSING_STREAK + 1
+                             # Derives: risk_per_trade  = daily_budget / (MAX_LOSING_STREAK + 1)
+
+MAX_DAILY_LOSS_PERCENT=5.0   # Daily loss budget as % of start-of-day equity
+
+# Per-symbol and R:R limits
+MAX_EXPOSURE_PER_SYMBOL=2
+MIN_RR_RATIO=1.0
+
+# Spread filter
+SL_RATIO_THRESHOLD=0.34
+
+# Hedging
+NO_HEDGING=true
 ```
 
-### Aggressive Configuration
-```python
-RiskConfig(
-    risk_mode=RiskMode.PERCENTAGE,
-    risk_percent_per_trade=2.0,  # 2% per trade
-    max_daily_loss_percent=5.0,  # 5% daily limit
-    max_open_trades=10,
-    max_exposure_per_symbol=3,
-    min_rr_ratio=1.0,
-    sl_ratio_threshold=1.0,
-    no_hedging=False,
-)
+### Example: Conservative
+
+```dotenv
+MAX_LOSING_STREAK=3          # max 4 concurrent trades
+MAX_DAILY_LOSS_PERCENT=2.0   # 2% daily limit → $50/trade on $10k account
+MAX_EXPOSURE_PER_SYMBOL=1
+MIN_RR_RATIO=2.0
+SL_RATIO_THRESHOLD=0.25
+NO_HEDGING=true
 ```
 
-### Fixed Amount Configuration
-```python
-RiskConfig(
-    risk_mode=RiskMode.FIXED,
-    risk_fixed_amount=10.0,  # $10 per trade
-    max_daily_loss_percent=2.0,  # 2% daily limit
-    max_open_trades=5,
-    max_exposure_per_symbol=2,
-    min_rr_ratio=1.5,
-    sl_ratio_threshold=0.5,
-    no_hedging=True,
-)
+### Example: Standard
+
+```dotenv
+MAX_LOSING_STREAK=4          # max 5 concurrent trades
+MAX_DAILY_LOSS_PERCENT=5.0   # 5% daily limit → $100/trade on $10k account
+MAX_EXPOSURE_PER_SYMBOL=2
+MIN_RR_RATIO=1.0
+SL_RATIO_THRESHOLD=0.34
+NO_HEDGING=true
 ```
 
-## Risk Mode Selection
+### Example: Aggressive
 
-### Percentage Mode
-- Risk per trade as percentage of account equity
-- Scales with account size
-- Recommended for most strategies
-- Enables budget projection in daily loss rule
+```dotenv
+MAX_LOSING_STREAK=6          # max 7 concurrent trades
+MAX_DAILY_LOSS_PERCENT=10.0  # 10% daily limit → $142/trade on $10k account
+MAX_EXPOSURE_PER_SYMBOL=3
+MIN_RR_RATIO=1.0
+SL_RATIO_THRESHOLD=0.50
+NO_HEDGING=false
+```
 
-### Fixed Amount Mode
-- Fixed dollar amount per trade
-- Consistent risk regardless of account size
-- Simpler for small accounts
-- No budget projection (use max_open_trades for control)
+---
+
+## How Sizing Works
+
+Position size is computed once per signal in `TradePlanner`, using the risk amount from `LossTracker`:
+
+```
+daily_budget   = start_of_day_equity × (MAX_DAILY_LOSS_PERCENT / 100)
+risk_per_trade = daily_budget / (MAX_LOSING_STREAK + 1)
+```
+
+`start_of_day_equity` is latched from the broker on the first poll cycle of each calendar day and held fixed for the session. Lot size is then computed from `risk_per_trade`, the actual SL distance from fill price, and the instrument's pip value.
+
+---
 
 ## Monitoring and Alerts
 
-### Key Metrics to Monitor
+### Key Metrics to Watch
 - Rule rejection rates by type
-- Daily loss percentage
-- Open trades vs limits
+- Daily loss percentage vs safety threshold (95% of limit)
+- Open trades vs derived max (`MAX_LOSING_STREAK + 1`)
 - Symbol exposure distribution
-- Spread quality trends
+- Spread quality failure rate
 
 ### Alert Thresholds
 - Daily loss > 50% of limit
 - Rule rejection rate > 20%
 - Spread quality failures > 5%
-- Circuit breaker activation
+- Loss guard activation
+
+---
 
 ## Testing Risk Rules
 
-### Unit Tests
 ```bash
+# Unit tests
 pytest tests/unit/risk/test_rules.py -v
-```
 
-### Integration Tests
-```bash
+# Integration tests
 pytest tests/integration/ -k risk -v
 ```
 
-### Manual Testing
 Use the monitoring dashboard to observe rule behavior in real-time.
+
+---
 
 ## Troubleshooting
 
-### Common Issues
+**All trades rejected**: Check loss guard status and daily loss percentage in `/health` endpoint.
 
-**All trades rejected**: Check loss guard status and daily limits
-**Signal duplicates**: Verify signal source provides unique IDs
-**Spread quality failures**: Review market conditions and SL distances
-**Symbol exposure limits**: Monitor position concentration
+**Signal duplicates**: Verify signal source provides unique IDs.
 
-### Debug Mode
-Enable debug logging to see rule evaluation details:
+**Spread quality failures**: Review market conditions, SL distances, and session timing. Widen `SL_RATIO_THRESHOLD` or check if signals arrive during low-liquidity windows.
+
+**Symbol exposure limits**: Check open position count per symbol in monitoring dashboard.
+
+**Debug mode**:
 ```bash
-LOG_LEVEL=DEBUG execution-engine
+LOG_LEVEL=DEBUG python -m src
 ```
 
-### Rule Bypass (Development Only)
-For testing, rules can be temporarily disabled in `src/risk/rules.py`:
+**Rule bypass (development only)**:
 ```python
+# src/risk/rules.py
 ALL_RULES: List[RiskRule] = [
     # loss_guard_rule,  # Commented out for testing
-    # no_hedging_rule,
 ]
 ```
 
-## Performance Considerations
+---
 
-- Rules are evaluated synchronously before trade execution
-- Guard rules run first to short-circuit expensive checks
-- Market data calls are minimized when rules fail early
+## Performance
+
+- Rules evaluate synchronously before execution
+- Memory-only rules run first and short-circuit broker I/O when they fail
+- Live market rules (min_rr_rule, spread_quality_rule) only reached if all memory checks pass
 - Rule evaluation is typically < 10ms per signal
+
+---
 
 ## Extending Risk Rules
 
-### Adding Custom Rules
-1. Define rule function in `src/risk/rules.py`:
+1. Define a rule function in `src/risk/rules.py`:
 ```python
 def custom_rule(ctx: RuleContext) -> RuleResult:
-    # Your logic here
+    # RuleContext provides:
+    #   ctx.signal          — inbound signal
+    #   ctx.open_trades     — current open positions
+    #   ctx.config          — RiskConfig
+    #   ctx.daily_loss_pct  — current daily loss %
+    #   ctx.effective_open  — count of open trades
+    #   ctx.effective_symbol — positions for this symbol
+    #   ctx.symbol_info     — live market data (ask, bid, spread)
+    #   ctx.loss_tracker    — LossTracker instance
     return RuleResult(approved=True)
 ```
 
-2. Add to `ALL_RULES` list:
+2. Add to `ALL_RULES` in the correct position:
 ```python
 ALL_RULES: List[RiskRule] = [
-    # ... existing rules
-    custom_rule,
+    loss_guard_rule,          # memory-only: paused state check
+    no_hedging_rule,          # memory-only: open trades scan
+    max_open_trades_rule,     # memory-only: counter check
+    max_symbol_exposure_rule, # memory-only: counter check
+    duplicate_signal_rule,    # memory-only: open trades scan
+    daily_loss_limit_rule,    # memory-only: loss budget check
+    custom_rule,              # place memory-only rules before this line
+    min_rr_rule,              # broker I/O: live fill price
+    spread_quality_rule,      # broker I/O: live spread
 ]
 ```
 
-3. Add configuration in `RiskConfig` if needed
-4. Write unit tests in `tests/unit/risk/test_rules.py`
+3. Add configuration to `RiskConfig` if needed.
+4. Write unit tests in `tests/unit/risk/test_rules.py`.
 
-### Rule Context
-Rules receive a `RuleContext` with:
-- `signal`: The inbound signal
-- `open_trades`: Current open positions
-- `config`: Risk configuration
-- `daily_loss_pct`: Current daily loss percentage
-- `effective_open`: Count of open trades
-- `effective_symbol`: Positions for this symbol
-- `symbol_info`: Live market data
-- `loss_tracker`: Loss tracking state
+---
 
 ## Best Practices
 
 1. **Start Conservative**: Use tight limits when deploying new strategies
-2. **Monitor Regularly**: Review rule rejection patterns weekly
-3. **Test Thoroughly**: Validate rules with historical data
-4. **Gradual Relaxation**: Increase limits gradually based on performance
-5. **Multiple Timeframes**: Use different configs for different strategies
+2. **Set `MAX_LOSING_STREAK` from data**: Run your backtest, find the worst consecutive loss run, use that number
+3. **Monitor Regularly**: Review rule rejection patterns weekly
+4. **Test Thoroughly**: Validate rules with historical data before live deployment
+5. **Gradual Relaxation**: Increase limits incrementally based on live performance
 6. **Backup Guards**: Never rely on a single rule for critical protection
-7. **Documentation**: Keep risk configurations versioned and documented
+7. **Version Your Config**: Keep `.env` changes in version control (without secrets)

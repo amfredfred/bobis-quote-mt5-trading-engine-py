@@ -11,6 +11,8 @@ Endpoints:
     GET /trades        → open trades from position store
     GET /metrics       → counters and gauges snapshot
     GET /queue         → signal queue depth
+    GET /pnl           → live floating P&L per ticket from MT5
+    GET /stream        → SSE stream of log records and bus events
 
 Usage:
     server = MonitoringServer(container, config, port=8080)
@@ -20,11 +22,13 @@ Usage:
 
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,6 +46,158 @@ _started_at = time.time()
 _TEMPLATE_PATH = Path(__file__).parent / "html" / "dashboard.html"
 
 
+# ── Threading HTTP server ─────────────────────────────────────────────────────
+
+
+class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in its own thread.
+    Required for SSE /stream connections which block for their lifetime.
+    """
+
+    daemon_threads = True
+
+
+# ── Log buffer ────────────────────────────────────────────────────────────────
+
+
+class _LogBuffer(logging.Handler):
+    """Captures log records into a fixed-size ring buffer.
+
+    Installed as a root logging handler in MonitoringServer.start() so every
+    log record emitted anywhere in the process is visible in the dashboard
+    terminal without any per-logger wiring.
+    """
+
+    _LEVEL_COLOR = {
+        "DEBUG": "#7a7268",
+        "INFO": "#f0ede8",
+        "WARNING": "#ffd166",
+        "ERROR": "#ff6b6b",
+        "CRITICAL": "#ff6b6b",
+    }
+
+    def __init__(self, maxlen: int = 400) -> None:
+        super().__init__()
+        self._buf: collections.deque[dict] = collections.deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+        self._cursor = 0  # monotonic counter — never resets
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            entry = {
+                "ts": record.created,
+                "level": record.levelname,
+                "color": self._LEVEL_COLOR.get(record.levelname, "#f0ede8"),
+                "name": record.name,
+                "msg": msg,
+                "seq": self._cursor,
+            }
+            with self._lock:
+                self._buf.append(entry)
+                self._cursor += 1
+        except Exception:
+            pass  # never raise inside a logging handler
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return list(self._buf)
+
+    def since(self, seq: int) -> list[dict]:
+        """Return all entries with seq >= *seq*."""
+        with self._lock:
+            return [e for e in self._buf if e["seq"] >= seq]
+
+    def cursor(self) -> int:
+        with self._lock:
+            return self._cursor
+
+
+# ── Event buffer ──────────────────────────────────────────────────────────────
+
+
+class _EventBuffer:
+    """Subscribes to the event bus via on_any and buffers recent events.
+
+    Serialises payload to a human-readable summary so the dashboard terminal
+    can display it without knowing each payload's exact shape.
+    """
+
+    _EVENT_COLOR = {
+        "trade.opened": "#3dd68c",
+        "trade.tp1_hit": "#3dd68c",
+        "trade.tp2_hit": "#3dd68c",
+        "trade.sl_hit": "#ff6b6b",
+        "trade.closed": "#ffd166",
+        "trade.error": "#ff6b6b",
+        "risk.rejected": "#ff6b6b",
+        "risk.approved": "#74b9ff",
+        "signal.triggered": "#74b9ff",
+        "broker.disconnected": "#ff6b6b",
+        "system.started": "#3dd68c",
+        "system.stopping": "#ffd166",
+    }
+
+    def __init__(self, maxlen: int = 200) -> None:
+        self._buf: collections.deque[dict] = collections.deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+        self._cursor = 0
+
+    def _summarise(self, payload) -> str:
+        if payload is None:
+            return ""
+        try:
+            # Trade object
+            if hasattr(payload, "symbol") and hasattr(payload, "side"):
+                side = getattr(payload.side, "value", str(payload.side))
+                status = getattr(payload.status, "value", "")
+                return f"{payload.symbol} {side} lot={getattr(payload, 'current_lots', '?')} status={status}"
+            # Signal object
+            if hasattr(payload, "symbol") and hasattr(payload, "direction"):
+                direction = getattr(payload.direction, "value", str(payload.direction))
+                return f"{payload.symbol} {direction} rr={getattr(payload, 'risk_reward_ratio', '?')}"
+            # Dict with reason / signal
+            if isinstance(payload, dict):
+                parts = []
+                if "reason" in payload:
+                    parts.append(str(payload["reason"]))
+                if "signal" in payload and hasattr(payload["signal"], "symbol"):
+                    parts.append(payload["signal"].symbol)
+                return " — ".join(parts) if parts else str(payload)[:120]
+            return str(payload)[:120]
+        except Exception:
+            return ""
+
+    def record(self, event: str, payload) -> None:
+        entry = {
+            "ts": time.time(),
+            "event": event,
+            "color": self._EVENT_COLOR.get(event, "#c8c4be"),
+            "summary": self._summarise(payload),
+            "seq": self._cursor,
+        }
+        with self._lock:
+            self._buf.append(entry)
+            self._cursor += 1
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return list(self._buf)
+
+    def since(self, seq: int) -> list[dict]:
+        with self._lock:
+            return [e for e in self._buf if e["seq"] >= seq]
+
+    def cursor(self) -> int:
+        with self._lock:
+            return self._cursor
+
+
+# Module-level singletons — wired up in MonitoringServer.start()
+_log_buffer = _LogBuffer(maxlen=400)
+_event_buffer = _EventBuffer(maxlen=200)
+
+
 # ── Server ────────────────────────────────────────────────────────────────────
 
 
@@ -52,12 +208,22 @@ class MonitoringServer:
         self._container = container
         self._config = config
         self._port = port
-        self._server: HTTPServer | None = None
+        self._server: _ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         container = self._container
         config = self._config
+
+        # ── Wire log buffer as root handler ───────────────────────────────
+        _log_buffer.setFormatter(
+            logging.Formatter("%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
+        )
+        _log_buffer.setLevel(logging.DEBUG)
+        logging.getLogger().addHandler(_log_buffer)
+
+        # ── Subscribe event buffer to all bus events ───────────────────────
+        container.event_bus.on_any(_event_buffer.record)
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -75,6 +241,10 @@ class MonitoringServer:
                         self._json(200, metrics.snapshot())
                     elif self.path == "/queue":
                         self._json(200, {"depth": container.signal_queue.depth()})
+                    elif self.path == "/pnl":
+                        self._json(200, _pnl(container))
+                    elif self.path == "/stream":
+                        _sse_stream(self, container)
                     else:
                         self._json(404, {"error": "not found"})
                 except Exception as exc:
@@ -98,7 +268,7 @@ class MonitoringServer:
             def log_message(self, fmt, *args) -> None:
                 pass  # suppress default access log
 
-        self._server = HTTPServer(("0.0.0.0", self._port), Handler)
+        self._server = _ThreadingHTTPServer(("0.0.0.0", self._port), Handler)
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name="monitoring-http",
@@ -139,7 +309,8 @@ def _status(container: "AppContainer", config: "AppConfig") -> dict:
         "open_trades": len(open_trades),
         "daily_loss_pct": container.execution_engine._daily_loss_pct,
         "risk": {
-            "max_open_trades": config.risk.max_open_trades,
+            "max_losing_streak": config.risk.max_losing_streak,
+            "max_open_trades": config.risk.max_losing_streak + 1,
             "max_exposure_per_symbol": config.risk.max_exposure_per_symbol,
             "max_daily_loss_percent": config.risk.max_daily_loss_percent,
             "min_rr_ratio": config.risk.min_rr_ratio,
@@ -173,7 +344,106 @@ def _trades(container: "AppContainer") -> dict:
     }
 
 
-# ── Dashboard renderer ────────────────────────────────────────────────────────
+def _pnl(container: "AppContainer") -> dict:
+    """Return live floating P&L per ticket from MT5 open positions.
+
+    Keyed by ticket (str) so the dashboard JS can patch individual rows
+    without re-rendering the entire table.
+    """
+    try:
+        positions = container.mt5_positions.get_open_positions()
+        return {
+            "positions": {
+                str(p.ticket): {
+                    "profit": round(p.profit, 2),
+                    "symbol": p.symbol,
+                    "volume": p.lots,
+                }
+                for p in positions
+            }
+        }
+    except Exception as exc:
+        logger.debug("_pnl fetch failed: %s", exc)
+        return {"positions": {}}
+
+
+def _sse_stream(handler: BaseHTTPRequestHandler, container: "AppContainer") -> None:
+    """Server-Sent Events endpoint — streams log records and bus events.
+
+    Protocol:
+      event: log    data: <JSON log entry>
+      event: bus    data: <JSON bus event entry>
+      event: pnl    data: <JSON pnl snapshot>
+      event: ping   data: {"ts": <unix>}   — keepalive every 5 s
+
+    The client uses `since` cursors so it only receives new entries on
+    each push, never re-receives records it has already seen.
+    """
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("X-Accel-Buffering", "no")  # nginx: disable buffering
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+
+    def _send(event: str, data: dict) -> bool:
+        """Write one SSE frame. Returns False if the connection is broken."""
+        try:
+            payload = json.dumps(data, default=str)
+            frame = f"event: {event}\ndata: {payload}\n\n"
+            handler.wfile.write(frame.encode())
+            handler.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return False
+
+    log_cursor = _log_buffer.cursor()
+    event_cursor = _event_buffer.cursor()
+    last_pnl = 0.0
+
+    # Send full log backlog on connect (last 80 records)
+    for entry in _log_buffer.snapshot()[-80:]:
+        if not _send("log", entry):
+            return
+
+    # Send full event backlog on connect (last 40 events)
+    for entry in _event_buffer.snapshot()[-40:]:
+        if not _send("bus", entry):
+            return
+
+    TICK = 1.0  # poll interval seconds
+    PNL_EVERY = 3  # send pnl snapshot every N ticks
+
+    tick = 0
+    while True:
+        time.sleep(TICK)
+        tick += 1
+
+        # New log records since last cursor
+        new_logs = _log_buffer.since(log_cursor)
+        for entry in new_logs:
+            if not _send("log", entry):
+                return
+        if new_logs:
+            log_cursor = new_logs[-1]["seq"] + 1
+
+        # New bus events since last cursor
+        new_events = _event_buffer.since(event_cursor)
+        for entry in new_events:
+            if not _send("bus", entry):
+                return
+        if new_events:
+            event_cursor = new_events[-1]["seq"] + 1
+
+        # Live P&L snapshot every 3 ticks
+        if tick % PNL_EVERY == 0:
+            if not _send("pnl", _pnl(container)):
+                return
+
+        # Keepalive ping every 5 ticks
+        if tick % 5 == 0:
+            if not _send("ping", {"ts": time.time()}):
+                return
 
 
 def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
@@ -232,13 +502,38 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
 
     # ── Config ─────────────────────────────────────────────────────────────
     open_count = len(open_trades)
-    max_trades = config.risk.max_open_trades
+    max_trades = config.risk.max_losing_streak + 1
     max_per_symbol = config.risk.max_exposure_per_symbol
     max_daily_loss = config.risk.max_daily_loss_percent
     min_rr = config.risk.min_rr_ratio
-    risk_pct = config.risk.risk_percent_per_trade
-    risk_mode = config.risk.risk_mode
+    risk_pct = round(max_daily_loss / max_trades, 2)
     poll_interval = config.position_poll_interval
+
+    # ── Streak-based dollar amounts from LossTracker ───────────────────────
+    lt = container.loss_tracker
+    lt_stats = lt.stats()
+    start_equity = lt_stats.get("start_of_day_equity", 0.0)
+    daily_budget_usd = lt_stats.get("daily_budget", 0.0)  # already rounded in stats()
+    risk_amount_usd = round(lt.daily_risk_amount(config.risk.max_losing_streak), 2)
+
+    # Today's raw P&L in dollars.
+    # daily_loss is always >= 0 (it's a loss percentage).
+    # We reconstruct the signed dollar P&L:
+    #   loss_pct > 0  → we are down → pnl is negative
+    #   If equity grew vs start, pnl is positive (loss_pct stays 0)
+    # For the positive-day case we use the current equity delta if available.
+    daily_loss_usd = (
+        round(start_equity * daily_loss / 100.0, 2) if start_equity else 0.0
+    )
+    # daily_pnl_usd: negative when losing, positive when profitable
+    # (loss_tracker only tracks losses; for a winning day it stays 0 — show 0 as +$0)
+    daily_pnl_usd = -daily_loss_usd  # negative = loss, positive = profit
+    daily_pnl_color = (
+        "var(--green)"
+        if daily_pnl_usd > 0
+        else "var(--red)" if daily_pnl_usd < 0 else "var(--muted)"
+    )
+    daily_pnl_sign = "+" if daily_pnl_usd >= 0 else ""
 
     # ── Bar calculations ───────────────────────────────────────────────────
     trades_ratio = open_count / max_trades if max_trades else 0
@@ -344,7 +639,7 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
             opened_ago = "—"
 
         trades_rows += (
-            f"<tr>"
+            f"<tr data-ticket='{t.entry_ticket}'>"
             f"<td><span class='sym-label'>{t.symbol}</span>{stub_badge}</td>"
             f"<td><span class='badge {side_cls}'>{t.side.value}</span></td>"
             f"<td class='mono'>{t.entry_price}</td>"
@@ -352,6 +647,7 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
             f"<td class='mono'>{t.tp1}{tp1_badge}</td>"
             f"<td class='mono' style='color:var(--green)'>{t.tp2}</td>"
             f"<td class='mono'>{t.current_lots}</td>"
+            f"<td class='mono pnl-cell' data-ticket='{t.entry_ticket}'>—</td>"
             f"<td><span class='badge badge-open'>{t.status.value}</span></td>"
             f"<td class='mono' style='color:var(--muted);font-size:10px'>{t.entry_ticket}</td>"
             f"<td style='color:var(--muted);font-size:11px'>{opened_ago}</td>"
@@ -359,7 +655,7 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
         )
     if not trades_rows:
         trades_rows = (
-            '<tr><td colspan="10" class="empty-row">No open positions</td></tr>'
+            '<tr><td colspan="11" class="empty-row">No open positions</td></tr>'
         )
 
     # ── Counter / gauge rows ───────────────────────────────────────────────
@@ -398,7 +694,11 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
         "max_daily_loss": str(max_daily_loss),
         "min_rr": str(min_rr),
         "risk_pct": str(risk_pct),
-        "risk_mode": str(risk_mode),
+        "risk_amount_usd": f"{risk_amount_usd:,.2f}",
+        "daily_budget_usd": f"{daily_budget_usd:,.2f}",
+        "daily_loss_usd": f"{daily_loss_usd:,.2f}",
+        "daily_pnl_usd": f"{daily_pnl_sign}{daily_pnl_usd:,.2f}",
+        "daily_pnl_color": daily_pnl_color,
         "poll_interval": str(poll_interval),
         "trades_bar_w": str(trades_bar_w),
         "trades_bar_color": trades_bar_color,
@@ -449,12 +749,3 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
         html = html.replace("{" + key + "}", value)
 
     return html
-
-
-
-
-
-
-
-
-

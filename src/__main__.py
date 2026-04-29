@@ -15,7 +15,7 @@ Usage:
     or with env vars:
     SIGNAL_ENGINE_WS_URL=ws://localhost:8765 \\
     MT5_LOGIN=12345 MT5_PASSWORD=secret MT5_SERVER=Broker-Live \\ 
-    RISK_PERCENT_PER_TRADE=1.0 \\
+    MAX_LOSING_STREAK=4 \\
     python main.py
 """
 
@@ -42,8 +42,8 @@ def main() -> None:
         extra={
             "symbols": cfg.signal.symbols,
             "signal_ws": cfg.signal.ws_url,
-            "risk_pct": cfg.risk.risk_percent_per_trade,
-            "max_trades": cfg.risk.max_open_trades,
+            "max_losing_streak": cfg.risk.max_losing_streak,
+            "max_open_trades": cfg.risk.max_losing_streak + 1,
             "storage_path": cfg.storage_path,
         },
     )
