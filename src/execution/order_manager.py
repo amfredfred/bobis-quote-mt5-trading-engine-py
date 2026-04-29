@@ -6,6 +6,9 @@ Live-account protections:
   [3] Retry on requote / rejection with fresh price each attempt
       10016 INVALID_STOPS — widens SL/TP to broker stop level before retry
   [4] Partial fill detection — returns actual filled volume
+  [5] Margin recovery — on 10019 NO_MONEY the lot size is halved once and
+      retried immediately.  If the halved size is below the broker minimum,
+      or the retry still fails, the trade is dropped cleanly.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from src.config.settings import ExecutionConfig
 from src.infra.metrics import metrics
 from src.domain.position import SymbolInfo
 from src.domain.trade import OrderSide, TradePlan
-from src.utils.price import pip_size
+from src.utils.price import pip_size, normalise_lots
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,10 @@ _RETRYABLE_RETCODES = {
     10016,  # TRADE_RETCODE_INVALID_STOPS  — handled specially below
     10018,  # TRADE_RETCODE_MARKET_CLOSED
 }
+
+# [5] Insufficient margin — handled separately because the volume must change,
+# not just the price.  We halve the lot size once and retry immediately.
+_RETCODE_NO_MONEY = 10019
 
 # Slippage is validated as a fraction of each trade's own stop distance.
 # e.g. 0.20 means adverse slippage must be < 20% of (entry − SL).
@@ -77,6 +84,10 @@ class OrderManager:
         sl = plan.stop_loss
         tp = tp_override if tp_override is not None else plan.tp2
 
+        # [5] Working volume — may be halved once on NO_MONEY
+        volume = plan.lot_size
+        _margin_halved = False
+
         for attempt in range(1, max_attempts + 1):
 
             # Fresh price on every attempt
@@ -89,7 +100,7 @@ class OrderManager:
                 result = self._orders.open_market_order(
                     symbol=plan.symbol,
                     order_type=order_type,
-                    volume=plan.lot_size,
+                    volume=volume,
                     price=price,
                     sl=sl,
                     tp=tp,
@@ -101,6 +112,54 @@ class OrderManager:
 
             except RuntimeError as exc:
                 retcode = _extract_retcode(exc)
+
+                # [5] NO_MONEY — insufficient margin.  Halve the volume once
+                # and retry immediately.  No sleep: this isn't a timing issue.
+                if retcode == _RETCODE_NO_MONEY:
+                    if _margin_halved:
+                        # Already tried once — drop the trade.
+                        logger.warning(
+                            "Insufficient margin — halved lot size still rejected, dropping trade",
+                            extra={
+                                "symbol": plan.symbol,
+                                "volume": volume,
+                                "retcode": retcode,
+                            },
+                        )
+                        raise
+
+                    halved = normalise_lots(
+                        volume / 2,
+                        symbol_info.lot_step,
+                        symbol_info.lot_min,
+                        symbol_info.lot_max,
+                    )
+                    if halved < symbol_info.lot_min:
+                        logger.warning(
+                            "Insufficient margin — halved lot size below broker minimum, dropping trade",
+                            extra={
+                                "symbol": plan.symbol,
+                                "original_lots": plan.lot_size,
+                                "halved_lots": halved,
+                                "min_lot": symbol_info.lot_min,
+                            },
+                        )
+                        raise
+
+                    logger.warning(
+                        "Insufficient margin — halving lot size and retrying",
+                        extra={
+                            "symbol": plan.symbol,
+                            "original_lots": volume,
+                            "halved_lots": halved,
+                            "retcode": retcode,
+                        },
+                    )
+                    metrics.increment("orders.margin_reduced")
+                    volume = halved
+                    _margin_halved = True
+                    last_error = exc
+                    continue
 
                 if retcode not in _RETRYABLE_RETCODES or attempt >= max_attempts:
                     raise
@@ -146,15 +205,15 @@ class OrderManager:
 
             # [4] Partial fill
             filled_volume = result.volume
-            if filled_volume < plan.lot_size:
+            if filled_volume < volume:
                 logger.warning(
                     "Partial fill detected",
                     extra={
                         "ticket": result.ticket,
                         "symbol": plan.symbol,
-                        "requested_lots": plan.lot_size,
+                        "requested_lots": volume,
                         "filled_lots": filled_volume,
-                        "shortfall_lots": round(plan.lot_size - filled_volume, 2),
+                        "shortfall_lots": round(volume - filled_volume, 2),
                     },
                 )
                 metrics.increment("orders.partial_fills")
