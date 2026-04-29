@@ -227,6 +227,7 @@ The engine includes comprehensive risk controls:
 - **Circuit Breakers**: Halt trading on extreme volatility
 - **Lot Size Validation**: Minimum/maximum position sizes
 - **Slippage Protection**: Maximum allowed slippage per trade
+- **Margin Recovery**: On broker `NO_MONEY` rejection (retcode 10019), the engine halves the lot size once and retries immediately; if the halved size is below the broker minimum or still fails, the trade is dropped cleanly
 
 See [Risk Rules Documentation](docs/risk_rules.md) for configuration and tuning.
 

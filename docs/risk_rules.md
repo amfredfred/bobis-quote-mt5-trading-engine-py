@@ -222,6 +222,31 @@ At `SL_RATIO_THRESHOLD=0.25`:
 
 ---
 
+## Execution-Level Protections
+
+The following protections run **after** risk rules pass, inside `OrderManager` during order placement. They are not risk rules (they don't reject signals) — they are recovery mechanisms that activate when the broker itself rejects an order.
+
+### Margin Recovery `[5]`
+
+**Trigger**: `retcode=10019 NO_MONEY` from MT5.
+
+**Why it happens**: The lot-sizing formula computes position size from risk amount and SL distance — it does not account for the broker's margin requirement. On a small account, the margin needed to hold the position (frozen collateral) can exceed free margin even when the intended dollar risk is modest.
+
+**Behavior**:
+1. Lot size is halved and normalised to the broker's `lot_step`
+2. Order is retried immediately (no delay — this is a capital constraint, not a timing issue)
+3. If the halved size is below `lot_min`, or the retry fails for any reason, the trade is dropped with a `WARNING` log
+
+**One recovery attempt only** — no spiral. The `_margin_halved` flag ensures this.
+
+**Logged fields** (on halve): `symbol`, `original_lots`, `halved_lots`, `retcode`  
+**Logged fields** (on drop): `symbol`, `original_lots`, `halved_lots` or `volume`, `min_lot` or `retcode`  
+**Metric**: `orders.margin_reduced` incremented on each successful halve-and-retry
+
+**Note**: This is distinct from `_RETRYABLE_RETCODES` — those retry with identical parameters (fresh price only). Margin recovery changes the volume, so it is handled in a separate block.
+
+---
+
 ## Configuration Reference
 
 All risk parameters live in `.env`:
@@ -301,6 +326,7 @@ risk_per_trade = daily_budget / (MAX_LOSING_STREAK + 1)
 - Open trades vs derived max (`MAX_LOSING_STREAK + 1`)
 - Symbol exposure distribution
 - Spread quality failure rate
+- `orders.margin_reduced` counter — repeated hits indicate the account is consistently undercapitalised for the lot sizes the risk % produces; consider depositing more capital or lowering `MAX_DAILY_LOSS_PERCENT`
 
 ### Alert Thresholds
 - Daily loss > 50% of limit

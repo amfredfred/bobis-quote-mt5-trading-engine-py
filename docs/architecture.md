@@ -63,8 +63,9 @@ Trade execution pipeline:
 
 - **`order_manager.py`**: Order lifecycle management
   - Order placement and tracking
-  - Fill confirmation
-  - Error handling and retry logic
+  - Fill confirmation and partial fill detection
+  - Error handling and retry logic for transient broker errors
+  - `[5]` Margin recovery: on `retcode=10019 NO_MONEY`, halves lot size once and retries immediately; drops trade cleanly if halved size is below `lot_min` or the retry still fails
 
 ### 4. Risk Management (`src/risk/`)
 
@@ -314,6 +315,7 @@ Key derived values (computed from config, never set directly):
 
 - **Circuit Breakers**: Automatic trading pause on daily loss limit
 - **Retry Logic**: Configurable retry count and delay for broker order rejections
+- **Margin Recovery**: On `retcode=10019`, lot size is halved and retried once — no config required; `orders.margin_reduced` metric incremented on recovery
 - **Logging**: Structured error logging with context on every rule rejection
 - **Recovery**: Graceful recovery from MT5 connection losses; daily loss is re-primed from broker on reconnect
 

@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Startup validation for `MAX_LOSING_STREAK`** — raises `ValueError` with a descriptive message if the value is `< 1`; fails before any broker connection is attempted
 - **`_validate_symbol_info()` and `_resolve_fill_price()` helpers in `rules.py`** — shared validation extracted into private helpers; rules remain independently testable
 - **`_UNKNOWN_SIGNAL_ID` constant in `rules.py`** — replaces magic string `"unknown"` in `duplicate_signal_rule`
+- **Margin recovery in `OrderManager` [protection 5]** — on `retcode=10019 NO_MONEY` the engine now halves the lot size once and retries immediately instead of crashing with an unhandled `RuntimeError`; if the halved size is below the broker's `lot_min`, or the halved order still fails, the trade is dropped cleanly with a `WARNING` log; a new `orders.margin_reduced` metric counter is incremented on each successful recovery
+- **`_RETCODE_NO_MONEY = 10019` constant in `order_manager.py`** — named constant kept separate from `_RETRYABLE_RETCODES` because the volume must change, not just the price; documents the distinction explicitly
 
 ### Changed
 - **`min_rr_rule` rewritten to use live fill price** — previously used `ctx.signal.risk_reward_ratio` (computed at signal generation time from a potentially stale `entry_price`); now computes R:R from `si.ask`/`si.bid` at execution time, the same way `spread_quality_rule` does; rejection reason surfaces both the actual and signal R:R for log comparison
@@ -50,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `spread_quality_rule` used raw strings/ints for direction (`"long"`, `1`, `"buy"`) instead of `SignalDirection` — now consistent with `no_hedging_rule` and the rest of the codebase
 - `min_rr_rule` checked a stale signal-time R:R rather than the actual R:R at fill — a signal generated at one price could arrive at execution with a materially worse R:R, and the old rule would pass it
 - `daily_loss_limit_rule` had a local import (`from src.utils.lot_calculator import RiskMode as _RiskMode`) masking a circular import rather than fixing it; import moved to module level
+- `OrderManager` raised an unhandled `RuntimeError` on `retcode=10019 NO_MONEY` — the lot-sizing formula never checked broker margin requirements, only risk-based SL exposure; fixed by halving the lot size and retrying once before dropping the trade
 
 ### Documentation
 - `risk_rules.md` — fully rewritten to reflect streak-based config model; removed `RiskMode` section and old config examples; added budget coherence proof; documented live fill price behaviour of `min_rr_rule` and `spread_quality_rule`; updated `RuleContext` field reference; updated tuning guidance and best practices
