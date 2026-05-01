@@ -63,11 +63,11 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 
     # Prime daily loss + start-of-day equity before first signal
     try:
-        loss_pct, start_equity = container.mt5_positions.get_daily_pnl_info(config.execution.magic)
-        container.execution_engine.update_daily_loss(loss_pct, start_equity)
+        loss_pct, start_equity, current_equity = container.mt5_positions.get_daily_pnl_info(config.execution.magic)
+        container.execution_engine.update_daily_loss(loss_pct, start_equity, current_equity)
         logger.info(
             "Daily loss primed",
-            extra={"daily_loss_pct": loss_pct, "start_of_day_equity": start_equity},
+            extra={"daily_loss_pct": loss_pct, "start_of_day_equity": start_equity, "current_equity": current_equity},
         )
     except Exception:
         logger.warning("bootstrap: could not prime daily loss — defaulting to 0.0")

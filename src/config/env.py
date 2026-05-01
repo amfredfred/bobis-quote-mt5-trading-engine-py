@@ -70,6 +70,16 @@ class Env:
     MIN_LOT_SIZE: float = _optional_float("MIN_LOT_SIZE", 0.01)
     SL_RATIO_THRESHOLD: float = _optional_float("SL_RATIO_THRESHOLD", 0.33)
 
+    # ── Intraday capital-protection guards (parity with Node pipeline) ─────
+    # Equity peak drawdown: pause when equity drops >= N% from the session
+    # high-water mark.  0.0 = disabled.
+    MAX_EQUITY_DRAWDOWN_PERCENT: float = _optional_float("MAX_EQUITY_DRAWDOWN_PERCENT", 2.0)
+    # Rolling window: pause when the peak-to-trough swing within the last
+    # ROLLING_WINDOW_SIZE equity samples exceeds ROLLING_DRAWDOWN_PCT %.
+    # Both must be > 0 for the guard to be active (0 = disabled).
+    ROLLING_WINDOW_SIZE: int = _optional_int("ROLLING_WINDOW_SIZE", 0)
+    ROLLING_DRAWDOWN_PCT: float = _optional_float("ROLLING_DRAWDOWN_PCT", 0.0)
+
     # ─────────────────────────────────────────
     # TIMEZONE
     # ─────────────────────────────────────────

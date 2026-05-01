@@ -71,11 +71,18 @@ class ExecutionEngine:
         self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
         self._loss_tracker: "LossTracker | None" = loss_tracker
 
-    def update_daily_loss(self, loss_pct: float, start_equity: float) -> None:
-        """Called by PositionManager on each poll cycle."""
+    def update_daily_loss(self, loss_pct: float, start_equity: float, current_equity: float = 0.0) -> None:
+        """Called by PositionManager on each poll cycle.
+
+        Forwards two separate updates to the LossTracker (parity with Node pipeline):
+          - update_daily_loss_pct: drives the daily-loss circuit-breaker (guard 1).
+          - update_equity:         drives equity-peak and rolling-window guards (guards 2 & 3).
+        """
         self._daily_loss_pct = loss_pct
         if self._loss_tracker is not None:
             self._loss_tracker.update_daily_loss_pct(loss_pct, start_equity)
+            if current_equity > 0:
+                self._loss_tracker.update_equity(current_equity)
 
     def _pending_total(self) -> int:
         return sum(self._pending.values())

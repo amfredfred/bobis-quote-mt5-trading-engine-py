@@ -66,8 +66,11 @@ def build_container(config: AppConfig) -> AppContainer:
 
     # ── Risk + execution ──────────────────────────────────────────────────
     loss_tracker = LossTracker(
-        max_daily_loss_pct = config.risk.max_daily_loss_percent,
-        engine_tz          = config.engine_timezone,
+        max_daily_loss_pct      = config.risk.max_daily_loss_percent,
+        engine_tz               = config.engine_timezone,
+        max_equity_drawdown_pct = config.risk.max_equity_drawdown_percent,
+        rolling_window_size     = config.risk.rolling_window_size,
+        rolling_drawdown_pct    = config.risk.rolling_drawdown_pct,
     )
     risk_engine = RiskEngine(config.risk, loss_tracker=loss_tracker)
     trade_planner = TradePlanner(config.risk, config.execution, loss_tracker)

@@ -147,7 +147,7 @@ class Mt5Positions:
         positions = self.get_open_positions()
         return next((p for p in positions if p.ticket == ticket), None)
 
-    def get_daily_pnl_info(self, magic: int) -> tuple[float, float]:
+    def get_daily_pnl_info(self, magic: int) -> tuple[float, float, float]:
         """Return (loss_pct, start_of_day_equity) for today.
 
         loss_pct is today's loss as a percentage of start-of-day equity.
@@ -204,34 +204,36 @@ class Mt5Positions:
             account = self._mt5.account_info()
             if not account or account.equity <= 0:
                 logger.warning("get_daily_pnl_info: no valid account or equity <= 0")
-                return 0.0, 0.0
+                return 0.0, 0.0, 0.0
+
+            current_equity = account.equity
 
             # start_equity = current_equity − total_pnl
-            start_equity = account.equity - total_pnl
+            start_equity = current_equity - total_pnl
             if start_equity <= 0:
                 logger.warning(
                     "get_daily_pnl_info: derived start_equity <= 0 "
                     "(equity=%.2f total_pnl=%.2f) — returning 0",
-                    account.equity, total_pnl,
+                    current_equity, total_pnl,
                 )
-                return 0.0, account.equity
+                return 0.0, current_equity, current_equity
 
             # No loss today — return early
             if total_pnl >= 0:
-                return 0.0, start_equity
+                return 0.0, start_equity, current_equity
 
             loss_pct = (abs(total_pnl) / start_equity) * 100.0
             logger.debug(
                 "daily_loss_pct=%.3f%%  realised=%.2f  unrealised=%.2f  "
                 "start_equity=%.2f  current_equity=%.2f",
                 loss_pct, realised_pnl, unrealised_pnl,
-                start_equity, account.equity,
+                start_equity, current_equity,
             )
-            return loss_pct, start_equity
+            return loss_pct, start_equity, current_equity
 
         except Exception as e:
             logger.warning("Mt5Positions.get_daily_pnl_info failed: %s", e)
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
 
     def get_current_tick(self, symbol: str):
         self._client.ensure_connected()

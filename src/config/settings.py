@@ -23,7 +23,15 @@ class RiskConfig:
     min_lot_size: float
     sl_ratio_threshold: float
     no_hedging: bool = True
-
+    # ── Intraday capital-protection guards (parity with Node pipeline) ─────
+    # Equity peak: pause when equity drops >= N% from session high-water mark.
+    # 0.0 = disabled.
+    max_equity_drawdown_percent: float = 2.0
+    # Rolling window: pause when peak-to-trough swing within the last
+    # rolling_window_size equity samples exceeds rolling_drawdown_pct %.
+    # Both must be > 0 for the guard to fire.
+    rolling_window_size: int = 0
+    rolling_drawdown_pct: float = 0.0
 
 @dataclass(frozen=True)
 class ExecutionConfig:
@@ -91,6 +99,9 @@ def _build() -> AppConfig:
             min_lot_size=env.MIN_LOT_SIZE,
             sl_ratio_threshold=env.SL_RATIO_THRESHOLD,
             no_hedging=env.NO_HEDGING,
+            max_equity_drawdown_percent=env.MAX_EQUITY_DRAWDOWN_PERCENT,
+            rolling_window_size=env.ROLLING_WINDOW_SIZE,
+            rolling_drawdown_pct=env.ROLLING_DRAWDOWN_PCT,
         ),
         execution=ExecutionConfig(
             tp1_rr_multiple=env.TP1_RR_MULTIPLE,
