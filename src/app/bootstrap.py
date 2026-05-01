@@ -63,14 +63,19 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 
     # Prime daily loss + start-of-day equity before first signal
     try:
-        loss_pct, start_equity, current_equity = container.mt5_positions.get_daily_pnl_info(config.execution.magic)
+        loss_pct, start_equity, current_equity = container.mt5_positions.get_daily_pnl_info(
+            config.execution.magic
+        )
         container.execution_engine.update_daily_loss(loss_pct, start_equity, current_equity)
         logger.info(
             "Daily loss primed",
             extra={"daily_loss_pct": loss_pct, "start_of_day_equity": start_equity, "current_equity": current_equity},
         )
-    except Exception:
-        logger.warning("bootstrap: could not prime daily loss — defaulting to 0.0")
+    except Exception as e:
+        logger.warning("Daily loss priming failed — using safe defaults: %s", e)
+        # Force a minimal update with current equity as start
+        account = container.mt5_positions.get_account_info()
+        container.execution_engine.update_daily_loss(0.0, account.equity, account.equity)
 
     # Wire: signal.triggered → queue → execution pipeline
     def on_signal_triggered(signal: InboundSignal) -> None:
@@ -118,12 +123,3 @@ def shutdown(container: AppContainer) -> None:
     container.mt5_client.disconnect()
     metrics.stop()
     logger.info("Shutdown complete")
-
-
-
-
-
-
-
-
-

@@ -512,9 +512,63 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
     # ── Streak-based dollar amounts from LossTracker ───────────────────────
     lt = container.loss_tracker
     lt_stats = lt.stats()
+    
+    
     start_equity = lt_stats.get("start_of_day_equity", 0.0)
     daily_budget_usd = lt_stats.get("daily_budget", 0.0)  # already rounded in stats()
     risk_amount_usd = round(lt.daily_risk_amount(config.risk.max_losing_streak), 2)
+
+    # ── Capital Guards (equity peak + rolling window) ──────────────────────
+    guard_paused = lt_stats.get("paused", False)
+    pause_reason = lt_stats.get("pause_reason", "") or "Unknown Capital Guard"
+    
+    equity_peak = lt_stats.get("equity_peak", 0.0)
+    equity_drawdown_pct = lt_stats.get("equity_drawdown_pct", 0.0)
+    peak_limit = config.risk.max_equity_drawdown_percent
+
+    rolling_window_size_cfg = config.risk.rolling_window_size
+    rolling_drawdown_limit = config.risk.rolling_drawdown_pct
+    rolling_window_samples = lt_stats.get("rolling_window_samples", 0)
+
+    # Which guard triggered the pause (mutually exclusive display)
+    _reason_lower = pause_reason.lower()
+    daily_guard_paused = guard_paused and "daily loss" in _reason_lower
+    peak_guard_paused = guard_paused and "equity drawdown" in _reason_lower
+    rolling_guard_paused = guard_paused and "rolling drawdown" in _reason_lower
+
+    # Traffic-light status labels for each guard
+    def _guard_status(paused_flag: bool, enabled: bool) -> str:
+        if paused_flag:
+            return "PAUSED"
+        if not enabled:
+            return "DISABLED"
+        return "ACTIVE"
+
+    daily_guard_status = _guard_status(daily_guard_paused, True)
+    peak_guard_status = _guard_status(peak_guard_paused, peak_limit > 0)
+    rolling_enabled = rolling_window_size_cfg > 0 and rolling_drawdown_limit > 0
+    rolling_guard_status = _guard_status(rolling_guard_paused, rolling_enabled)
+
+    def _guard_cls(status: str) -> str:
+        return {
+            "PAUSED": "guard-paused",
+            "DISABLED": "guard-disabled",
+            "ACTIVE": "guard-active",
+        }[status]
+
+    # Equity peak bar
+    peak_bar_w = (
+        min(int(equity_drawdown_pct / peak_limit * 100), 100) if peak_limit > 0 else 0
+    )
+    peak_bar_color = (
+        "var(--red)"
+        if equity_drawdown_pct >= peak_limit
+        else (
+            "var(--yellow)"
+            if peak_limit > 0 and equity_drawdown_pct >= peak_limit * 0.7
+            else "var(--green)"
+        )
+    )
 
     # Today's raw P&L in dollars.
     # daily_loss is always >= 0 (it's a loss percentage).
@@ -735,6 +789,32 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
         "trades_rows": trades_rows,
         "counter_rows": counter_rows,
         "gauge_rows": gauge_rows,
+        # ── Capital guards ─────────────────────────────────────────────────
+        "guard_banner_display": "flex" if bool(guard_paused) == True else "none",
+        "guard_pause_reason": pause_reason,
+        "equity_peak_fmt": f"{equity_peak:,.2f}" if equity_peak > 0 else "—",
+        "equity_drawdown_pct_fmt": f"{equity_drawdown_pct:.2f}",
+        "peak_limit": str(peak_limit),
+        "peak_bar_w": (
+            str(min(int(equity_drawdown_pct / max(peak_limit, 0.01) * 100), 100))
+            if peak_limit > 0
+            else "0"
+        ),
+        "peak_bar_color": peak_bar_color,
+        "rolling_window_size_cfg": (
+            str(rolling_window_size_cfg) if rolling_window_size_cfg else "—"
+        ),
+        "rolling_drawdown_limit": (
+            str(rolling_drawdown_limit) if rolling_drawdown_limit else "—"
+        ),
+        "rolling_window_samples": str(rolling_window_samples),
+        "start_equity_fmt": f"{start_equity:,.2f}" if start_equity else "—",
+        "daily_guard_status": daily_guard_status,
+        "daily_guard_cls": _guard_cls(daily_guard_status),
+        "peak_guard_status": peak_guard_status,
+        "peak_guard_cls": _guard_cls(peak_guard_status),
+        "rolling_guard_status": rolling_guard_status,
+        "rolling_guard_cls": _guard_cls(rolling_guard_status),
     }
 
     # ── Load template and substitute ───────────────────────────────────────
