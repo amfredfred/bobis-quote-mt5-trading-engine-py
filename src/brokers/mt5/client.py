@@ -84,57 +84,119 @@ class Mt5Client:
 
     def resolve_symbol(self, base_symbol: str) -> str | None:
         """
-        Find the correct broker symbol for a given base symbol.
+        Resolve broker symbol safely and deterministically.
 
-        Example:
-            BTCUSD -> BTCUSDm, BTCUSD.x, etc
+        Resolution order
+        ----------------
+        1. Exact match
+        2. Unique flexible match
+        3. Shortest symbol name among ambiguous matches
+
+        Examples
+        --------
+        BTCUSD      -> BTCUSDm (shortest of BTCUSDm, BTCUSD., BTCUSD_x100)
+        US500       -> US500m (shortest of US500m, US500_x100m)
+        XAUUSD      -> XAUUSD. (if that's the shortest)
         """
-        base_symbol = base_symbol.replace("/", "").replace("_", "").upper()
 
-        # Check cache first
-        if base_symbol in _SYMBOL_CACHE:
-            return _SYMBOL_CACHE[base_symbol]
+        clean = base_symbol.replace("/", "").replace("_", "").upper()
+
+        # Fast cache hit
+        cached = _SYMBOL_CACHE.get(clean)
+        if cached:
+            return cached
 
         with _MT5_LOCK:
             symbols = mt5.symbols_get()
 
         if not symbols:
+            logger.error(
+                "resolve_symbol(%r): mt5.symbols_get() returned no symbols", base_symbol
+            )
             return None
 
-        matches = []
+        exact_match: str | None = None
+        matches: list[str] = []
 
         for s in symbols:
             name = s.name
-            upper_name = name.upper()
+            upper = name.upper()
 
             # 1. Exact match
-            if upper_name == base_symbol:
-                _SYMBOL_CACHE[base_symbol] = name
-                return name
+            if upper == clean:
+                exact_match = name
+                break
 
-            # 2. Prefix or suffix match
-            if upper_name.startswith(base_symbol) or upper_name.endswith(base_symbol):
+            # 2. Flexible broker naming (starts with or ends with)
+            if upper.startswith(clean) or upper.endswith(clean):
                 matches.append(name)
 
-        if matches:
-            # Prefer shortest (EURUSDm over EURUSDmicro)
-            resolved = sorted(matches, key=len)[0]
-            _SYMBOL_CACHE[base_symbol] = resolved
-            return resolved
+        # Exact match wins immediately
+        if exact_match:
+            with _MT5_LOCK:
+                mt5.symbol_select(exact_match, True)
 
-        # No match
-        return None
+            _SYMBOL_CACHE[clean] = exact_match
+
+            logger.info(
+                "Symbol %r resolved via exact match → %r",
+                base_symbol,
+                exact_match,
+            )
+            return exact_match
+
+        # No matches
+        if not matches:
+            logger.warning("Symbol %r could not be resolved", base_symbol)
+            return None
+
+        # Single match
+        if len(matches) == 1:
+            resolved = matches[0]
+            logger.info(
+                "Symbol %r resolved uniquely → %r",
+                base_symbol,
+                resolved,
+            )
+        else:
+            # Multiple matches: pick the SHORTEST symbol name (closest to original)
+            resolved = min(matches, key=len)
+            logger.warning(
+                "Ambiguous symbol %r auto-resolved → %r (shortest of %s)",
+                base_symbol,
+                resolved,
+                matches,
+            )
+
+        # Activate symbol in MT5 Market Watch
+        with _MT5_LOCK:
+            selected = mt5.symbol_select(resolved, True)
+
+        if not selected:
+            logger.warning(
+                "symbol_select(%r) failed: %s",
+                resolved,
+                mt5.last_error(),
+            )
+
+        # Cache resolved name
+        _SYMBOL_CACHE[clean] = resolved
+
+        return resolved
 
     def _derive_broker_utc_offset(self) -> int:
         tick = None
+        symbol_used = None
+
         for symbol in _OFFSET_SYMBOLS:
-            _resolved = self.resolve_symbol(symbol)
-            if _resolved is None:
+            resolved = self.resolve_symbol(symbol)
+            if resolved is None:
                 continue
             with _MT5_LOCK:
-                t = mt5.symbol_info_tick(_resolved)
+                t = mt5.symbol_info_tick(resolved)
             if t is not None:
                 tick = t
+                symbol_used = resolved
                 break
 
         if tick is None:
@@ -148,8 +210,7 @@ class Mt5Client:
         offset = round(raw_offset)
 
         logger.info(
-            "Mt5Client: broker UTC offset derived from %s",
-            symbol,
+            f"Mt5Client: broker UTC offset derived from {symbol_used}",
             extra={"offset_hours": offset, "raw_offset_hours": raw_offset},
         )
         return offset
@@ -207,12 +268,3 @@ class Mt5Client:
     def mt5(self):
         """Direct access to MetaTrader5 module for other modules."""
         return mt5
-
-
-
-
-
-
-
-
-

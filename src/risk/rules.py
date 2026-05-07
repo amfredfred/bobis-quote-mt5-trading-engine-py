@@ -224,6 +224,7 @@ def _resolve_fill_price(si: SymbolInfo, direction: SignalDirection) -> float:
 
 def _validate_symbol_info(si: SymbolInfo) -> Optional[RuleResult]:
     """Return a RuleResult if si is invalid, else None."""
+    print(f"Validating symbol info for {si.symbol}: ask={si.ask}, bid={si.bid}")
     if si is None or si.ask is None or si.bid is None:
         return RuleResult(approved=False, reason="No market data")
     if si.ask <= 0 or si.bid <= 0:

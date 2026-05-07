@@ -26,7 +26,7 @@ class StrategyRouter:
 
     def route(self, signal: InboundSignal) -> InboundSignal:
         adapter = (
-            self._adapters.get(signal.symbol)
+            self._adapters.get(signal.resolved_symbol)
             or self._adapters.get(signal.direction.value)
             or self._fallback
         )
@@ -37,12 +37,3 @@ class StrategyRouter:
                 extra={"signal_id": signal.id, "adapter": type(adapter).__name__},
             )
         return adapted
-
-
-
-
-
-
-
-
-

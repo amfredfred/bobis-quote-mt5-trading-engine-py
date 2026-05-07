@@ -36,6 +36,7 @@ from src.risk.engine import RiskEngine
 from src.infra.database import TradeRepository
 from src.domain.signal_interface import InboundSignal
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
 from src.domain.trade import Trade, TradeStatus
@@ -71,7 +72,9 @@ class ExecutionEngine:
         self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
         self._loss_tracker: "LossTracker | None" = loss_tracker
 
-    def update_daily_loss(self, loss_pct: float, start_equity: float, current_equity: float = 0.0) -> None:
+    def update_daily_loss(
+        self, loss_pct: float, start_equity: float, current_equity: float = 0.0
+    ) -> None:
         """Called by PositionManager on each poll cycle.
 
         Forwards two separate updates to the LossTracker (parity with Node pipeline):
@@ -97,14 +100,15 @@ class ExecutionEngine:
         self._pending[symbol] = max(0, self._pending.get(symbol, 0) - 1)
 
     def execute(self, signal: InboundSignal) -> Trade | None:
-        # ── [5] Pipeline start time ────────────────────────────────────────
+        # ── [5] Pipeline start time ──────────────────────────────────
         pipeline_start_ms = now_ms()
+        _resolved = signal.resolved_symbol
 
         logger.info(
             "ExecutionEngine processing signal",
             extra={
                 "signal_id": signal.id,
-                "symbol": signal.symbol,
+                "symbol": f"{signal.symbol} -> {_resolved}",
                 "direction": signal.direction.value,
             },
         )
@@ -112,7 +116,7 @@ class ExecutionEngine:
         # ── 1. Fetch broker state ──────────────────────────────────────────
         try:
             account_info = self._mt5_positions.get_account_info()
-            symbol_info = self._mt5_positions.get_symbol_info(signal.symbol)
+            symbol_info = self._mt5_positions.get_symbol_info(_resolved)
         except Exception:
             logger.exception("ExecutionEngine: failed to fetch broker state")
             self._bus.emit(
@@ -125,8 +129,8 @@ class ExecutionEngine:
             open_trades = self._store.get_open_trades()
             effective_open = len(open_trades) + self._pending_total()
             effective_symbol = len(
-                [t for t in open_trades if t.symbol == signal.symbol]
-            ) + self._pending_for(signal.symbol)
+                [t for t in open_trades if t.symbol == signal.resolved_symbol]
+            ) + self._pending_for(signal.resolved_symbol)
             decision = self._risk.evaluate(
                 signal,
                 open_trades,
@@ -142,7 +146,7 @@ class ExecutionEngine:
                 )
                 return None
 
-            self._reserve(signal.symbol)
+            self._reserve(signal.resolved_symbol)
 
         self._bus.emit(Events.RISK_APPROVED, {"signal": signal})
 
@@ -151,7 +155,7 @@ class ExecutionEngine:
             plan = self._planner.plan(signal, account_info, symbol_info)
         except Exception:
             with self._pending_lock:
-                self._release(signal.symbol)
+                self._release(signal.resolved_symbol)
             logger.exception("ExecutionEngine: trade planning failed")
             self._bus.emit(
                 Events.TRADE_ERROR, {"signal": signal, "reason": "planning_failed"}
@@ -172,7 +176,7 @@ class ExecutionEngine:
             )
         except Exception as exc:
             with self._pending_lock:
-                self._release(signal.symbol)
+                self._release(signal.resolved_symbol)
             logger.exception("ExecutionEngine: order execution failed")
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
             metrics.increment("orders.rejected")
@@ -189,22 +193,22 @@ class ExecutionEngine:
             # USE_SLIPPAGE_ADJUSTED_LEVELS=true: shift every level by the fill
             # delta so stop distance and R:R are preserved relative to fill.
             # Note: this moves SL/TP away from their analysis-derived prices.
-            adjusted_sl  = plan.stop_loss + fill_slippage
-            adjusted_tp1 = plan.tp1       + fill_slippage
-            adjusted_tp2 = plan.tp2       + fill_slippage
+            adjusted_sl = plan.stop_loss + fill_slippage
+            adjusted_tp1 = plan.tp1 + fill_slippage
+            adjusted_tp2 = plan.tp2 + fill_slippage
             logger.info(
                 "Plan levels shifted to actual fill price (USE_SLIPPAGE_ADJUSTED_LEVELS=true)",
                 extra={
-                    "symbol":        signal.symbol,
-                    "signal_entry":  plan.entry_price,
-                    "fill_price":    executed_price,
+                    "symbol": signal.resolved_symbol,
+                    "signal_entry": plan.entry_price,
+                    "fill_price": executed_price,
                     "fill_slippage": round(fill_slippage, 5),
-                    "original_sl":   plan.stop_loss,
-                    "adjusted_sl":   round(adjusted_sl, 5),
-                    "original_tp1":  plan.tp1,
-                    "adjusted_tp1":  round(adjusted_tp1, 5),
-                    "original_tp2":  plan.tp2,
-                    "adjusted_tp2":  round(adjusted_tp2, 5),
+                    "original_sl": plan.stop_loss,
+                    "adjusted_sl": round(adjusted_sl, 5),
+                    "original_tp1": plan.tp1,
+                    "adjusted_tp1": round(adjusted_tp1, 5),
+                    "original_tp2": plan.tp2,
+                    "adjusted_tp2": round(adjusted_tp2, 5),
                 },
             )
             try:
@@ -215,26 +219,29 @@ class ExecutionEngine:
                 logger.warning(
                     "ExecutionEngine: could not sync slippage-adjusted levels to broker — "
                     "levels may drift; position manager will still track correctly",
-                    extra={"symbol": signal.symbol, "slippage": round(fill_slippage, 5)},
+                    extra={
+                        "symbol": signal.resolved_symbol,
+                        "slippage": round(fill_slippage, 5),
+                    },
                 )
         else:
             # Default (USE_SLIPPAGE_ADJUSTED_LEVELS=false): hold levels at the
             # signal's original analysis-derived prices.  The fill price is
             # recorded for PnL tracking only — SL/TP are not moved.
-            adjusted_sl  = plan.stop_loss
+            adjusted_sl = plan.stop_loss
             adjusted_tp1 = plan.tp1
             adjusted_tp2 = plan.tp2
             if abs(fill_slippage) > 1e-8:
                 logger.info(
                     "Fill slippage recorded — levels held at analysis prices",
                     extra={
-                        "symbol":        signal.symbol,
-                        "signal_entry":  plan.entry_price,
-                        "fill_price":    executed_price,
+                        "symbol": signal.resolved_symbol,
+                        "signal_entry": plan.entry_price,
+                        "fill_price": executed_price,
                         "fill_slippage": round(fill_slippage, 5),
-                        "sl":            plan.stop_loss,
-                        "tp1":           plan.tp1,
-                        "tp2":           plan.tp2,
+                        "sl": plan.stop_loss,
+                        "tp1": plan.tp1,
+                        "tp2": plan.tp2,
                     },
                 )
 
@@ -252,7 +259,7 @@ class ExecutionEngine:
         trade = Trade(
             id=str(uuid.uuid4()),
             signal_id=signal.id,
-            symbol=signal.symbol,
+            symbol=signal.resolved_symbol,
             side=plan.side,
             status=TradeStatus.OPEN,
             plan=plan,
@@ -272,7 +279,7 @@ class ExecutionEngine:
         self._store.add(trade)
         self._repo.save(trade)
         with self._pending_lock:
-            self._release(signal.symbol)
+            self._release(signal.resolved_symbol)
 
         # ── 7. Emit ────────────────────────────────────────────────────────
         self._bus.emit(Events.TRADE_OPENED, trade)

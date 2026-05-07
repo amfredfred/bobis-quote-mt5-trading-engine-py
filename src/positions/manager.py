@@ -310,7 +310,7 @@ class PositionManager:
 
         # ── Step 2: Move SL to breakeven (only after a successful partial close) ──
         be_ok = False
-        if self._cfg.move_sl_to_be_on_tp1 and partial_closed and trade.entry_ticket:
+        if self._cfg.move_sl_to_be_on_tp1 and trade.entry_ticket:
             try:
                 self._mt5_orders.modify_position(
                     ticket=trade.entry_ticket,

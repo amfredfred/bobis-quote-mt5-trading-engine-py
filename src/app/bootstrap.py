@@ -13,6 +13,7 @@ from src.app.container import AppContainer
 from src.config.settings import AppConfig
 from src.core.event_types import Events
 from src.infra.metrics import metrics
+from dataclasses import replace
 from src.domain.signal_interface import InboundSignal
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,19 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 
     # Wire: signal.triggered → queue → execution pipeline
     def on_signal_triggered(signal: InboundSignal) -> None:
-        adapted = container.strategy_router.route(signal)
+        resolved = container.mt5_positions.resolve_symbol(signal.symbol)
+        if not resolved:
+            logger.error(
+                "Signal rejected: symbol not found in MT5",
+                extra={"signal_id": signal.id, "symbol": signal.symbol},
+            )
+            container.event_bus.emit(
+                Events.SIGNAL_REJECTED,
+                {"signal": signal, "reason": "symbol_not_found"},
+            )
+            return
+        enriched = replace(signal, resolved_symbol=resolved)
+        adapted = container.strategy_router.route(enriched)
         container.signal_queue.put(adapted)
 
     container.event_bus.on(Events.SIGNAL_TRIGGERED, on_signal_triggered)

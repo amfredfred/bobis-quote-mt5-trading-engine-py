@@ -269,7 +269,7 @@ class Database:
             """,
                 {
                     "id": signal.id,
-                    "symbol": signal.symbol,
+                    "symbol": signal.resolved_symbol,
                     "direction": signal.direction.value,
                     "status": status,
                     "entry_price": getattr(signal, "entry_price", None),
@@ -345,12 +345,3 @@ class Database:
         conn = sqlite3.connect(self._path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
-
-
-
-
-
-
-
-
-

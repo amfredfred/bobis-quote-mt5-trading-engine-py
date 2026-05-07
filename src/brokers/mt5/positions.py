@@ -48,9 +48,11 @@ class Mt5Positions:
 
     # ── Symbol ────────────────────────────────────────────────────────────
 
+    def resolve_symbol(self, symbol: str) -> Optional[str]:
+        return self._client.resolve_symbol(symbol)
+
     def get_symbol_info(self, symbol: str) -> SymbolInfo:
-        _resolved_symbol = self._client.resolve_symbol(symbol)
-        print(_resolved_symbol)
+        _resolved_symbol = self.resolve_symbol(symbol)
         self._client.ensure_connected()
         info = self._mt5.symbol_info(_resolved_symbol)
         if info is None:
@@ -58,10 +60,10 @@ class Mt5Positions:
             raise RuntimeError(f"symbol_info({symbol!r}) failed: {error}")
 
         if not info.visible:
-            self._mt5.symbol_select(symbol, True)
-            info = self._mt5.symbol_info(symbol)
+            self._mt5.symbol_select(_resolved_symbol, True)
+            info = self._mt5.symbol_info(_resolved_symbol)
 
-        tick = self._mt5.symbol_info_tick(symbol)
+        tick = self._mt5.symbol_info_tick(_resolved_symbol)
         ask = tick.ask if tick else 0.0
         bid = tick.bid if tick else 0.0
 
@@ -266,12 +268,3 @@ class Mt5Positions:
         except Exception as exc:
             logger.warning("Mt5Positions.get_deal_price_for_ticket ticket=%s: %s", ticket, exc)
             return None
-
-
-
-
-
-
-
-
-

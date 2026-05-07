@@ -166,6 +166,7 @@ class InboundSignal:
     outcome: Optional[str] = None
     realized_rr: Optional[float] = None
     close_price: Optional[float] = None
+    resolved_symbol: Optional[str] = None  # broker-resolved symbol, set at consumer level
 
     @classmethod
     def from_dict(cls, d: dict) -> InboundSignal:

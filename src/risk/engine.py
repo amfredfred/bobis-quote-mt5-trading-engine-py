@@ -77,7 +77,7 @@ class RiskEngine:
                     "Risk rejected",
                     extra={
                         "signal_id": signal.id,
-                        "symbol": signal.symbol,
+                        "symbol": signal.resolved_symbol,
                         "reason": result.reason,
                     },
                 )
@@ -88,7 +88,7 @@ class RiskEngine:
             "Risk approved",
             extra={
                 "signal_id": signal.id,
-                "symbol": signal.symbol,
+                "symbol": signal.resolved_symbol,
                 "direction": signal.direction.value,
                 "rr": signal.risk_reward_ratio,
             },

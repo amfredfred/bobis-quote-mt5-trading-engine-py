@@ -83,28 +83,28 @@ class SignalQueue:
           - Queue is full (flood protection)
         """
         with self._symbols_lock:
-            if signal.symbol in self._queued_symbols:
+            if signal.resolved_symbol in self._queued_symbols:
                 logger.debug(
                     "SignalQueue: dropped — symbol already queued",
-                    extra={"signal_id": signal.id, "symbol": signal.symbol},
+                    extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
                 )
                 return
 
             try:
                 self._queue.put_nowait(signal)
-                self._queued_symbols.add(signal.symbol)
+                self._queued_symbols.add(signal.resolved_symbol)
                 logger.debug(
                     "SignalQueue: enqueued",
                     extra={
                         "signal_id": signal.id,
-                        "symbol": signal.symbol,
+                        "symbol": signal.resolved_symbol,
                         "depth": self._queue.qsize(),
                     },
                 )
             except queue.Full:
                 logger.warning(
                     "SignalQueue: queue full — signal dropped",
-                    extra={"signal_id": signal.id, "symbol": signal.symbol},
+                    extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
                 )
 
     def depth(self) -> int:
@@ -126,23 +126,14 @@ class SignalQueue:
             # Clear symbol reservation before executing so new signals for
             # this symbol can queue while execution is in progress
             with self._symbols_lock:
-                self._queued_symbols.discard(signal.symbol)
+                self._queued_symbols.discard(signal.resolved_symbol)
 
             try:
                 self._on_signal(signal)
             except Exception:
                 logger.exception(
                     "SignalQueue: unhandled error processing signal",
-                    extra={"signal_id": signal.id, "symbol": signal.symbol},
+                    extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
                 )
             finally:
                 self._queue.task_done()
-
-
-
-
-
-
-
-
-

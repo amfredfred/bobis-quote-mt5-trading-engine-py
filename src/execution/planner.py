@@ -168,7 +168,7 @@ class TradePlanner:
 
         plan = TradePlan(
             signal_id=signal.id,
-            symbol=signal.symbol,
+            symbol=symbol_info.symbol,
             side=side,
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,
@@ -187,14 +187,16 @@ class TradePlanner:
             "Lot sizing adjustments applied",
             extra={
                 "signal_id": signal.id,
-                "symbol": signal.symbol,
+                "symbol": symbol_info.symbol,
                 "side": side.value,
                 "lot_size": calc.lot_size,
                 "risk_amount": round(calc.risk_amount, 2),
                 "risk_pct": round(risk_pct, 2),
                 "spread_pips": round(spread_price / pip, 1) if spread_price else 0,
                 "surcharge_pips": round(spread_surcharge / pip, 1),
-                "slippage_buffer_pct_of_stop": round(self._exec.max_entry_slippage_pct_of_stop * 100, 1),
+                "slippage_buffer_pct_of_stop": round(
+                    self._exec.max_entry_slippage_pct_of_stop * 100, 1
+                ),
                 "raw_sl_pips": round(
                     abs(signal.entry_price - signal.stop_loss) / pip, 1
                 ),
@@ -211,12 +213,3 @@ class TradePlanner:
             },
         )
         return plan
-
-
-
-
-
-
-
-
-
