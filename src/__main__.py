@@ -2,7 +2,7 @@
 Trading Execution Engine — entry point.
 
 Startup sequence:
-    1. Load configuration from environment
+    1. Load configuration from config.yaml
     2. Set up structured logging
     3. Build DI container
     4. Initialise storage directories
@@ -10,13 +10,8 @@ Startup sequence:
     6. Block until SIGINT / SIGTERM → graceful shutdown
 
 Usage:
-    python main.py
-
-    or with env vars:
-    SIGNAL_ENGINE_WS_URL=ws://localhost:8765 \\
-    MT5_LOGIN=12345 MT5_PASSWORD=secret MT5_SERVER=Broker-Live \\ 
-    MAX_LOSING_STREAK=4 \\
-    python main.py
+    python -m src                        # reads config.yaml in cwd
+    python -m src config/custom.yaml     # explicit path (first CLI arg)
 """
 
 from __future__ import annotations
@@ -28,14 +23,19 @@ import threading
 
 from src.app.bootstrap import bootstrap, shutdown
 from src.app.container import build_container
-from src.config.settings import cfg
+from src.config.settings import AppConfig
 from src.infra.logger import setup_logging
+from src.utils import time as _time
 
 logger = logging.getLogger("main")
 
 
 def main() -> None:
-    setup_logging(cfg.log_level)
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    cfg = AppConfig.from_yaml(config_path)
+
+    setup_logging(cfg.log_level, cfg.engine_timezone)
+    _time.configure(cfg.engine_timezone)
 
     logger.info(
         "Execution Engine initialising",

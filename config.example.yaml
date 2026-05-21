@@ -1,0 +1,55 @@
+# Execution Engine — configuration
+# Copy to config.yaml and fill in your values. config.yaml is git-ignored.
+# Secrets (MT5_PASSWORD, WS_SECRET_KEY) go in .env — never in this file.
+
+signal:
+  ws_url: ws://localhost:8765
+  # ws_secret_key → set WS_SECRET_KEY in .env
+  symbols:
+    - XAUUSD
+    - US30
+    - US500
+    - US100
+    - JP225
+    - EURUSD
+
+mt5:
+  login: 106020372
+  # password → set MT5_PASSWORD in .env
+  server: FBS-Demo
+  path: C:\Program Files\FBS MetaTrader 5\terminal64.exe
+  magic: 8858
+  slippage: 10
+  comment: xcom-bobisquote
+
+risk:
+  max_losing_streak: 4
+  max_daily_loss_percent: 3.0
+  max_exposure_per_symbol: 2
+  min_rr_ratio: 1.0
+  max_lot_size: 100.0
+  min_lot_size: 0.01
+  sl_ratio_threshold: 0.34
+  no_hedging: true
+  # Intraday capital-protection guards (0 = disabled)
+  max_equity_drawdown_percent: 3.0
+  rolling_window_size: 2
+  rolling_drawdown_pct: 2.0
+
+execution:
+  tp1_rr_multiple: 1.0
+  tp1_percentage: 50.0
+  move_sl_to_be_on_tp1: true
+  spread_risk_multiplier: 1.0
+  order_retry_count: 2
+  order_retry_delay_sec: 0.5
+  max_entry_slippage_pct_of_stop: 0.20
+  close_on_slippage_exceed: false
+  adjust_levels_on_slippage: false
+
+engine:
+  timezone: UTC
+  log_level: INFO
+  storage_path: ./data
+  monitoring_port: 8080
+  position_poll_interval: 0.6

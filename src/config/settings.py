@@ -1,16 +1,23 @@
 """
-Typed application configuration built from environment variables.
+Application configuration — loaded from config.yaml at startup.
 
-Import `cfg` for access anywhere; it is constructed once at module load.
+Usage:
+    cfg = AppConfig.from_yaml()                    # looks for config.yaml in cwd
+    cfg = AppConfig.from_yaml("path/to/config.yaml")
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
-from src.utils.symbol import normalise_symbol
-from src.config.env import env
 from zoneinfo import ZoneInfo
+
+import yaml
+from dotenv import load_dotenv
+
+from src.utils.symbol import normalise_symbol
 
 
 @dataclass(frozen=True)
@@ -23,40 +30,30 @@ class RiskConfig:
     min_lot_size: float
     sl_ratio_threshold: float
     no_hedging: bool = True
-    # ── Intraday capital-protection guards (parity with Node pipeline) ─────
-    # Equity peak: pause when equity drops >= N% from session high-water mark.
-    # 0.0 = disabled.
     max_equity_drawdown_percent: float = 2.0
-    # Rolling window: pause when peak-to-trough swing within the last
-    # rolling_window_size equity samples exceeds rolling_drawdown_pct %.
-    # Both must be > 0 for the guard to fire.
     rolling_window_size: int = 0
     rolling_drawdown_pct: float = 0.0
 
+    def __post_init__(self) -> None:
+        if self.max_losing_streak < 1:
+            raise ValueError(
+                f"risk.max_losing_streak must be >= 1, got: {self.max_losing_streak}"
+            )
+
+
 @dataclass(frozen=True)
 class ExecutionConfig:
-    # R-multiple at which poll-based TP1 detection fires the partial close.
-    # TP1 is always entry ± (tp1_rr_multiple × stop_distance), independent of
-    # whatever the signal engine computed.
     tp1_rr_multiple: float
-    # Percentage of entry_lots to close when price hits TP1.
-    # 0 = no partial close; move_sl_to_be_on_tp1 has no effect when this is 0.
     tp1_percentage: float
-    # Move SL to entry after a successful TP1 partial close.
     move_sl_to_be_on_tp1: bool
     slippage: int
     magic: int
     comment: str
     spread_risk_multiplier: float
     order_retry_count: int
-    max_entry_slippage_pct_of_stop: float  # e.g. 0.20 = reject if slip > 20% of stop distance
-    close_on_slippage_exceed: bool         # true = emergency-close; false = warn and continue
-    order_retry_delay_sec: int
-    # When False (default): SL/TP levels stay at the signal's analysis-derived prices
-    # regardless of fill slippage.  The fill price is recorded for PnL tracking but
-    # levels are never moved.
-    # When True: all levels shift by the fill-vs-signal difference so that stop
-    # distance and R:R are preserved relative to the actual fill price.
+    max_entry_slippage_pct_of_stop: float
+    close_on_slippage_exceed: bool
+    order_retry_delay_sec: float
     adjust_levels_on_slippage: bool = False
 
 
@@ -85,64 +82,72 @@ class AppConfig:
     log_level: str
     position_poll_interval: float
     engine_timezone: ZoneInfo
-    monitoring_port: str
+    monitoring_port: int
 
+    @classmethod
+    def from_yaml(cls, path: Path | str = "config.yaml") -> "AppConfig":
+        # Secrets from .env override anything — load before reading YAML
+        load_dotenv(override=False)
 
-def _build() -> AppConfig:
-    return AppConfig(
-        risk=RiskConfig(
-            max_losing_streak=env.MAX_LOSING_STREAK,
-            max_daily_loss_percent=env.MAX_DAILY_LOSS_PERCENT,
-            max_exposure_per_symbol=env.MAX_EXPOSURE_PER_SYMBOL,
-            min_rr_ratio=env.MIN_RR_RATIO,
-            max_lot_size=env.MAX_LOT_SIZE,
-            min_lot_size=env.MIN_LOT_SIZE,
-            sl_ratio_threshold=env.SL_RATIO_THRESHOLD,
-            no_hedging=env.NO_HEDGING,
-            max_equity_drawdown_percent=env.MAX_EQUITY_DRAWDOWN_PERCENT,
-            rolling_window_size=env.ROLLING_WINDOW_SIZE,
-            rolling_drawdown_pct=env.ROLLING_DRAWDOWN_PCT,
-        ),
-        execution=ExecutionConfig(
-            tp1_rr_multiple=env.TP1_RR_MULTIPLE,
-            tp1_percentage=env.TP1_PERCENTAGE,
-            move_sl_to_be_on_tp1=env.MOVE_SL_TO_BE_ON_TP1,
-            slippage=env.MT5_SLIPPAGE,
-            magic=env.MT5_MAGIC,
-            comment=env.MT5_COMMENT,
-            spread_risk_multiplier=env.SPREAD_RISK_MULTIPLIER,
-            order_retry_count=env.ORDER_RETRY_COUNT,
-            max_entry_slippage_pct_of_stop=env.MAX_ENTRY_SLIPPAGE_PCT_OF_STOP,
-            close_on_slippage_exceed=env.CLOSE_ON_SLIPPAGE_EXCEED,
-            order_retry_delay_sec=env.ORDER_RETRY_DELAY_SEC,
-            adjust_levels_on_slippage=env.USE_SLIPPAGE_ADJUSTED_LEVELS,
-        ),
-        mt5=Mt5Config(
-            login=env.MT5_LOGIN,
-            password=env.MT5_PASSWORD,
-            server=env.MT5_SERVER,
-            path=env.MT5_EXEC_PATH,
-        ),
-        signal=SignalConfig(
-            ws_url=env.SIGNAL_ENGINE_WS_URL,
-            ws_secret_key=env.SIGNAL_ENGINE_WS_SECRET_KEY,
-            symbols=[normalise_symbol(s) for s in env.SIGNAL_ENGINE_SYMBOLS.split(",")],
-        ),
-        storage_path=env.STORAGE_PATH,
-        log_level=env.LOG_LEVEL,
-        position_poll_interval=env.POSITION_POLL_INTERVAL_SEC,
-        engine_timezone=ZoneInfo(env.ENGINE_TIMEZONE),
-        monitoring_port=env.MONITORING_PORT,
-    )
+        with open(path, "r", encoding="utf-8") as fh:
+            raw: dict = yaml.safe_load(fh)
 
+        sig = raw.get("signal", {})
+        mt5 = raw.get("mt5", {})
+        risk = raw.get("risk", {})
+        exe = raw.get("execution", {})
+        eng = raw.get("engine", {})
 
-cfg: AppConfig = _build()
+        symbols_raw = sig.get("symbols", [])
+        if isinstance(symbols_raw, str):
+            symbols_raw = [s.strip() for s in symbols_raw.split(",")]
 
+        # Secrets are sourced from .env only
+        mt5_password = os.environ.get("MT5_PASSWORD", "")
+        ws_secret = os.environ.get("WS_SECRET_KEY", "")
 
-
-
-
-
-
-
-
+        return cls(
+            signal=SignalConfig(
+                ws_url=sig["ws_url"],
+                ws_secret_key=ws_secret,
+                symbols=[normalise_symbol(s) for s in symbols_raw],
+            ),
+            mt5=Mt5Config(
+                login=int(mt5["login"]),
+                password=mt5_password,
+                server=str(mt5["server"]),
+                path=str(mt5.get("path", "")),
+            ),
+            risk=RiskConfig(
+                max_losing_streak=int(risk["max_losing_streak"]),
+                max_daily_loss_percent=float(risk["max_daily_loss_percent"]),
+                max_exposure_per_symbol=int(risk["max_exposure_per_symbol"]),
+                min_rr_ratio=float(risk["min_rr_ratio"]),
+                max_lot_size=float(risk["max_lot_size"]),
+                min_lot_size=float(risk.get("min_lot_size", 0.01)),
+                sl_ratio_threshold=float(risk["sl_ratio_threshold"]),
+                no_hedging=bool(risk.get("no_hedging", True)),
+                max_equity_drawdown_percent=float(risk.get("max_equity_drawdown_percent", 2.0)),
+                rolling_window_size=int(risk.get("rolling_window_size", 0)),
+                rolling_drawdown_pct=float(risk.get("rolling_drawdown_pct", 0.0)),
+            ),
+            execution=ExecutionConfig(
+                tp1_rr_multiple=float(exe["tp1_rr_multiple"]),
+                tp1_percentage=float(exe["tp1_percentage"]),
+                move_sl_to_be_on_tp1=bool(exe.get("move_sl_to_be_on_tp1", True)),
+                slippage=int(mt5.get("slippage", 10)),
+                magic=int(mt5.get("magic", 20240101)),
+                comment=str(mt5.get("comment", "signal-engine")),
+                spread_risk_multiplier=float(exe.get("spread_risk_multiplier", 1.0)),
+                order_retry_count=int(exe.get("order_retry_count", 2)),
+                max_entry_slippage_pct_of_stop=float(exe.get("max_entry_slippage_pct_of_stop", 0.20)),
+                close_on_slippage_exceed=bool(exe.get("close_on_slippage_exceed", False)),
+                order_retry_delay_sec=float(exe.get("order_retry_delay_sec", 0.5)),
+                adjust_levels_on_slippage=bool(exe.get("adjust_levels_on_slippage", False)),
+            ),
+            storage_path=str(eng.get("storage_path", "./data")),
+            log_level=str(eng.get("log_level", "INFO")),
+            position_poll_interval=float(eng.get("position_poll_interval", 5.0)),
+            engine_timezone=ZoneInfo(str(eng.get("timezone", "UTC"))),
+            monitoring_port=int(eng.get("monitoring_port", 8080)),
+        )

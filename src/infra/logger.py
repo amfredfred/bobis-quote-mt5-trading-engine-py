@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import datetime, timezone
-from src.config.settings import cfg
+from zoneinfo import ZoneInfo
 
 # ── ANSI colour codes ──────────────────────────────────────────────────────────
 
@@ -75,13 +75,14 @@ class _PrettyFormatter(logging.Formatter):
         TIMESTAMP  LEVEL     LOGGER_NAME  Message text   key=value key=value
     """
 
-    def __init__(self, use_colour: bool = True) -> None:
+    def __init__(self, use_colour: bool = True, tz: ZoneInfo | None = None) -> None:
         super().__init__()
         self._colour = use_colour
+        self._tz = tz or ZoneInfo("UTC")
 
     def format(self, record: logging.LogRecord) -> str:
         # ── Timestamp ──────────────────────────────────────────────────────
-        ts = datetime.now(tz=cfg.engine_timezone).strftime("%Y-%m-%d %H:%M:%S")
+        ts = datetime.now(tz=self._tz).strftime("%Y-%m-%d %H:%M:%S")
 
         # ── Level ──────────────────────────────────────────────────────────
         level = record.levelname
@@ -129,7 +130,7 @@ class _PrettyFormatter(logging.Formatter):
         )
 
 
-def setup_logging(level: str = "INFO") -> None:
+def setup_logging(level: str = "INFO", tz: ZoneInfo | None = None) -> None:
     """
     Configure the root logger with the pretty formatter.
 
@@ -142,7 +143,7 @@ def setup_logging(level: str = "INFO") -> None:
     use_colour = (not force_plain) and sys.stdout.isatty()
 
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_PrettyFormatter(use_colour=use_colour))
+    handler.setFormatter(_PrettyFormatter(use_colour=use_colour, tz=tz))
 
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
