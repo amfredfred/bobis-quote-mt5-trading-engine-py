@@ -297,8 +297,8 @@ class UIBridge:
                 side         = side_int,
                 volume       = trade.current_lots,
                 price        = price,
-                slippage     = self._config.mt5.slippage,
-                magic        = self._config.mt5.magic,
+                slippage     = self._config.execution.slippage,
+                magic        = self._config.execution.magic,
                 comment      = "dashboard_close",
                 filling_mode = filling_mode,
             )
@@ -383,7 +383,7 @@ class UIBridge:
             "connected_mt5":           c.mt5_client.is_connected(),
             "connected_signal_engine": True,
             "version":                 "0.1.0",
-            "magic":                   self._config.mt5.magic,
+            "magic":                   self._config.execution.magic,
         }
 
     def _build_risk_guards(self, lt: dict, config: Any) -> list[dict]:
