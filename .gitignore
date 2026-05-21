@@ -61,6 +61,11 @@ coverage.xml
 ehthumbs.db
 Thumbs.db
 
+# Node / dashboard
+node_modules/
+dashboard/dist/
+dashboard/.env
+
 # Project specific
 data/
 *.zip

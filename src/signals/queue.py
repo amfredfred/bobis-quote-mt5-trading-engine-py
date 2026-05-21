@@ -47,6 +47,7 @@ class SignalQueue:
         self._queued_symbols: Set[str] = set()
         self._symbols_lock: threading.Lock = threading.Lock()
         self._stopped: threading.Event = threading.Event()
+        self._paused: threading.Event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -107,6 +108,17 @@ class SignalQueue:
                     extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
                 )
 
+    def pause(self) -> None:
+        self._paused.set()
+        logger.info("SignalQueue paused")
+
+    def resume(self) -> None:
+        self._paused.clear()
+        logger.info("SignalQueue resumed")
+
+    def is_paused(self) -> bool:
+        return self._paused.is_set()
+
     def depth(self) -> int:
         return self._queue.qsize()
 
@@ -121,6 +133,14 @@ class SignalQueue:
                 continue
 
             if signal is None:  # sentinel — stop requested
+                break
+
+            # Block here while paused — signal stays consumed from queue but we
+            # wait before executing it, so the queue doesn't fill up.
+            while self._paused.is_set() and not self._stopped.is_set():
+                self._paused.wait(timeout=0.5)
+
+            if self._stopped.is_set():
                 break
 
             # Clear symbol reservation before executing so new signals for
