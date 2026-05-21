@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/chartplaceholder.tsx","./src/components/header.tsx","./src/components/metricspanel.tsx","./src/components/positionstable.tsx","./src/components/riskpanel.tsx","./src/components/sidebar.tsx","./src/components/signalfeed.tsx","./src/hooks/useenginesocket.ts","./src/lib/mock.ts","./src/types/engine.ts"],"version":"5.9.3"}

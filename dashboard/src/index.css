@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Reset & base ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #050505;
+  color: #EDEDED;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── CRT scanline overlay ───────────────────────────────────── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 1px,
+    rgba(0, 0, 0, 0.022) 1px,
+    rgba(0, 0, 0, 0.022) 2px
+  );
+  pointer-events: none;
+  z-index: 9000;
+}
+
+/* ── Terminal tiled grid background ────────────────────────── */
+.bg-terminal-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.016) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.016) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* ── Thin scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 3px; height: 3px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.09); border-radius: 1px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+
+/* ── Shared panel chrome ────────────────────────────────────── */
+.panel {
+  background: #0D0D0D;
+  border: 1px solid rgba(255,255,255,0.07);
+}
+
+/* ── Section label (tiny mono uppercase) ───────────────────── */
+.section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: #4A4A4A;
+}
+
+/* ── Active sidebar item glow ───────────────────────────────── */
+.active-glow {
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.12),
+    0 0 14px rgba(255,255,255,0.05);
+}
+
+/* ── Status dot pulse ───────────────────────────────────────── */
+@keyframes pulse-ok {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.pulse-ok { animation: pulse-ok 2.8s ease-in-out infinite; }
+
+/* ── Signal ticker scroll ───────────────────────────────────── */
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.ticker-track {
+  animation: ticker-scroll 36s linear infinite;
+  will-change: transform;
+}
+.ticker-track:hover { animation-play-state: paused; }

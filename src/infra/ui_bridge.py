@@ -1,0 +1,462 @@
+"""
+src/infra/ui_bridge.py — WebSocket bridge between the engine event bus and the dashboard UI.
+
+Replaces MonitoringServer. The dashboard connects once via WebSocket and receives:
+  1. STATE_SNAPSHOT on connect (full current state)
+  2. Incremental push messages as engine events fire
+  3. METRICS_UPDATE every 5 s
+
+Dashboard → engine commands (incoming messages):
+  cmd.close_trade   {"trade_id": "T-00041"}
+  cmd.pause         {}
+  cmd.resume        {}
+
+Message envelope:  {"type": "<name>", "payload": {...}}
+"""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import json
+import logging
+import threading
+import time
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+import websockets
+import websockets.exceptions
+
+from src.infra.metrics import metrics
+
+if TYPE_CHECKING:
+    from src.app.container import AppContainer
+    from src.config.settings import AppConfig
+
+logger = logging.getLogger(__name__)
+
+_started_at = time.time()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _uptime() -> float:
+    return round(time.time() - _started_at, 1)
+
+def _now_hms() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+def _serialize_trade(trade: Any) -> dict:
+    return {
+        "id":            trade.id,
+        "symbol":        trade.symbol,
+        "side":          trade.side.value if hasattr(trade.side, "value") else str(trade.side),
+        "state":         trade.status.value if hasattr(trade.status, "value") else str(trade.status),
+        "entry_price":   trade.entry_price or 0.0,
+        "current_price": trade.entry_price or 0.0,
+        "sl":            trade.stop_loss,
+        "tp1":           trade.tp1,
+        "tp2":           trade.tp2,
+        "lots":          trade.entry_lots,
+        "tp1_lots":      trade.tp1_lots,
+        "pnl":           0.0,
+        "opened_at":     _now_hms(),
+        "duration_sec":  0,
+        "ticket":        trade.entry_ticket,
+    }
+
+def _extract_signal(payload: Any) -> dict | None:
+    signal = None
+    reason: str | None = None
+
+    if payload is None:
+        return None
+    if hasattr(payload, "symbol") and hasattr(payload, "direction"):
+        signal = payload
+    elif hasattr(payload, "plan") and hasattr(payload.plan, "signal"):
+        signal = payload.plan.signal
+    elif isinstance(payload, dict):
+        signal = payload.get("signal")
+        reason = str(payload.get("reason", "")) or None
+
+    if signal is None or not hasattr(signal, "symbol"):
+        return None
+
+    direction = getattr(signal, "direction", None)
+    return {
+        "id":        getattr(signal, "id", _now_hms()),
+        "symbol":    signal.symbol,
+        "direction": direction.value if hasattr(direction, "value") else str(direction),
+        "reason":    reason,
+    }
+
+def _build_signal_event(event_name: str, payload: Any) -> dict | None:
+    STATUS = {
+        "signal.received":  "RECEIVED",
+        "signal.triggered": "TRIGGERED",
+        "risk.approved":    "APPROVED",
+        "risk.rejected":    "REJECTED",
+        "trade.opened":     "OPENED",
+    }
+    status = STATUS.get(event_name)
+    if status is None:
+        return None
+    info = _extract_signal(payload)
+    if info is None:
+        return None
+    return {
+        "id":        info["id"],
+        "symbol":    info["symbol"],
+        "direction": info["direction"],
+        "status":    status,
+        "timestamp": _now_hms(),
+        "reason":    info.get("reason"),
+    }
+
+
+# ── UIBridge ──────────────────────────────────────────────────────────────────
+
+class UIBridge:
+    def __init__(self, container: "AppContainer", config: "AppConfig", port: int = 8080) -> None:
+        self._container = container
+        self._config    = config
+        self._port      = port
+
+        self._loop:       asyncio.AbstractEventLoop | None = None
+        self._queue:      asyncio.Queue | None             = None
+        self._stop_event: asyncio.Event | None             = None
+        self._thread:     threading.Thread | None          = None
+        self._clients:    set[Any]                         = set()
+
+        self._log_buf: collections.deque[dict] = collections.deque(maxlen=200)
+        self._log_handler = _LogHandler(self._log_buf)
+
+    # ── Lifecycle ──────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        self._log_handler.setFormatter(
+            logging.Formatter("%(asctime)s  %(name)-20s  %(message)s", datefmt="%H:%M:%S")
+        )
+        self._log_handler.setLevel(logging.DEBUG)
+        logging.getLogger().addHandler(self._log_handler)
+
+        self._container.event_bus.on_any(self.record_event)
+
+        self._thread = threading.Thread(target=self._run_loop, name="ui-bridge", daemon=True)
+        self._thread.start()
+        logger.info("UIBridge started on ws://0.0.0.0:%d", self._port)
+
+    def stop(self) -> None:
+        if self._loop and self._stop_event:
+            self._loop.call_soon_threadsafe(self._stop_event.set)
+        logger.info("UIBridge stopped")
+
+    # ── Thread-safe enqueue (called from engine threads) ──────────────────
+
+    def record_event(self, event_name: str, payload: Any) -> None:
+        if self._loop and self._queue:
+            try:
+                self._loop.call_soon_threadsafe(
+                    self._queue.put_nowait, (event_name, payload)
+                )
+            except Exception:
+                pass
+
+    # ── Asyncio loop ──────────────────────────────────────────────────────
+
+    def _run_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop       = loop
+        self._queue      = asyncio.Queue()
+        self._stop_event = asyncio.Event()
+        try:
+            loop.run_until_complete(self._serve())
+        finally:
+            loop.close()
+
+    async def _serve(self) -> None:
+        async def handler(websocket: Any) -> None:
+            self._clients.add(websocket)
+            logger.debug("Dashboard connected (%d clients)", len(self._clients))
+            try:
+                await websocket.send(
+                    json.dumps(
+                        {"type": "STATE_SNAPSHOT", "payload": self._build_snapshot()},
+                        default=str,
+                    )
+                )
+                # Listen for commands
+                async for raw in websocket:
+                    try:
+                        msg = json.loads(raw)
+                        await self._handle_command(msg.get("type", ""), msg.get("payload", {}))
+                    except Exception as e:
+                        logger.warning("UIBridge command error: %s", e)
+            except websockets.exceptions.ConnectionClosed:
+                pass
+            finally:
+                self._clients.discard(websocket)
+                logger.debug("Dashboard disconnected (%d clients)", len(self._clients))
+
+        async def broadcaster() -> None:
+            while not self._stop_event.is_set():  # type: ignore[union-attr]
+                try:
+                    event_name, payload = await asyncio.wait_for(
+                        self._queue.get(), timeout=1.0  # type: ignore[union-attr]
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                msg = self._serialize_event(event_name, payload)
+                if msg and self._clients:
+                    frame = json.dumps(msg, default=str)
+                    for client in list(self._clients):
+                        try:
+                            await client.send(frame)
+                        except Exception:
+                            self._clients.discard(client)
+
+        async def metrics_pusher() -> None:
+            while not self._stop_event.is_set():  # type: ignore[union-attr]
+                await asyncio.sleep(5)
+                if not self._clients:
+                    continue
+                try:
+                    frame = json.dumps(
+                        {"type": "METRICS_UPDATE", "payload": self._build_metrics()},
+                        default=str,
+                    )
+                    for client in list(self._clients):
+                        try:
+                            await client.send(frame)
+                        except Exception:
+                            self._clients.discard(client)
+                except Exception:
+                    pass
+
+        server = await websockets.serve(handler, "0.0.0.0", self._port)  # type: ignore[attr-defined]
+        try:
+            await asyncio.gather(
+                broadcaster(),
+                metrics_pusher(),
+                self._stop_event.wait(),  # type: ignore[union-attr]
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    # ── Command handler ───────────────────────────────────────────────────
+
+    async def _handle_command(self, cmd: str, payload: dict) -> None:
+        loop = asyncio.get_event_loop()
+
+        if cmd == "cmd.close_trade":
+            trade_id = payload.get("trade_id", "")
+            await loop.run_in_executor(None, self._close_trade, trade_id)
+
+        elif cmd == "cmd.pause":
+            self._container.signal_queue.pause()
+            logger.info("UIBridge: engine paused via dashboard")
+            await self._broadcast({"type": "engine.paused", "payload": {}})
+
+        elif cmd == "cmd.resume":
+            self._container.signal_queue.resume()
+            logger.info("UIBridge: engine resumed via dashboard")
+            await self._broadcast({"type": "engine.resumed", "payload": {}})
+
+    def _close_trade(self, trade_id: str) -> None:
+        from src.brokers.mt5.types import Mt5OrderType
+
+        trade = self._container.position_store.get(trade_id)
+        if not trade or not trade.entry_ticket:
+            logger.warning("cmd.close_trade: trade %s not found or no ticket", trade_id)
+            return
+
+        try:
+            self._container.mt5_client.ensure_connected()
+            mt5 = self._container.mt5_client.mt5
+
+            tick = mt5.symbol_info_tick(trade.symbol)
+            if tick is None:
+                raise RuntimeError(f"No tick available for {trade.symbol}")
+
+            if trade.side.value == "BUY":
+                side_int = Mt5OrderType.BUY
+                price    = tick.bid
+            else:
+                side_int = Mt5OrderType.SELL
+                price    = tick.ask
+
+            sym_info     = mt5.symbol_info(trade.symbol)
+            filling_mode = getattr(sym_info, "filling_mode", 0) if sym_info else 0
+
+            self._container.mt5_orders.close_position(
+                ticket       = trade.entry_ticket,
+                symbol       = trade.symbol,
+                side         = side_int,
+                volume       = trade.current_lots,
+                price        = price,
+                slippage     = self._config.mt5.slippage,
+                magic        = self._config.mt5.magic,
+                comment      = "dashboard_close",
+                filling_mode = filling_mode,
+            )
+            logger.info("UIBridge: closed trade %s (ticket %d)", trade_id, trade.entry_ticket)
+
+        except Exception as exc:
+            logger.error("UIBridge: close_trade failed for %s: %s", trade_id, exc)
+
+    async def _broadcast(self, msg: dict) -> None:
+        frame = json.dumps(msg, default=str)
+        for client in list(self._clients):
+            try:
+                await client.send(frame)
+            except Exception:
+                self._clients.discard(client)
+
+    # ── Event serialization ───────────────────────────────────────────────
+
+    def _serialize_event(self, event_name: str, payload: Any) -> dict | None:
+        if event_name == "trade.opened":
+            try:
+                trade_dict = _serialize_trade(payload)
+                # Also push to signal feed as OPENED
+                sig = _build_signal_event(event_name, payload)
+                if sig and self._clients:
+                    frame = json.dumps({"type": "signal.opened", "payload": sig}, default=str)
+                    asyncio.ensure_future(self._broadcast_raw(frame))
+                return {"type": event_name, "payload": trade_dict}
+            except Exception:
+                return None
+
+        if event_name == "trade.tp1_hit":
+            try:
+                return {"type": event_name, "payload": {"trade_id": payload.id}}
+            except Exception:
+                return None
+
+        if event_name in ("trade.tp2_hit", "trade.sl_hit", "trade.closed"):
+            try:
+                return {"type": event_name, "payload": {"trade_id": payload.id}}
+            except Exception:
+                return None
+
+        if event_name in ("signal.received", "signal.triggered", "risk.approved", "risk.rejected"):
+            sig = _build_signal_event(event_name, payload)
+            return {"type": event_name, "payload": sig} if sig else None
+
+        return None
+
+    async def _broadcast_raw(self, frame: str) -> None:
+        for client in list(self._clients):
+            try:
+                await client.send(frame)
+            except Exception:
+                self._clients.discard(client)
+
+    # ── Snapshot builders ─────────────────────────────────────────────────
+
+    def _build_snapshot(self) -> dict:
+        c       = self._container
+        config  = self._config
+        lt      = c.loss_tracker.stats()
+        snap    = metrics.snapshot()
+        trades  = c.position_store.get_open_trades()
+
+        return {
+            "connected":  True,
+            "engine":     self._build_engine_info(lt),
+            "trades":     [_serialize_trade(t) for t in trades],
+            "riskGuards": self._build_risk_guards(lt, config),
+            "metrics":    self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config),
+            "signals":    [],
+            "logs":       list(self._log_buf)[-50:],
+        }
+
+    def _build_engine_info(self, lt: dict) -> dict:
+        c = self._container
+        return {
+            "status":                  "PAUSED" if lt.get("paused") else "RUNNING",
+            "uptime_sec":              int(_uptime()),
+            "mode":                    getattr(self._config, "mode", "LIVE"),
+            "connected_mt5":           c.mt5_client.is_connected(),
+            "connected_signal_engine": True,
+            "version":                 "0.1.0",
+            "magic":                   self._config.mt5.magic,
+        }
+
+    def _build_risk_guards(self, lt: dict, config: Any) -> list[dict]:
+        daily_loss  = lt.get("daily_loss_pct", 0.0)
+        eq_dd       = lt.get("equity_drawdown_pct", 0.0)
+        paused      = lt.get("paused", False)
+        reason      = (lt.get("pause_reason") or "").lower()
+        rolling_on  = config.risk.rolling_window_size > 0 and config.risk.rolling_drawdown_pct > 0
+
+        def _s(key: str) -> str:
+            if paused and key in reason:
+                return "PAUSED"
+            return "ACTIVE"
+
+        return [
+            {"id": "guard1", "name": "DAILY LOSS",      "description": "Pause until midnight on breach",
+             "status": _s("daily loss"),       "current_value": round(daily_loss, 4), "threshold": config.risk.max_daily_loss_percent,    "unit": "%"},
+            {"id": "guard2", "name": "EQUITY DRAWDOWN", "description": "Peak equity drawdown limit",
+             "status": _s("equity drawdown"),  "current_value": round(eq_dd, 4),      "threshold": config.risk.max_equity_drawdown_percent, "unit": "%"},
+            {"id": "guard3", "name": "ROLLING WINDOW",  "description": f"Rolling {config.risk.rolling_window_size}-trade drawdown",
+             "status": "DISABLED" if not rolling_on else _s("rolling drawdown"),
+             "current_value": round(eq_dd, 4), "threshold": config.risk.rolling_drawdown_pct, "unit": "%"},
+        ]
+
+    def _build_metrics(self) -> dict:
+        c      = self._container
+        lt     = c.loss_tracker.stats()
+        snap   = metrics.snapshot()
+        trades = c.position_store.get_open_trades()
+        return self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, self._config)
+
+    def _build_metrics_from(self, lt: dict, counters: dict, gauges: dict, open_trades: list, config: Any) -> dict:
+        tp1 = counters.get("trades.tp1_hit", 0)
+        tp2 = counters.get("trades.tp2_hit", 0)
+        sl  = counters.get("trades.sl_hit", 0)
+        wins = tp1 + tp2
+        total_closed = wins + sl
+
+        start_eq   = lt.get("start_of_day_equity", 0.0)
+        daily_loss = lt.get("daily_loss_pct", 0.0)
+        peak_eq    = lt.get("equity_peak", 0.0)
+        eq_dd      = lt.get("equity_drawdown_pct", 0.0)
+
+        return {
+            "equity":             peak_eq if peak_eq else start_eq,
+            "peak_equity":        peak_eq,
+            "drawdown_pct":       round(eq_dd, 4),
+            "daily_pnl":          round(-(start_eq * daily_loss / 100.0), 2),
+            "open_trades":        len(open_trades),
+            "max_trades":         config.risk.max_losing_streak + 1,
+            "pending_signals":    self._container.signal_queue.depth(),
+            "total_trades_today": counters.get("trades.opened", 0),
+            "winning_trades":     wins,
+            "losing_trades":      sl,
+            "win_rate":           round(wins / total_closed * 100, 1) if total_closed else 0.0,
+            "signal_to_trade_ms": int(gauges.get("latency.signal_to_trade_ms") or 0),
+        }
+
+
+# ── Log handler ───────────────────────────────────────────────────────────────
+
+class _LogHandler(logging.Handler):
+    def __init__(self, buf: collections.deque) -> None:
+        super().__init__()
+        self._buf = buf
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._buf.append({
+                "ts":    record.created,
+                "level": record.levelname,
+                "name":  record.name,
+                "msg":   self.format(record),
+            })
+        except Exception:
+            pass

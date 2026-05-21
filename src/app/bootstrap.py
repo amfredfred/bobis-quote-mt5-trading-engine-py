@@ -103,12 +103,12 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 
     container.event_bus.on_any(on_any_event)
 
-    # Monitoring server
-    from src.infra.monitoring import MonitoringServer
-    container.monitoring_server = MonitoringServer(container, config, port=config.monitoring_port)
+    # UI bridge — WebSocket server for the dashboard
+    from src.infra.ui_bridge import UIBridge
+    container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
 
     # Start all services
-    container.monitoring_server.start()
+    container.ui_bridge.start()
     container.signal_queue.start()
     container.position_manager.start()
     container.signal_consumer.start()
@@ -131,8 +131,8 @@ def shutdown(container: AppContainer) -> None:
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()
-    if container.monitoring_server:
-        container.monitoring_server.stop()
+    if container.ui_bridge:
+        container.ui_bridge.stop()
     container.mt5_client.disconnect()
     metrics.stop()
     logger.info("Shutdown complete")

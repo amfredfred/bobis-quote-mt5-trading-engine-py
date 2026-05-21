@@ -12,13 +12,14 @@ from dataclasses import dataclass
 from src.brokers.mt5.client import Mt5Client
 from src.brokers.mt5.orders import Mt5Orders
 from src.brokers.mt5.positions import Mt5Positions
+
 from src.config.settings import AppConfig
 from src.core.event_bus import EventBus
 from src.execution.engine import ExecutionEngine
 from src.execution.order_manager import OrderManager
 from src.execution.planner import TradePlanner
 from src.infra.db import Database
-from src.infra.monitoring import MonitoringServer
+from src.infra.ui_bridge import UIBridge
 from src.positions.manager import PositionManager
 from src.positions.store import PositionStore
 from src.risk.engine import RiskEngine
@@ -40,12 +41,13 @@ class AppContainer:
     execution_engine: ExecutionEngine
     position_manager: PositionManager
     mt5_client: Mt5Client
+    mt5_orders: Mt5Orders
     mt5_positions: Mt5Positions
     position_store: PositionStore
     trade_repo: TradeRepository
     strategy_router: StrategyRouter
     loss_tracker: LossTracker
-    monitoring_server: "MonitoringServer | None" = None
+    ui_bridge: "UIBridge | None" = None
 
 
 def build_container(config: AppConfig) -> AppContainer:
@@ -123,6 +125,7 @@ def build_container(config: AppConfig) -> AppContainer:
         execution_engine=execution_engine,
         position_manager=position_manager,
         mt5_client=mt5_client,
+        mt5_orders=mt5_orders,
         mt5_positions=mt5_positions,
         trade_repo=trade_repo,
         position_store=position_store,
