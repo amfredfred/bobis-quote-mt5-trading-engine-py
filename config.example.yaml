@@ -36,8 +36,9 @@ risk:
   rolling_window_size: 2
   rolling_drawdown_pct: 2.0
 
-execution:
-  tp1_rr_multiple: 1.0
+execution: 
+  # TP1 fires when price reaches this % of entry→TP2 range
+  tp1_trigger_pct: 40.0  
   tp1_percentage: 50.0
   move_sl_to_be_on_tp1: true
   spread_risk_multiplier: 1.0

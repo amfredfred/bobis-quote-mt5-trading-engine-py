@@ -43,7 +43,7 @@ class RiskConfig:
 
 @dataclass(frozen=True)
 class ExecutionConfig:
-    tp1_rr_multiple: float
+    tp1_trigger_pct: float   # 0–100: TP1 fires at this % of the entry→TP2 range
     tp1_percentage: float
     move_sl_to_be_on_tp1: bool
     slippage: int
@@ -132,7 +132,7 @@ class AppConfig:
                 rolling_drawdown_pct=float(risk.get("rolling_drawdown_pct", 0.0)),
             ),
             execution=ExecutionConfig(
-                tp1_rr_multiple=float(exe["tp1_rr_multiple"]),
+                tp1_trigger_pct=float(exe["tp1_trigger_pct"]),
                 tp1_percentage=float(exe["tp1_percentage"]),
                 move_sl_to_be_on_tp1=bool(exe.get("move_sl_to_be_on_tp1", True)),
                 slippage=int(mt5.get("slippage", 10)),

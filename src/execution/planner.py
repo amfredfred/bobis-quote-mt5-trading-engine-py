@@ -117,10 +117,12 @@ class TradePlanner:
         # When the position manager poll sees price cross TP1 it closes tp1_lots
         # and (if configured) moves the broker SL to entry so the remaining
         # position runs to TP2 risk-free.
-        # TP1 = entry ± (tp1_rr_multiple × raw_stop_distance), always relative
-        # to the actual stop distance, independent of signal.tp1.
+        # TP1 = entry ± (tp1_trigger_pct / 100 × |tp2 − entry|)
+        # This keeps TP1 proportional to the actual trade range regardless of RRR,
+        # so a 5R trade doesn't move SL to BE on a mere 1R move.
         raw_stop_distance = abs(signal.entry_price - signal.stop_loss)
-        tp1_offset = self._exec.tp1_rr_multiple * raw_stop_distance
+        trade_range = abs(signal.tp2 - signal.entry_price)
+        tp1_offset = (self._exec.tp1_trigger_pct / 100.0) * trade_range
         static_tp1 = (
             signal.entry_price + tp1_offset
             if signal.direction == SignalDirection.LONG
@@ -132,22 +134,11 @@ class TradePlanner:
         # doesn't need to re-derive it.  Floored to volume_step so the broker
         # always accepts the volume.  0.0 means "no partial close".
         #
-        # TP1 is only meaningful when the trade has room to reach it before
-        # TP2.  If the signal RRR <= TP1_RR_MULTIPLE there is no space between
-        # the TP1 level and the final target, so tp1_lots is forced to 0.
+        # TP1 is eligible whenever tp1_trigger_pct is between 0 and 100 exclusive,
+        # which guarantees static_tp1 is strictly between entry and tp2.
         import math
-        trade_rr = (
-            abs(signal.tp2 - signal.entry_price) / raw_stop_distance
-            if raw_stop_distance > 0
-            else 0.0
-        )
         volume_step = symbol_info.volume_step if symbol_info.volume_step else 0.01
-        # NOTE: the guard `trade_rr > tp1_rr_multiple` is load-bearing for the
-        # price level too.  Because static_tp1 = entry ± (tp1_rr_multiple × stop)
-        # and tp2 = entry ± (trade_rr × stop), this inequality guarantees
-        # static_tp1 is always strictly between entry and tp2.  Never remove
-        # the guard without also adding an explicit price-level clamp.
-        if self._exec.tp1_percentage > 0 and trade_rr > self._exec.tp1_rr_multiple:
+        if self._exec.tp1_percentage > 0 and 0 < self._exec.tp1_trigger_pct < 100:
             raw_tp1_lots = calc.lot_size * (self._exec.tp1_percentage / 100.0)
             tp1_lots = math.floor(raw_tp1_lots / volume_step) * volume_step
             tp1_lots = round(tp1_lots, 2)
@@ -202,9 +193,9 @@ class TradePlanner:
                 ),
                 "pessimistic_sl_pips": round(raw_sl_distance / pip, 1),
                 "adjusted_sl_pips": round(adjusted_sl_distance / pip, 1),
-                "tp1_rr_multiple": self._exec.tp1_rr_multiple,
-                "trade_rr": round(trade_rr, 2),
-                "tp1_eligible": trade_rr > self._exec.tp1_rr_multiple,
+                "tp1_trigger_pct": self._exec.tp1_trigger_pct,
+                "trade_range_pips": round(trade_range / pip, 1) if pip else 0,
+                "tp1_eligible": 0 < self._exec.tp1_trigger_pct < 100,
                 "tp1_percentage": self._exec.tp1_percentage,
                 "tp1_lots": tp1_lots,
                 "signal_tp1": signal.tp1,
