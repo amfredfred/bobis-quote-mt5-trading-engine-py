@@ -450,19 +450,34 @@ class UIBridge:
 
         start_eq   = lt.get("start_of_day_equity", 0.0)
         daily_loss = lt.get("daily_loss_pct", 0.0)
+        daily_budget = lt.get("daily_budget", 0.0)
         peak_eq    = lt.get("equity_peak", 0.0)
         eq_dd      = lt.get("equity_drawdown_pct", 0.0)
 
         current_equity = account["equity"] if account else (peak_eq if peak_eq else start_eq)
         peak_equity = max(peak_eq, current_equity) if current_equity else peak_eq
+        daily_loss_amount = round(start_eq * daily_loss / 100.0, 2) if start_eq else 0.0
+        daily_budget_left = max(daily_budget - daily_loss_amount, 0.0) if daily_budget else 0.0
+        risk_slots = config.risk.max_losing_streak + 1
+        risk_per_trade = round(daily_budget / risk_slots, 2) if daily_budget and risk_slots else 0.0
 
         result = {
+            "start_balance":      start_eq,
+            "current_balance":    account["balance"] if account else current_equity,
             "equity":             current_equity,
             "peak_equity":        peak_equity,
             "drawdown_pct":       round(eq_dd, 4),
-            "daily_pnl":          round(-(start_eq * daily_loss / 100.0), 2),
+            "daily_pnl":          round(-daily_loss_amount, 2),
+            "daily_loss_pct":     round(daily_loss, 4),
+            "daily_budget":       daily_budget,
+            "daily_budget_used":  daily_loss_amount,
+            "daily_budget_left":  daily_budget_left,
+            "daily_loss_limit_percent": config.risk.max_daily_loss_percent,
+            "risk_per_trade":     risk_per_trade,
+            "risk_slots":         risk_slots,
+            "max_losing_streak":  config.risk.max_losing_streak,
             "open_trades":        len(open_trades),
-            "max_trades":         config.risk.max_losing_streak + 1,
+            "max_trades":         risk_slots,
             "pending_signals":    self._container.signal_queue.depth(),
             "total_trades_today": counters.get("trades.opened", 0),
             "winning_trades":     wins,

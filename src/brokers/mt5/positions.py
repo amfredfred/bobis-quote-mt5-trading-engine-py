@@ -25,6 +25,42 @@ class Mt5Positions:
     def _mt5(self):
         return self._client.mt5
 
+    def _history_deals_get(self, from_dt: datetime, to_dt: datetime) -> list:
+        """Call MT5 history_deals_get with one reconnect retry.
+
+        The MetaTrader5 Python extension can occasionally raise SystemError
+        with "returned a result with an exception set". Treat that as a broker
+        API failure, reconnect once, and surface the MT5 last_error payload.
+        """
+        last_failure: RuntimeError | None = None
+
+        for attempt in range(1, 3):
+            self._client.ensure_connected()
+            with _MT5_LOCK:
+                try:
+                    deals = self._mt5.history_deals_get(from_dt, to_dt)
+                    if deals is None:
+                        error = self._mt5.last_error()
+                        raise RuntimeError(f"history_deals_get returned None: {error}")
+                    return list(deals)
+                except Exception as exc:
+                    error = self._mt5.last_error()
+                    last_failure = RuntimeError(
+                        f"history_deals_get failed: {error}; exception={exc!r}"
+                    )
+
+            logger.warning(
+                "history_deals_get failed on attempt %d/2: %s",
+                attempt,
+                last_failure,
+                extra={"from_dt": from_dt, "to_dt": to_dt},
+            )
+            if attempt == 1:
+                self._client.disconnect()
+
+        assert last_failure is not None
+        raise last_failure
+
     # ── Account ───────────────────────────────────────────────────────────
 
     def get_account_info(self) -> AccountInfo:
@@ -192,12 +228,20 @@ class Mt5Positions:
             to_dt        = from_dt + timedelta(days=1)
 
             # ── Closed P&L for our magic (realised) ───────────────────────
-            with _MT5_LOCK:
-                try:
-                    deals = self._mt5.history_deals_get(from_dt, to_dt) or []
-                except Exception as exc:
-                    error = self._mt5.last_error()
-                    raise RuntimeError(f"history_deals_get failed: {error}") from exc
+            try:
+                deals = self._history_deals_get(from_dt, to_dt)
+            except RuntimeError as exc:
+                logger.warning(
+                    "get_daily_pnl_info: closed PnL unavailable; "
+                    "continuing with live equity and floating PnL only: %s",
+                    exc,
+                    extra={
+                        "from_dt": from_dt,
+                        "to_dt": to_dt,
+                        "broker_utc_offset_hours": self._client.broker_utc_offset_hours,
+                    },
+                )
+                deals = []
             realised_pnl = sum(
                 d.profit + d.swap + d.commission
                 for d in deals
@@ -282,12 +326,7 @@ class Mt5Positions:
             to_dt   = datetime.now(timezone.utc).replace(tzinfo=None)
             from_dt = to_dt - timedelta(days=7)
 
-            with _MT5_LOCK:
-                try:
-                    deals = self._mt5.history_deals_get(from_dt, to_dt) or []
-                except Exception as exc:
-                    error = self._mt5.last_error()
-                    raise RuntimeError(f"history_deals_get failed: {error}") from exc
+            deals = self._history_deals_get(from_dt, to_dt)
             for d in deals:
                 # position_id on a deal == the ticket of the position it closed.
                 if (
