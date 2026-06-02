@@ -15,13 +15,13 @@ from src.domain.signal_interface import (
 from src.risk.rules import RuleContext, spread_quality_rule
 
 
-def test_spread_quality_uses_symbol_threshold_override() -> None:
+def test_spread_quality_uses_xauusd_threshold_override() -> None:
     ctx = _context(
-        symbol="JP225",
+        symbol="XAUUSD",
         ask=66864.0,
         bid=66850.0,
         stop_loss=66886.7,
-        symbol_thresholds={"JP225": 0.40},
+        symbol_thresholds={"XAUUSD": 0.40},
     )
 
     result = spread_quality_rule(ctx)
@@ -29,13 +29,13 @@ def test_spread_quality_uses_symbol_threshold_override() -> None:
     assert result.approved is True
 
 
-def test_spread_quality_keeps_global_threshold_for_other_symbols() -> None:
+def test_spread_quality_keeps_global_threshold_for_unknown_symbols() -> None:
     ctx = _context(
-        symbol="XAUUSD",
+        symbol="UNKNOWN",
         ask=66864.0,
         bid=66850.0,
         stop_loss=66886.7,
-        symbol_thresholds={"JP225": 0.40},
+        symbol_thresholds={"XAUUSD": 0.40},
     )
 
     result = spread_quality_rule(ctx)

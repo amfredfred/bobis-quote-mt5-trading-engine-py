@@ -7,7 +7,6 @@ signal:
   # ws_secret_key → set WS_SECRET_KEY in .env
   symbols:
     - XAUUSD
-    - JP225
 
 mt5:
   login: 106189638
@@ -30,7 +29,6 @@ risk:
   sl_ratio_threshold: 0.25
   symbol_sl_ratio_threshold:
     XAUUSD: 0.25
-    JP225: 0.40
   no_hedging: true
   # Intraday capital-protection guards (0 = disabled)
   max_equity_drawdown_percent: 2.0
