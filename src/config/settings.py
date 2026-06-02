@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -29,6 +29,7 @@ class RiskConfig:
     max_lot_size: float
     min_lot_size: float
     sl_ratio_threshold: float
+    symbol_sl_ratio_threshold: Dict[str, float]
     no_hedging: bool = True
     max_equity_drawdown_percent: float = 2.0
     rolling_window_size: int = 0
@@ -126,6 +127,12 @@ class AppConfig:
                 max_lot_size=float(risk["max_lot_size"]),
                 min_lot_size=float(risk.get("min_lot_size", 0.01)),
                 sl_ratio_threshold=float(risk["sl_ratio_threshold"]),
+                symbol_sl_ratio_threshold={
+                    normalise_symbol(str(symbol)): float(threshold)
+                    for symbol, threshold in risk.get(
+                        "symbol_sl_ratio_threshold", {}
+                    ).items()
+                },
                 no_hedging=bool(risk.get("no_hedging", True)),
                 max_equity_drawdown_percent=float(risk.get("max_equity_drawdown_percent", 2.0)),
                 rolling_window_size=int(risk.get("rolling_window_size", 0)),

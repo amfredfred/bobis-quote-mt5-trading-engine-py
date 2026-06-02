@@ -28,6 +28,7 @@ from src.domain.trade import Trade, OrderSide, TradeStatus
 from src.domain.position import SymbolInfo
 from src.config.settings import RiskConfig
 from src.utils.price import pip_size
+from src.utils.symbol import normalise_symbol
 
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
@@ -292,12 +293,19 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
     if sl_pips == 0:
         return RuleResult(approved=False, reason="SL distance is zero")
 
-    if spread_pips / sl_pips > ctx.config.sl_ratio_threshold:
+    symbol = normalise_symbol(ctx.signal.resolved_symbol or ctx.signal.symbol)
+    threshold = ctx.config.symbol_sl_ratio_threshold.get(
+        symbol,
+        ctx.config.sl_ratio_threshold,
+    )
+    ratio = spread_pips / sl_pips
+
+    if ratio > threshold:
         return RuleResult(
             approved=False,
             reason=(
-                f"Spread/SL ratio too high: {spread_pips/sl_pips:.2f} "
-                f"({spread_pips:.1f} pip spread vs {sl_pips:.1f} pip SL), max is {ctx.config.sl_ratio_threshold}"
+                f"Spread/SL ratio too high: {ratio:.2f} > {threshold:.2f} "
+                f"({spread_pips:.1f} pip spread vs {sl_pips:.1f} pip SL)"
             ),
         )
 
