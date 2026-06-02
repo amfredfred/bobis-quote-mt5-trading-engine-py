@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from src.brokers.mt5.client import Mt5Client
+from src.brokers.mt5.client import Mt5Client, _MT5_LOCK
 from src.brokers.mt5.types import Mt5PositionType
 from src.domain.position import AccountInfo, Position, PositionSide, SymbolInfo
 from datetime import datetime, timezone, timedelta
@@ -29,9 +29,11 @@ class Mt5Positions:
 
     def get_account_info(self) -> AccountInfo:
         self._client.ensure_connected()
-        info = self._mt5.account_info()
+        with _MT5_LOCK:
+            info = self._mt5.account_info()
         if info is None:
-            error = self._mt5.last_error()
+            with _MT5_LOCK:
+                error = self._mt5.last_error()
             raise RuntimeError(f"account_info() failed: {error}")
 
         return AccountInfo(
@@ -54,16 +56,20 @@ class Mt5Positions:
     def get_symbol_info(self, symbol: str) -> SymbolInfo:
         _resolved_symbol = self.resolve_symbol(symbol)
         self._client.ensure_connected()
-        info = self._mt5.symbol_info(_resolved_symbol)
+        with _MT5_LOCK:
+            info = self._mt5.symbol_info(_resolved_symbol)
         if info is None:
-            error = self._mt5.last_error()
+            with _MT5_LOCK:
+                error = self._mt5.last_error()
             raise RuntimeError(f"symbol_info({symbol!r}) failed: {error}")
 
         if not info.visible:
-            self._mt5.symbol_select(_resolved_symbol, True)
-            info = self._mt5.symbol_info(_resolved_symbol)
+            with _MT5_LOCK:
+                self._mt5.symbol_select(_resolved_symbol, True)
+                info = self._mt5.symbol_info(_resolved_symbol)
 
-        tick = self._mt5.symbol_info_tick(_resolved_symbol)
+        with _MT5_LOCK:
+            tick = self._mt5.symbol_info_tick(_resolved_symbol)
         ask = tick.ask if tick else 0.0
         bid = tick.bid if tick else 0.0
 
@@ -118,7 +124,8 @@ class Mt5Positions:
 
     def get_open_positions(self, magic: Optional[int] = None) -> List[Position]:
         self._client.ensure_connected()
-        raw = self._mt5.positions_get() or []
+        with _MT5_LOCK:
+            raw = self._mt5.positions_get() or []
         if magic is not None:
             raw = [p for p in raw if p.magic == magic]
 
@@ -185,7 +192,12 @@ class Mt5Positions:
             to_dt        = from_dt + timedelta(days=1)
 
             # ── Closed P&L for our magic (realised) ───────────────────────
-            deals = self._mt5.history_deals_get(from_dt, to_dt) or []
+            with _MT5_LOCK:
+                try:
+                    deals = self._mt5.history_deals_get(from_dt, to_dt) or []
+                except Exception as exc:
+                    error = self._mt5.last_error()
+                    raise RuntimeError(f"history_deals_get failed: {error}") from exc
             realised_pnl = sum(
                 d.profit + d.swap + d.commission
                 for d in deals
@@ -193,7 +205,8 @@ class Mt5Positions:
             )
 
             # ── Floating P&L on currently open positions (unrealised) ─────
-            open_positions = self._mt5.positions_get() or []
+            with _MT5_LOCK:
+                open_positions = self._mt5.positions_get() or []
             unrealised_pnl = sum(
                 p.profit
                 for p in open_positions
@@ -203,7 +216,8 @@ class Mt5Positions:
             total_pnl = realised_pnl + unrealised_pnl
 
             # ── Account equity ─────────────────────────────────────────────
-            account = self._mt5.account_info()
+            with _MT5_LOCK:
+                account = self._mt5.account_info()
             if not account or account.equity <= 0:
                 logger.warning("get_daily_pnl_info: no valid account or equity <= 0")
                 return 0.0, 0.0, 0.0
@@ -234,12 +248,24 @@ class Mt5Positions:
             return loss_pct, start_equity, current_equity
 
         except Exception as e:
-            logger.warning("Mt5Positions.get_daily_pnl_info failed: %s", e)
+            with _MT5_LOCK:
+                error = self._mt5.last_error()
+            logger.warning(
+                "Mt5Positions.get_daily_pnl_info failed: %s",
+                e,
+                extra={
+                    "mt5_last_error": error,
+                    "from_dt": locals().get("from_dt"),
+                    "to_dt": locals().get("to_dt"),
+                    "broker_utc_offset_hours": self._client.broker_utc_offset_hours,
+                },
+            )
             return 0.0, 0.0, 0.0
 
     def get_current_tick(self, symbol: str):
         self._client.ensure_connected()
-        return self._mt5.symbol_info_tick(symbol)
+        with _MT5_LOCK:
+            return self._mt5.symbol_info_tick(symbol)
 
     def get_deal_price_for_ticket(self, ticket: int) -> Optional[float]:
         """
@@ -256,7 +282,12 @@ class Mt5Positions:
             to_dt   = datetime.now(timezone.utc).replace(tzinfo=None)
             from_dt = to_dt - timedelta(days=7)
 
-            deals = self._mt5.history_deals_get(from_dt, to_dt) or []
+            with _MT5_LOCK:
+                try:
+                    deals = self._mt5.history_deals_get(from_dt, to_dt) or []
+                except Exception as exc:
+                    error = self._mt5.last_error()
+                    raise RuntimeError(f"history_deals_get failed: {error}") from exc
             for d in deals:
                 # position_id on a deal == the ticket of the position it closed.
                 if (

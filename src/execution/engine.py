@@ -68,6 +68,7 @@ class ExecutionEngine:
         self._bus = event_bus
         self._cfg = exec_config
         self._pending: dict[str, int] = {}
+        self._pending_signal_ids: set[str] = set()
         self._pending_lock = threading.Lock()
         self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
         self._loss_tracker: "LossTracker | None" = loss_tracker
@@ -93,11 +94,15 @@ class ExecutionEngine:
     def _pending_for(self, symbol: str) -> int:
         return self._pending.get(symbol, 0)
 
-    def _reserve(self, symbol: str) -> None:
+    def _reserve(self, symbol: str, signal_id: str) -> None:
         self._pending[symbol] = self._pending.get(symbol, 0) + 1
+        self._pending_signal_ids.add(signal_id)
 
-    def _release(self, symbol: str) -> None:
+    def _release(self, symbol: str, signal_id: str) -> None:
         self._pending[symbol] = max(0, self._pending.get(symbol, 0) - 1)
+        if self._pending[symbol] == 0:
+            self._pending.pop(symbol, None)
+        self._pending_signal_ids.discard(signal_id)
 
     def execute(self, signal: InboundSignal) -> Trade | None:
         # ── [5] Pipeline start time ──────────────────────────────────
@@ -126,6 +131,21 @@ class ExecutionEngine:
 
         # ── 2. Risk check ──────────────────────────────────────────────────
         with self._pending_lock:
+            duplicate_signal = (
+                signal.id in self._pending_signal_ids
+                or self._store.get_by_signal_id(signal.id)
+            )
+            if duplicate_signal:
+                logger.warning(
+                    "Duplicate signal ignored",
+                    extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
+                )
+                metrics.increment("signal.duplicates_ignored")
+                self._bus.emit(
+                    Events.RISK_REJECTED, {"signal": signal, "reason": "duplicate_signal"}
+                )
+                return None
+
             open_trades = self._store.get_open_trades()
             effective_open = len(open_trades) + self._pending_total()
             effective_symbol = len(
@@ -146,7 +166,7 @@ class ExecutionEngine:
                 )
                 return None
 
-            self._reserve(signal.resolved_symbol)
+            self._reserve(signal.resolved_symbol, signal.id)
 
         self._bus.emit(Events.RISK_APPROVED, {"signal": signal})
 
@@ -155,7 +175,7 @@ class ExecutionEngine:
             plan = self._planner.plan(signal, account_info, symbol_info)
         except Exception:
             with self._pending_lock:
-                self._release(signal.resolved_symbol)
+                self._release(signal.resolved_symbol, signal.id)
             logger.exception("ExecutionEngine: trade planning failed")
             self._bus.emit(
                 Events.TRADE_ERROR, {"signal": signal, "reason": "planning_failed"}
@@ -176,7 +196,7 @@ class ExecutionEngine:
             )
         except Exception as exc:
             with self._pending_lock:
-                self._release(signal.resolved_symbol)
+                self._release(signal.resolved_symbol, signal.id)
             logger.exception("ExecutionEngine: order execution failed")
             self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
             metrics.increment("orders.rejected")
@@ -276,10 +296,47 @@ class ExecutionEngine:
             updated_at=ts,
         )
 
-        self._store.add(trade)
-        self._repo.save(trade)
+        try:
+            self._store.add(trade)
+        except Exception:
+            persisted = self._repo.save(trade)
+            with self._pending_lock:
+                self._release(signal.resolved_symbol, signal.id)
+            logger.exception(
+                "Trade opened but in-memory tracking failed; manual intervention required",
+                extra={
+                    "trade_id": trade.id,
+                    "signal_id": signal.id,
+                    "ticket": ticket,
+                    "symbol": trade.symbol,
+                    "persisted": persisted,
+                },
+            )
+            metrics.increment("trades.tracking_failures")
+            self._bus.emit(
+                Events.TRADE_ERROR,
+                {"signal": signal, "reason": "trade_tracking_failed_after_fill"},
+            )
+            return None
+
+        persisted = self._repo.save(trade)
+        if not persisted:
+            logger.error(
+                "Trade opened but persistence failed",
+                extra={
+                    "trade_id": trade.id,
+                    "signal_id": signal.id,
+                    "ticket": ticket,
+                    "symbol": trade.symbol,
+                },
+            )
+            metrics.increment("trades.persistence_failures")
+            self._bus.emit(
+                Events.TRADE_ERROR,
+                {"signal": signal, "reason": "trade_persistence_failed_after_fill"},
+            )
         with self._pending_lock:
-            self._release(signal.resolved_symbol)
+            self._release(signal.resolved_symbol, signal.id)
 
         # ── 7. Emit ────────────────────────────────────────────────────────
         self._bus.emit(Events.TRADE_OPENED, trade)

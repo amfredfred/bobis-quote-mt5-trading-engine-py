@@ -266,6 +266,7 @@ class UIBridge:
             await self._broadcast({"type": "engine.resumed", "payload": {}})
 
     def _close_trade(self, trade_id: str) -> None:
+        from src.brokers.mt5.client import _MT5_LOCK
         from src.brokers.mt5.types import Mt5OrderType
 
         trade = self._container.position_store.get(trade_id)
@@ -277,7 +278,8 @@ class UIBridge:
             self._container.mt5_client.ensure_connected()
             mt5 = self._container.mt5_client.mt5
 
-            tick = mt5.symbol_info_tick(trade.symbol)
+            with _MT5_LOCK:
+                tick = mt5.symbol_info_tick(trade.symbol)
             if tick is None:
                 raise RuntimeError(f"No tick available for {trade.symbol}")
 
@@ -288,7 +290,8 @@ class UIBridge:
                 side_int = Mt5OrderType.SELL
                 price    = tick.ask
 
-            sym_info     = mt5.symbol_info(trade.symbol)
+            with _MT5_LOCK:
+                sym_info = mt5.symbol_info(trade.symbol)
             filling_mode = getattr(sym_info, "filling_mode", 0) if sym_info else 0
 
             self._container.mt5_orders.close_position(

@@ -38,11 +38,13 @@ class TradeRepository:
 
     # ── Write ─────────────────────────────────────────────────────────────
 
-    def save(self, trade: Trade) -> None:
+    def save(self, trade: Trade) -> bool:
         try:
             self._db.upsert_trade(trade)
+            return True
         except Exception:
             logger.exception("TradeRepository: failed to save trade %s", trade.id)
+            return False
 
     def delete(self, trade_id: str) -> None:
         """
@@ -154,7 +156,6 @@ class TradeRepository:
                 row.get("id"),
             )
             return None
-
 
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from src.brokers.mt5.client import Mt5Client
+from src.brokers.mt5.client import Mt5Client, _MT5_LOCK
 from src.brokers.mt5.types import (
     Mt5TradeAction,
     Mt5OrderType,
@@ -72,10 +72,12 @@ class Mt5Orders:
             },
         )
 
-        result = self._mt5.order_send(request)
+        with _MT5_LOCK:
+            result = self._mt5.order_send(request)
+            if result is None:
+                error = self._mt5.last_error()
 
         if result is None:
-            error = self._mt5.last_error()
             raise RuntimeError(f"order_send returned None — MT5 error: {error}")
 
         if result.retcode not in (MT5_RETCODE_DONE, MT5_RETCODE_PLACED):
@@ -113,10 +115,12 @@ class Mt5Orders:
             "tp": tp,
         }
 
-        result = self._mt5.order_send(request)
+        with _MT5_LOCK:
+            result = self._mt5.order_send(request)
+            if result is None:
+                error = self._mt5.last_error()
 
         if result is None:
-            error = self._mt5.last_error()
             raise RuntimeError(f"modify_position returned None: {error}")
 
         if result.retcode != MT5_RETCODE_DONE:
@@ -159,10 +163,12 @@ class Mt5Orders:
             "type_filling": filling_mode,
         }
 
-        result = self._mt5.order_send(request)
+        with _MT5_LOCK:
+            result = self._mt5.order_send(request)
+            if result is None:
+                error = self._mt5.last_error()
 
         if result is None:
-            error = self._mt5.last_error()
             raise RuntimeError(f"close_position returned None: {error}")
 
         if result.retcode not in (MT5_RETCODE_DONE, MT5_RETCODE_PLACED):
