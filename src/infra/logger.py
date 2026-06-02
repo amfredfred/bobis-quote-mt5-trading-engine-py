@@ -152,6 +152,7 @@ def setup_logging(level: str = "INFO", tz: ZoneInfo | None = None) -> None:
 
     # Silence noisy third-party loggers
     logging.getLogger("websocket").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
 
 
 
