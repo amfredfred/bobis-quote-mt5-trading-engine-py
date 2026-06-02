@@ -366,16 +366,32 @@ class UIBridge:
         lt      = c.loss_tracker.stats()
         snap    = metrics.snapshot()
         trades  = c.position_store.get_open_trades()
+        account = self._account_snapshot()
+        connected_mt5 = bool(account) or c.mt5_client.is_connected()
 
         return {
-            "connected":  True,
+            "connected":  connected_mt5,
             "engine":     self._build_engine_info(lt),
             "trades":     [_serialize_trade(t) for t in trades],
             "riskGuards": self._build_risk_guards(lt, config),
-            "metrics":    self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config),
+            "metrics":    self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
             "signals":    [],
             "logs":       list(self._log_buf)[-50:],
         }
+
+    def _account_snapshot(self) -> dict | None:
+        try:
+            account = self._container.mt5_positions.get_account_info()
+            return {
+                "balance": account.balance,
+                "equity": account.equity,
+                "free_margin": account.free_margin,
+                "margin": account.margin,
+                "margin_level": account.margin_level,
+                "currency": account.currency,
+            }
+        except Exception:
+            return None
 
     def _build_engine_info(self, lt: dict) -> dict:
         c = self._container
@@ -416,9 +432,16 @@ class UIBridge:
         lt     = c.loss_tracker.stats()
         snap   = metrics.snapshot()
         trades = c.position_store.get_open_trades()
-        return self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, self._config)
+        return self._build_metrics_from(
+            lt,
+            snap.get("counters", {}),
+            snap.get("gauges", {}),
+            trades,
+            self._config,
+            self._account_snapshot(),
+        )
 
-    def _build_metrics_from(self, lt: dict, counters: dict, gauges: dict, open_trades: list, config: Any) -> dict:
+    def _build_metrics_from(self, lt: dict, counters: dict, gauges: dict, open_trades: list, config: Any, account: dict | None = None) -> dict:
         tp1 = counters.get("trades.tp1_hit", 0)
         tp2 = counters.get("trades.tp2_hit", 0)
         sl  = counters.get("trades.sl_hit", 0)
@@ -430,9 +453,12 @@ class UIBridge:
         peak_eq    = lt.get("equity_peak", 0.0)
         eq_dd      = lt.get("equity_drawdown_pct", 0.0)
 
-        return {
-            "equity":             peak_eq if peak_eq else start_eq,
-            "peak_equity":        peak_eq,
+        current_equity = account["equity"] if account else (peak_eq if peak_eq else start_eq)
+        peak_equity = max(peak_eq, current_equity) if current_equity else peak_eq
+
+        result = {
+            "equity":             current_equity,
+            "peak_equity":        peak_equity,
             "drawdown_pct":       round(eq_dd, 4),
             "daily_pnl":          round(-(start_eq * daily_loss / 100.0), 2),
             "open_trades":        len(open_trades),
@@ -444,6 +470,18 @@ class UIBridge:
             "win_rate":           round(wins / total_closed * 100, 1) if total_closed else 0.0,
             "signal_to_trade_ms": int(gauges.get("latency.signal_to_trade_ms") or 0),
         }
+        if account:
+            result.update(
+                {
+                    "balance": account["balance"],
+                    "free_margin": account["free_margin"],
+                    "margin": account["margin"],
+                    "margin_level": account["margin_level"],
+                    "currency": account["currency"],
+                    "net_pnl": account["equity"] - account["balance"],
+                }
+            )
+        return result
 
 
 # ── Log handler ───────────────────────────────────────────────────────────────
