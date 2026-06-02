@@ -741,6 +741,9 @@ def _render_dashboard(container: "AppContainer", config: "AppConfig") -> str:
     subs = {
         "conn_class": conn_class,
         "conn_label": conn_label,
+        "engine_timezone_json": json.dumps(
+            getattr(config.engine_timezone, "key", str(config.engine_timezone))
+        ),
         "uptime_fmt": uptime_fmt,
         "open_count": str(open_count),
         "max_trades": str(max_trades),
