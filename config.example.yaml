@@ -7,10 +7,6 @@ signal:
   # ws_secret_key → set WS_SECRET_KEY in .env
   symbols:
     - XAUUSD
-    # - US500
-    # - US30
-    - US100
-    # - UK100
     - JP225
 
 mt5:
@@ -29,6 +25,8 @@ risk:
   min_rr_ratio: 1.0
   max_lot_size: 100.0
   min_lot_size: 0.01
+  # Reject if live spread costs more than this fraction of the SL distance.
+  # Example: 0.25 rejects 14.0 spread / 36.7 SL = 0.38.
   sl_ratio_threshold: 0.25
   no_hedging: true
   # Intraday capital-protection guards (0 = disabled)

@@ -297,7 +297,7 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
             approved=False,
             reason=(
                 f"Spread/SL ratio too high: {spread_pips/sl_pips:.2f} "
-                f"({spread_pips:.1f} pip spread vs {sl_pips:.1f} pip SL)"
+                f"({spread_pips:.1f} pip spread vs {sl_pips:.1f} pip SL), max is {ctx.config.sl_ratio_threshold}"
             ),
         )
 
