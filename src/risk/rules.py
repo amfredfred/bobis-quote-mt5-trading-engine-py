@@ -29,11 +29,11 @@ from src.domain.position import SymbolInfo
 from src.config.settings import RiskConfig
 from src.utils.price import pip_size
 
-
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
 
 _UNKNOWN_SIGNAL_ID = "unknown"
+
 
 @dataclass
 class RuleContext:
@@ -180,7 +180,7 @@ def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
             daily_loss_pct=3.8% → 3.8 + 1.0 = 4.8 > 4.75 → REJECTED
             daily_loss_pct=3.7% → 3.7 + 1.0 = 4.7 < 4.75 → ALLOWED
     """
-    budget           = ctx.config.max_daily_loss_percent
+    budget = ctx.config.max_daily_loss_percent
     safety_threshold = budget * 0.95
 
     # Layer 1 — hard stop
@@ -222,15 +222,17 @@ def _resolve_fill_price(si: SymbolInfo, direction: SignalDirection) -> float:
     return si.ask if direction == SignalDirection.LONG else si.bid
 
 
-def _validate_symbol_info(si: SymbolInfo) -> Optional[RuleResult]:
-    """Return a RuleResult if si is invalid, else None."""
-    print(f"Validating symbol info for {si.symbol}: ask={si.ask}, bid={si.bid}")
+def _validate_symbol_info(si: SymbolInfo | None) -> Optional[RuleResult]:
+    """Return a RuleResult if symbol info is invalid, else None."""
     if si is None or si.ask is None or si.bid is None:
         return RuleResult(approved=False, reason="No market data")
+
     if si.ask <= 0 or si.bid <= 0:
         return RuleResult(
-            approved=False, reason="Invalid market data: zero or negative prices"
+            approved=False,
+            reason="Invalid market data: zero or negative prices",
         )
+
     return None
 
 

@@ -9,7 +9,7 @@ signal:
     - XAUUSD
     # - US500
     # - US30
-    # - US100
+    - US100
     # - UK100
     - JP225
 
@@ -20,11 +20,11 @@ mt5:
   path: C:\Program Files\FBS MetaTrader 5\terminal64.exe
   magic: 8858
   slippage: 10
-  comment: xcom-bobisquote
+  comment: bobisquote
 
 risk:
-  max_losing_streak: 4
-  max_daily_loss_percent: 2.0
+  max_losing_streak: 3
+  max_daily_loss_percent: 2.5
   max_exposure_per_symbol: 2
   min_rr_ratio: 1.0
   max_lot_size: 100.0
