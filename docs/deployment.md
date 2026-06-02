@@ -298,26 +298,14 @@ Deploy on Linux/Mac with systemd:
 
 ---
 
-## Health Monitoring
+## Dashboard Monitoring
 
-### Health Endpoint
+The execution engine exposes a WebSocket UI bridge on the configured monitoring
+port. Use the separate `execution-engine-dashboard` app for live state,
+metrics, risk guards, rejections, and dashboard commands.
 
-```bash
-# Check health and config (when running)
-curl http://localhost:8080/health
-```
-
-Response includes:
-- MT5 connection status
-- Daily loss percentage
-- Open trade count
-- Derived `max_open_trades` (`MAX_LOSING_STREAK + 1`)
-- Risk configuration summary
-
-### Metrics Endpoint
-
-```bash
-curl http://localhost:8080/metrics
+```text
+ws://localhost:8080/ws
 ```
 
 ---

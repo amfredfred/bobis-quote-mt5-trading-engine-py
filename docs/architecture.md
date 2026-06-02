@@ -97,9 +97,9 @@ External system adapters:
   - Signal history
   - Metrics persistence
 
-- **`monitoring.py`**: HTTP dashboard server
-  - Real-time metrics endpoint
-  - Health checks and config display
+- **`ui_bridge.py`**: WebSocket bridge for the external dashboard
+  - Streams state snapshots and incremental events
+  - Accepts dashboard commands such as pause/resume and close trade
   - Derives `max_open_trades` from `config.risk.max_losing_streak + 1`
 
 - **`websocket.py`**: WebSocket client

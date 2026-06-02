@@ -257,8 +257,8 @@ nssm restart ExecutionEngine
 
 ## Next Steps
 
-1. **Monitor Dashboard**: Connect to `http://localhost:8080` (when enabled)
-2. **Send Signals**: Use WebSocket API at `ws://localhost:8080/ws`
+1. **Monitor Dashboard**: Run the separate `execution-engine-dashboard` app and connect it to `ws://localhost:8080/ws`
+2. **Send Signals**: Use the dashboard/WebSocket bridge at `ws://localhost:8080/ws`
 3. **Review Risk Settings**: Tune `MAX_LOSING_STREAK`, `MAX_DAILY_LOSS_PERCENT`, and `SL_RATIO_THRESHOLD` in `.env`
 4. **Review Logs**: Check logs regularly for rule rejections and sizing info
 5. **Test Signals**: Start with demo account to verify integration before live trading

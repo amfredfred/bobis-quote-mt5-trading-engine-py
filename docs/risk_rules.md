@@ -352,7 +352,7 @@ Use the monitoring dashboard to observe rule behavior in real-time.
 
 ## Troubleshooting
 
-**All trades rejected**: Check loss guard status and daily loss percentage in `/health` endpoint.
+**All trades rejected**: Check loss guard status and daily loss percentage in the external dashboard risk guard panel.
 
 **Signal duplicates**: Verify signal source provides unique IDs.
 

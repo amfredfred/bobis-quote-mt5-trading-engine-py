@@ -23,7 +23,7 @@ The system follows Clean Architecture principles:
 - **Domain Layer**: Pure business logic (signals, trades, positions, risk rules)
 - **Core Layer**: Cross-cutting infrastructure (event bus, events)
 - **Execution Layer**: Trade execution pipeline (planner, order manager, engine)
-- **Infrastructure Layer**: External adapters (MT5 client, database, monitoring, WebSocket)
+- **Infrastructure Layer**: External adapters (MT5 client, database, dashboard WebSocket bridge)
 - **Interface Adapters**: Signal ingestion and strategy routing
 
 See [Architecture Documentation](docs/architecture.md) for detailed diagrams and data flow.

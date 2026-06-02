@@ -1,7 +1,7 @@
 """
 src/infra/ui_bridge.py — WebSocket bridge between the engine event bus and the dashboard UI.
 
-Replaces MonitoringServer. The dashboard connects once via WebSocket and receives:
+The external dashboard connects once via WebSocket and receives:
   1. STATE_SNAPSHOT on connect (full current state)
   2. Incremental push messages as engine events fire
   3. METRICS_UPDATE every 5 s
