@@ -73,12 +73,36 @@ class RiskEngine:
         for rule in self._rules:
             result: RuleResult = rule(ctx)
             if not result.approved:
+                fill_price = None
+                spread = None
+                if symbol_info is not None:
+                    fill_price = (
+                        symbol_info.ask
+                        if signal.direction.value == "LONG"
+                        else symbol_info.bid
+                    )
+                    if symbol_info.ask is not None and symbol_info.bid is not None:
+                        spread = symbol_info.ask - symbol_info.bid
                 logger.warning(
                     "Risk rejected",
                     extra={
                         "signal_id": signal.id,
                         "symbol": signal.resolved_symbol,
+                        "direction": signal.direction.value,
                         "reason": result.reason,
+                        "signal_entry": signal.entry_price,
+                        "signal_stop_loss": signal.stop_loss,
+                        "signal_tp1": signal.tp1,
+                        "signal_tp2": signal.tp2,
+                        "signal_rr": signal.risk_reward_ratio,
+                        "broker_bid": symbol_info.bid if symbol_info else None,
+                        "broker_ask": symbol_info.ask if symbol_info else None,
+                        "broker_fill_price": fill_price,
+                        "broker_spread": spread,
+                        "setup_candle_close_at": signal.setup_candle_close_at,
+                        "triggered_at": signal.triggered_at,
+                        "emitted_at": signal.emitted_at,
+                        "received_at": signal.received_at,
                     },
                 )
                 metrics.increment("risk.rejected")

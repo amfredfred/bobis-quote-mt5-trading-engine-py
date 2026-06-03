@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _started_at = time.time()
+_METRICS_PUSH_INTERVAL_SEC = 5.0
+_ACCOUNT_CACHE_TTL_SEC = 5.0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -131,6 +133,8 @@ class UIBridge:
 
         self._log_buf: collections.deque[dict] = collections.deque(maxlen=200)
         self._log_handler = _LogHandler(self._log_buf)
+        self._account_cache: dict | None = None
+        self._account_cache_at: float = 0.0
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -219,7 +223,7 @@ class UIBridge:
 
         async def metrics_pusher() -> None:
             while not self._stop_event.is_set():  # type: ignore[union-attr]
-                await asyncio.sleep(1)
+                await asyncio.sleep(_METRICS_PUSH_INTERVAL_SEC)
                 if not self._clients:
                     continue
                 try:
@@ -380,9 +384,12 @@ class UIBridge:
         }
 
     def _account_snapshot(self) -> dict | None:
+        now = time.monotonic()
+        if self._account_cache and now - self._account_cache_at < _ACCOUNT_CACHE_TTL_SEC:
+            return self._account_cache
         try:
             account = self._container.mt5_positions.get_account_info()
-            return {
+            snapshot = {
                 "balance": account.balance,
                 "equity": account.equity,
                 "free_margin": account.free_margin,
@@ -390,6 +397,9 @@ class UIBridge:
                 "margin_level": account.margin_level,
                 "currency": account.currency,
             }
+            self._account_cache = snapshot
+            self._account_cache_at = now
+            return snapshot
         except Exception:
             return None
 

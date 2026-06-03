@@ -110,6 +110,36 @@ def test_fresh_signal_executes_with_timing_fields() -> None:
     assert any(event == Events.TRADE_OPENED for event, _ in bus.events)
 
 
+def test_price_parity_rejects_broker_quote_far_from_signal_entry() -> None:
+    ts = now_ms()
+    signal = replace(
+        _signal("sig-price-mismatch"),
+        setup_candle_close_at=ts - 1_000,
+        emitted_at=ts - 900,
+        received_at=ts - 800,
+    )
+    bus = _Bus()
+    risk = _Risk()
+    orders = _Orders()
+
+    engine = ExecutionEngine(
+        risk_engine=risk,
+        trade_planner=_Planner(),
+        order_manager=orders,
+        mt5_positions=_Positions(ask=1.0800, bid=1.0798),
+        position_store=_Store(),
+        trade_repo=_Repo(),
+        event_bus=bus,
+        exec_config=_execution_config(max_signal_age_ms=90_000),
+    )
+
+    assert engine.execute(signal) is None
+    assert risk.calls == 0
+    assert orders.calls == 0
+    assert bus.events[0][0] == Events.RISK_REJECTED
+    assert "Broker price differs from signal entry" in bus.events[0][1]["reason"]
+
+
 class _Bus:
     def __init__(self) -> None:
         self.events = []
@@ -157,8 +187,10 @@ class _Planner:
 
 
 class _Positions:
-    def __init__(self) -> None:
+    def __init__(self, ask: float = 1.10002, bid: float = 1.10000) -> None:
         self.calls = 0
+        self.ask = ask
+        self.bid = bid
 
     def get_account_info(self) -> AccountInfo:
         self.calls += 1
@@ -190,9 +222,9 @@ class _Positions:
             lot_min=0.01,
             lot_max=100.0,
             lot_step=0.01,
-            ask=1.10002,
-            bid=1.10000,
-            spread=2,
+            ask=self.ask,
+            bid=self.bid,
+            spread=int(abs(self.ask - self.bid) / 0.00001),
             spread_float=True,
             margin_initial=0.0,
             margin_maintenance=0.0,

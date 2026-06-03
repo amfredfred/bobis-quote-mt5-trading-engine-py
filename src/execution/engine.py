@@ -34,7 +34,8 @@ from src.infra.metrics import metrics
 from src.positions.store import PositionStore
 from src.risk.engine import RiskEngine
 from src.infra.database import TradeRepository
-from src.domain.signal_interface import InboundSignal
+from src.domain.position import SymbolInfo
+from src.domain.signal_interface import InboundSignal, SignalDirection
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -44,6 +45,38 @@ from src.utils.price import normalise_lots
 from src.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
+
+
+def _expected_fill_price(symbol_info: SymbolInfo, signal: InboundSignal) -> float | None:
+    if signal.direction == SignalDirection.LONG:
+        return symbol_info.ask
+    return symbol_info.bid
+
+
+def _entry_price_parity_rejection(
+    signal: InboundSignal,
+    symbol_info: SymbolInfo,
+    cfg: ExecutionConfig,
+) -> str | None:
+    fill_price = _expected_fill_price(symbol_info, signal)
+    if fill_price is None or fill_price <= 0:
+        return "broker_price_unavailable"
+
+    stop_distance = abs(signal.entry_price - signal.stop_loss)
+    if stop_distance <= 0:
+        return "invalid_signal_stop_distance"
+
+    max_deviation = cfg.max_entry_slippage_pct_of_stop * stop_distance
+    actual_deviation = abs(fill_price - signal.entry_price)
+    if actual_deviation <= max_deviation:
+        return None
+
+    return (
+        "Broker price differs from signal entry: "
+        f"fill={fill_price:.5f} entry={signal.entry_price:.5f} "
+        f"deviation={actual_deviation:.5f} > allowed={max_deviation:.5f} "
+        f"({cfg.max_entry_slippage_pct_of_stop * 100:.1f}% of stop distance)"
+    )
 
 
 class ExecutionEngine:
@@ -208,6 +241,36 @@ class ExecutionEngine:
             effective_symbol = len(
                 [t for t in open_trades if t.symbol == signal.resolved_symbol]
             ) + self._pending_for(signal.resolved_symbol)
+            parity_rejection = _entry_price_parity_rejection(
+                signal,
+                symbol_info,
+                self._cfg,
+            )
+            if parity_rejection:
+                fill_price = _expected_fill_price(symbol_info, signal)
+                logger.warning(
+                    "Price parity rejected",
+                    extra={
+                        "signal_id": signal.id,
+                        "symbol": signal.resolved_symbol,
+                        "direction": signal.direction.value,
+                        "reason": parity_rejection,
+                        "signal_entry": signal.entry_price,
+                        "signal_stop_loss": signal.stop_loss,
+                        "signal_tp1": signal.tp1,
+                        "signal_tp2": signal.tp2,
+                        "broker_bid": symbol_info.bid,
+                        "broker_ask": symbol_info.ask,
+                        "broker_fill_price": fill_price,
+                        "max_entry_slippage_pct_of_stop": self._cfg.max_entry_slippage_pct_of_stop,
+                    },
+                )
+                metrics.increment("risk.rejected")
+                self._bus.emit(
+                    Events.RISK_REJECTED,
+                    {"signal": signal, "reason": parity_rejection},
+                )
+                return None
             decision = self._risk.evaluate(
                 signal,
                 open_trades,
