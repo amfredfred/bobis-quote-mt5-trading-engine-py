@@ -455,7 +455,12 @@ class ExecutionEngine:
 
 
 def _actionable_signal_at(signal: InboundSignal) -> int | None:
-    return signal.setup_candle_close_at or signal.detected_at or signal.emitted_at
+    return (
+        signal.setup_candle_close_at
+        or signal.triggered_at
+        or signal.emitted_at
+        or signal.received_at
+    )
 
 
 def _elapsed(start: int | None, end: int | None) -> int | None:

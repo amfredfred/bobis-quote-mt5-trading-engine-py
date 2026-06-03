@@ -233,6 +233,7 @@ class _Repo:
 
 
 def _signal(signal_id: str) -> InboundSignal:
+    ts = now_ms()
     return InboundSignal(
         id=signal_id,
         symbol="EUR/USD",
@@ -249,18 +250,18 @@ def _signal(signal_id: str) -> InboundSignal:
             range_high=1.1100,
             range_low=1.0900,
             bos_direction=BosDirection.BULLISH,
-            timestamp=1,
-            broken_at=1,
+            timestamp=ts,
+            broken_at=ts,
             tp_level=1.1100,
             midpoint=1.1000,
             height=0.0200,
-            htf_candle_open=1,
-            htf_candle_close=2,
+            htf_candle_open=ts,
+            htf_candle_close=ts + 60_000,
         ),
         ltf_range=LtfRange(
             range_high=1.1050,
             range_low=1.0950,
-            timestamp=1,
+            timestamp=ts,
             direction=SignalDirection.LONG,
             sl_level=1.0950,
         ),
@@ -269,13 +270,15 @@ def _signal(signal_id: str) -> InboundSignal:
             high=1.1010,
             low=1.0950,
             close=1.1000,
-            timestamp=1,
+            timestamp=ts,
             wick_ratio=0.5,
             pattern=CandlePattern.HAMMER,
             wick_tip=1.0950,
         ),
-        created_at=1,
-        triggered_at=1,
+        created_at=ts,
+        triggered_at=ts,
+        setup_candle_open_at=ts - 60_000,
+        setup_candle_close_at=ts,
     )
 
 
