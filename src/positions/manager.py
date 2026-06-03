@@ -461,11 +461,11 @@ class PositionManager:
             metrics.increment(metric_key)
             if not is_stub:
                 metrics.increment("trades.closed")
-                if realized_rr > 0:
+                if close_reason == CloseReason.TP2_HIT or realized_rr > 0:
                     metrics.increment("trades.winning")
                     if close_reason == CloseReason.MANUAL:
                         metrics.increment("trades.manual_profit")
-                elif realized_rr < 0:
+                elif close_reason == CloseReason.SL_HIT or realized_rr < 0:
                     metrics.increment("trades.losing")
                     if close_reason == CloseReason.MANUAL:
                         metrics.increment("trades.manual_loss")

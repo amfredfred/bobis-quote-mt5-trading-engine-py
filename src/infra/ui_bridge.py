@@ -117,6 +117,27 @@ def _build_signal_event(event_name: str, payload: Any) -> dict | None:
     }
 
 
+def _enum_value(value: Any) -> str:
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _trade_outcome(trade: Any) -> str:
+    reason = _enum_value(getattr(trade, "close_reason", "") or "").upper()
+    if reason == "TP2_HIT":
+        return "win"
+    if reason == "SL_HIT":
+        return "loss"
+
+    rr = getattr(trade, "realized_rr", None)
+    if rr is None:
+        return "breakeven"
+    if rr > 0:
+        return "win"
+    if rr < 0:
+        return "loss"
+    return "breakeven"
+
+
 # ── UIBridge ──────────────────────────────────────────────────────────────────
 
 class UIBridge:
@@ -452,11 +473,17 @@ class UIBridge:
         )
 
     def _build_metrics_from(self, lt: dict, counters: dict, gauges: dict, open_trades: list, config: Any, account: dict | None = None) -> dict:
-        tp1 = counters.get("trades.tp1_hit", 0)
-        tp2 = counters.get("trades.tp2_hit", 0)
-        sl  = counters.get("trades.sl_hit", 0)
-        wins = tp1 + tp2
-        total_closed = wins + sl
+        persisted_outcomes = self._persisted_trade_outcomes(config)
+        if persisted_outcomes["total_closed"] > 0:
+            wins = persisted_outcomes["wins"]
+            losses = persisted_outcomes["losses"]
+            breakeven = persisted_outcomes["breakeven"]
+            total_closed = persisted_outcomes["total_closed"]
+        else:
+            wins = counters.get("trades.winning", 0)
+            losses = counters.get("trades.losing", 0)
+            breakeven = counters.get("trades.breakeven", 0)
+            total_closed = counters.get("trades.closed", wins + losses + breakeven)
 
         start_eq   = lt.get("start_of_day_equity", 0.0)
         daily_loss = lt.get("daily_loss_pct", 0.0)
@@ -467,6 +494,11 @@ class UIBridge:
         current_equity = account["equity"] if account else (peak_eq if peak_eq else start_eq)
         peak_equity = max(peak_eq, current_equity) if current_equity else peak_eq
         daily_loss_amount = round(start_eq * daily_loss / 100.0, 2) if start_eq else 0.0
+        daily_pnl = (
+            round(current_equity - start_eq, 2)
+            if current_equity and start_eq
+            else round(-daily_loss_amount, 2)
+        )
         daily_budget_left = max(daily_budget - daily_loss_amount, 0.0) if daily_budget else 0.0
         risk_slots = config.risk.max_losing_streak
         risk_per_trade = round(daily_budget / risk_slots, 2) if daily_budget and risk_slots else 0.0
@@ -481,7 +513,7 @@ class UIBridge:
             "equity":             current_equity,
             "peak_equity":        peak_equity,
             "drawdown_pct":       round(eq_dd, 4),
-            "daily_pnl":          round(-daily_loss_amount, 2),
+            "daily_pnl":          daily_pnl,
             "daily_loss_pct":     round(daily_loss, 4),
             "daily_budget":       daily_budget,
             "daily_budget_used":  daily_loss_amount,
@@ -493,6 +525,7 @@ class UIBridge:
             "open_trades":        len(open_trades),
             "max_trades":         risk_slots,
             "pending_signals":    self._container.signal_queue.depth(),
+            "total_trades":       total_closed,
             "total_trades_today": counters.get("trades.opened", 0),
             "orders_opened":      counters.get("mt5.orders.opened", counters.get("orders.opened", 0)),
             "orders_filled":      counters.get("orders.filled", 0),
@@ -515,11 +548,12 @@ class UIBridge:
             "trades_tp1_hit":     counters.get("trades.tp1_hit", 0),
             "trades_tp2_hit":     counters.get("trades.tp2_hit", 0),
             "trades_sl_hit":      counters.get("trades.sl_hit", 0),
+            "trades_breakeven":   breakeven,
             "trades_open_count":  gauges.get("trades.open_count", len(open_trades)),
             "trades_tracking_failures": counters.get("trades.tracking_failures", 0),
             "trades_persistence_failures": counters.get("trades.persistence_failures", 0),
             "winning_trades":     wins,
-            "losing_trades":      sl,
+            "losing_trades":      losses,
             "win_rate":           round(wins / total_closed * 100, 1) if total_closed else 0.0,
             "signal_to_trade_ms": int(gauges.get("latency.signal_to_trade_ms") or 0),
             "latency_signal_to_trade_ms": int(gauges.get("latency.signal_to_trade_ms") or 0),
@@ -542,6 +576,36 @@ class UIBridge:
                 }
             )
         return result
+
+    def _persisted_trade_outcomes(self, config: Any) -> dict:
+        outcomes = {"wins": 0, "losses": 0, "breakeven": 0, "total_closed": 0}
+        repo = getattr(self._container, "trade_repo", None)
+        if repo is None or not hasattr(repo, "load_all"):
+            return outcomes
+
+        try:
+            tz = getattr(config, "engine_timezone", None)
+            today = datetime.now(tz=tz).replace(hour=0, minute=0, second=0, microsecond=0)
+            today_ms = int(today.timestamp() * 1000)
+
+            for trade in repo.load_all():
+                status = _enum_value(getattr(trade, "status", "")).upper()
+                closed_at = getattr(trade, "closed_at", None) or 0
+                if status != "CLOSED" or closed_at < today_ms:
+                    continue
+
+                outcome = _trade_outcome(trade)
+                outcomes["total_closed"] += 1
+                if outcome == "win":
+                    outcomes["wins"] += 1
+                elif outcome == "loss":
+                    outcomes["losses"] += 1
+                else:
+                    outcomes["breakeven"] += 1
+        except Exception:
+            logger.warning("UIBridge: failed to derive persisted trade outcomes")
+
+        return outcomes
 
 
 # ── Log handler ───────────────────────────────────────────────────────────────
