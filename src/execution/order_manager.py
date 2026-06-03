@@ -23,7 +23,7 @@ from src.config.settings import ExecutionConfig
 from src.infra.metrics import metrics
 from src.domain.position import SymbolInfo
 from src.domain.trade import OrderSide, TradePlan
-from src.utils.price import pip_size, normalise_lots
+from src.utils.price import normalise_lots
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,6 @@ class OrderManager:
         order_type = (
             Mt5OrderType.BUY if plan.side == OrderSide.BUY else Mt5OrderType.SELL
         )
-        pip = pip_size(symbol_info.point, symbol_info.digits)
         stop_distance = abs(plan.entry_price - plan.stop_loss)
         max_slip_pct_of_stop = self._cfg.max_entry_slippage_pct_of_stop
         last_error: Exception | None = None

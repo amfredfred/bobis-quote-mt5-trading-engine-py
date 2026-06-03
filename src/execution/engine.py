@@ -41,7 +41,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
 from src.domain.trade import Trade, TradeStatus
-from src.utils.price import normalise_lots
 from src.utils.time import now_ms
 
 logger = logging.getLogger(__name__)

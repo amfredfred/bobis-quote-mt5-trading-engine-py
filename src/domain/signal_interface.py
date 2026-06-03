@@ -8,7 +8,7 @@ the Signal Engine.  They are the boundary types: nothing outside the
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 from src.utils.symbol import normalise_symbol
@@ -248,7 +248,6 @@ def _optional_int(d: dict, *keys: str) -> Optional[int]:
             continue
         return int(value)
     return None
-
 
 
 

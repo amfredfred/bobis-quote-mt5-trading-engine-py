@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # ── ANSI colour codes ──────────────────────────────────────────────────────────
@@ -153,7 +153,6 @@ def setup_logging(level: str = "INFO", tz: ZoneInfo | None = None) -> None:
     # Silence noisy third-party loggers
     logging.getLogger("websocket").setLevel(logging.WARNING)
     logging.getLogger("websockets").setLevel(logging.WARNING)
-
 
 
 

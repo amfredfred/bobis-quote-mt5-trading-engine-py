@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, TYPE_CHECKING
 
@@ -132,7 +132,6 @@ class Trade:
                 "riskRewardRatio": self.plan.risk_reward_ratio,
             },
         }
-
 
 
 

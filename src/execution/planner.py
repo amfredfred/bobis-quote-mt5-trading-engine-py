@@ -120,7 +120,6 @@ class TradePlanner:
         # TP1 = entry ± (tp1_trigger_pct / 100 × |tp2 − entry|)
         # This keeps TP1 proportional to the actual trade range regardless of RRR,
         # so a 5R trade doesn't move SL to BE on a mere 1R move.
-        raw_stop_distance = abs(signal.entry_price - signal.stop_loss)
         trade_range = abs(signal.tp2 - signal.entry_price)
         tp1_offset = (self._exec.tp1_trigger_pct / 100.0) * trade_range
         static_tp1 = (
