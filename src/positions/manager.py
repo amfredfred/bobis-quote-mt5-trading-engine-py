@@ -414,12 +414,7 @@ class PositionManager:
                 close_reason = CloseReason.MANUAL
 
             close_price = last_price or trade.tp2 or trade.entry_price or 0.0
-            realized_rr = (
-                abs(close_price - trade.entry_price)
-                / abs(trade.entry_price - trade.stop_loss)
-                if trade.entry_price and trade.stop_loss != trade.entry_price
-                else 0.0
-            )
+            realized_rr = calculate_realized_rr(trade, close_price)
 
         logger.info(
             "Position gone from broker",
@@ -465,10 +460,42 @@ class PositionManager:
                 )
             )
             metrics.increment(metric_key)
+            if not is_stub:
+                metrics.increment("trades.closed")
+                if realized_rr > 0:
+                    metrics.increment("trades.winning")
+                    if close_reason == CloseReason.MANUAL:
+                        metrics.increment("trades.manual_profit")
+                elif realized_rr < 0:
+                    metrics.increment("trades.losing")
+                    if close_reason == CloseReason.MANUAL:
+                        metrics.increment("trades.manual_loss")
+                else:
+                    metrics.increment("trades.breakeven")
+                    if close_reason == CloseReason.MANUAL:
+                        metrics.increment("trades.manual_breakeven")
             metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
+
+
+def calculate_realized_rr(trade: Trade, close_price: float) -> float:
+    if not trade.entry_price or trade.stop_loss == trade.entry_price:
+        return 0.0
+
+    if trade.side.value == "BUY":
+        risk = trade.entry_price - trade.stop_loss
+        reward = close_price - trade.entry_price
+    elif trade.side.value == "SELL":
+        risk = trade.stop_loss - trade.entry_price
+        reward = trade.entry_price - close_price
+    else:
+        return 0.0
+
+    if risk <= 0:
+        return 0.0
+    return reward / risk
 
 
 def _trade_stub_from_position(pos) -> Trade:

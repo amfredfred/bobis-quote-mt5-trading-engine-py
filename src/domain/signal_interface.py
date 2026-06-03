@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 from src.utils.symbol import normalise_symbol
+from src.utils.time import now_ms
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────────
@@ -167,9 +168,40 @@ class InboundSignal:
     realized_rr: Optional[float] = None
     close_price: Optional[float] = None
     resolved_symbol: Optional[str] = None  # broker-resolved symbol, set at consumer level
+    setup_candle_open_at: Optional[int] = None
+    setup_candle_close_at: Optional[int] = None
+    detected_at: Optional[int] = None
+    emitted_at: Optional[int] = None
+    received_at: Optional[int] = None
+    queued_at: Optional[int] = None
+    execution_started_at: Optional[int] = None
+    order_sent_at: Optional[int] = None
+    order_filled_at: Optional[int] = None
+    trade_opened_at: Optional[int] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> InboundSignal:
+        received_at = _optional_int(d, "receivedAt", "received_at") or now_ms()
+        emitted_at = _optional_int(d, "emittedAt", "emitted_at") or received_at
+        detected_at = (
+            _optional_int(d, "detectedAt", "detected_at", "triggeredAt", "triggered_at")
+            or emitted_at
+        )
+        rejection = d.get("rejectionCandle") or d.get("rejection_candle") or {}
+        setup_candle_open_at = (
+            _optional_int(d, "setupCandleOpenAt", "setup_candle_open_at")
+            or _optional_int(rejection, "timestamp")
+        )
+        setup_candle_close_at = _optional_int(
+            d,
+            "setupCandleCloseAt",
+            "setup_candle_close_at",
+            "rejectionCandleCloseAt",
+            "rejection_candle_close_at",
+        ) or _optional_int(rejection, "closeAt", "close_at")
+        triggered_at = _optional_int(d, "triggeredAt", "triggered_at")
+        if setup_candle_close_at is None:
+            setup_candle_close_at = triggered_at
         return cls(
             id=d["id"],
             symbol=normalise_symbol(d["symbol"]),
@@ -186,7 +218,7 @@ class InboundSignal:
             rejection_candle=RejectionCandle.from_dict(d["rejectionCandle"]),
             created_at=d["createdAt"],
             pending_at=d.get("pendingAt"),
-            triggered_at=d.get("triggeredAt"),
+            triggered_at=triggered_at,
             tp1_hit_at=d.get("tp1HitAt"),
             tp2_hit_at=d.get("tp2HitAt"),
             sl_hit_at=d.get("slHitAt"),
@@ -196,10 +228,26 @@ class InboundSignal:
             outcome=d.get("outcome"),
             realized_rr=d.get("realizedRR"),
             close_price=d.get("closePrice"),
+            setup_candle_open_at=setup_candle_open_at,
+            setup_candle_close_at=setup_candle_close_at,
+            detected_at=detected_at,
+            emitted_at=emitted_at,
+            received_at=received_at,
+            queued_at=_optional_int(d, "queuedAt", "queued_at"),
+            execution_started_at=_optional_int(d, "executionStartedAt", "execution_started_at"),
+            order_sent_at=_optional_int(d, "orderSentAt", "order_sent_at"),
+            order_filled_at=_optional_int(d, "orderFilledAt", "order_filled_at"),
+            trade_opened_at=_optional_int(d, "tradeOpenedAt", "trade_opened_at"),
         )
 
 
-
+def _optional_int(d: dict, *keys: str) -> Optional[int]:
+    for key in keys:
+        value = d.get(key)
+        if value is None:
+            continue
+        return int(value)
+    return None
 
 
 

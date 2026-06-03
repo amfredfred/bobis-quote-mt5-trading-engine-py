@@ -44,6 +44,7 @@ execution:
   order_retry_count: 2
   order_retry_delay_sec: 0.5
   max_entry_slippage_pct_of_stop: 0.20
+  max_signal_age_ms: 90000
   close_on_slippage_exceed: false
   adjust_levels_on_slippage: false
 

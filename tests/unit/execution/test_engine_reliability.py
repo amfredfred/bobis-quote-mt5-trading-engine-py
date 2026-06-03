@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from src.config.settings import ExecutionConfig
 from src.core.events import Events
 from src.domain.position import AccountInfo, SymbolInfo
+from dataclasses import replace
 from src.domain.signal_interface import (
     BosDirection,
     CandlePattern,
@@ -13,7 +14,9 @@ from src.domain.signal_interface import (
     SignalDirection,
     SignalStatus,
 )
+from src.domain.trade import OrderSide, TradePlan
 from src.execution.engine import ExecutionEngine
+from src.utils.time import now_ms
 
 
 def test_duplicate_signal_is_rejected_before_risk_or_order_execution() -> None:
@@ -36,12 +39,75 @@ def test_duplicate_signal_is_rejected_before_risk_or_order_execution() -> None:
     assert engine.execute(signal) is None
     assert risk.calls == 0
     assert orders.calls == 0
-    assert bus.events == [
-        (
-            Events.RISK_REJECTED,
-            {"signal": signal, "reason": "duplicate_signal"},
-        )
-    ]
+    assert bus.events[0][0] == Events.RISK_REJECTED
+    assert bus.events[0][1]["signal"].id == signal.id
+    assert bus.events[0][1]["reason"] == "duplicate_signal"
+
+
+def test_stale_signal_is_rejected_before_broker_or_order_execution() -> None:
+    ts = now_ms()
+    signal = replace(
+        _signal("sig-stale"),
+        setup_candle_close_at=ts - 120_000,
+        emitted_at=ts - 119_000,
+        received_at=ts - 118_000,
+    )
+    bus = _Bus()
+    risk = _Risk()
+    orders = _Orders()
+    positions = _Positions()
+
+    engine = ExecutionEngine(
+        risk_engine=risk,
+        trade_planner=_Planner(),
+        order_manager=orders,
+        mt5_positions=positions,
+        position_store=_Store(),
+        trade_repo=_Repo(),
+        event_bus=bus,
+        exec_config=_execution_config(max_signal_age_ms=90_000),
+    )
+
+    assert engine.execute(signal) is None
+    assert positions.calls == 0
+    assert risk.calls == 0
+    assert orders.calls == 0
+    assert bus.events[0][0] == Events.RISK_REJECTED
+    assert bus.events[0][1]["reason"] == "stale_signal"
+
+
+def test_fresh_signal_executes_with_timing_fields() -> None:
+    ts = now_ms()
+    signal = replace(
+        _signal("sig-fresh"),
+        setup_candle_close_at=ts - 1_000,
+        emitted_at=ts - 900,
+        received_at=ts - 800,
+        queued_at=ts - 700,
+    )
+    bus = _Bus()
+    risk = _Risk()
+    orders = _Orders()
+    store = _Store()
+
+    engine = ExecutionEngine(
+        risk_engine=risk,
+        trade_planner=_Planner(),
+        order_manager=orders,
+        mt5_positions=_Positions(),
+        position_store=store,
+        trade_repo=_Repo(),
+        event_bus=bus,
+        exec_config=_execution_config(max_signal_age_ms=90_000),
+    )
+
+    trade = engine.execute(signal)
+
+    assert trade is not None
+    assert risk.calls == 1
+    assert orders.calls == 1
+    assert store.added
+    assert any(event == Events.TRADE_OPENED for event, _ in bus.events)
 
 
 class _Bus:
@@ -71,12 +137,31 @@ class _Orders:
 
 
 class _Planner:
-    def plan(self, *args, **kwargs):
-        raise AssertionError("planner should not run for duplicate signals")
+    def plan(self, signal: InboundSignal, *args, **kwargs):
+        side = OrderSide.BUY if signal.direction == SignalDirection.LONG else OrderSide.SELL
+        return TradePlan(
+            signal_id=signal.id,
+            symbol=signal.resolved_symbol or signal.symbol,
+            side=side,
+            entry_price=signal.entry_price,
+            stop_loss=signal.stop_loss,
+            tp1=signal.tp1,
+            tp2=signal.tp2,
+            lot_size=0.01,
+            risk_amount=10.0,
+            risk_percent=1.0,
+            risk_reward_ratio=signal.risk_reward_ratio,
+            planned_at=now_ms(),
+            signal=signal,
+        )
 
 
 class _Positions:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def get_account_info(self) -> AccountInfo:
+        self.calls += 1
         return AccountInfo(
             login=1,
             server="demo",
@@ -90,6 +175,7 @@ class _Positions:
         )
 
     def get_symbol_info(self, symbol: str) -> SymbolInfo:
+        self.calls += 1
         return SymbolInfo(
             symbol=symbol,
             description=symbol,
@@ -127,18 +213,23 @@ class _Positions:
 
 
 class _Store:
-    def __init__(self, existing_signal_id: str) -> None:
+    def __init__(self, existing_signal_id: str | None = None) -> None:
         self._existing_signal_id = existing_signal_id
+        self.added = []
 
     def get_by_signal_id(self, signal_id: str):
         return object() if signal_id == self._existing_signal_id else None
 
     def get_open_trades(self):
-        raise AssertionError("risk open-trade read should not run for duplicate signals")
+        return list(self.added)
+
+    def add(self, trade):
+        self.added.append(trade)
 
 
 class _Repo:
-    pass
+    def save(self, trade):
+        return True
 
 
 def _signal(signal_id: str) -> InboundSignal:
@@ -188,7 +279,7 @@ def _signal(signal_id: str) -> InboundSignal:
     )
 
 
-def _execution_config() -> ExecutionConfig:
+def _execution_config(max_signal_age_ms: int = 90_000) -> ExecutionConfig:
     return ExecutionConfig(
         tp1_trigger_pct=50.0,
         tp1_percentage=50.0,
@@ -201,4 +292,5 @@ def _execution_config() -> ExecutionConfig:
         max_entry_slippage_pct_of_stop=0.2,
         close_on_slippage_exceed=True,
         order_retry_delay_sec=0.0,
+        max_signal_age_ms=max_signal_age_ms,
     )

@@ -107,6 +107,7 @@ class ExecutionEngine:
     def execute(self, signal: InboundSignal) -> Trade | None:
         # ── [5] Pipeline start time ──────────────────────────────────
         pipeline_start_ms = now_ms()
+        signal = replace(signal, execution_started_at=pipeline_start_ms)
         _resolved = signal.resolved_symbol
 
         logger.info(
@@ -115,10 +116,66 @@ class ExecutionEngine:
                 "signal_id": signal.id,
                 "symbol": f"{signal.symbol} -> {_resolved}",
                 "direction": signal.direction.value,
+                "setup_candle_open_at": signal.setup_candle_open_at,
+                "setup_candle_close_at": signal.setup_candle_close_at,
+                "detected_at": signal.detected_at,
+                "emitted_at": signal.emitted_at,
+                "received_at": signal.received_at,
+                "queued_at": signal.queued_at,
+                "execution_started_at": signal.execution_started_at,
             },
         )
 
         # ── 1. Fetch broker state ──────────────────────────────────────────
+        actionable_at = _actionable_signal_at(signal)
+        signal_age_ms = (
+            pipeline_start_ms - actionable_at if actionable_at is not None else None
+        )
+        logger.info(
+            "Execution timing check",
+            extra={
+                "signal_id": signal.id,
+                "actionable_at": actionable_at,
+                "now": pipeline_start_ms,
+                "age_ms": signal_age_ms,
+                "max_signal_age_ms": self._cfg.max_signal_age_ms,
+            },
+        )
+        if (
+            signal_age_ms is not None
+            and signal_age_ms > self._cfg.max_signal_age_ms
+        ):
+            logger.warning(
+                "Stale signal rejected before broker execution",
+                extra={
+                    "signal_id": signal.id,
+                    "symbol": signal.resolved_symbol,
+                    "signal_age_ms": signal_age_ms,
+                    "max_signal_age_ms": self._cfg.max_signal_age_ms,
+                    "setup_candle_open_at": signal.setup_candle_open_at,
+                    "setup_candle_close_at": signal.setup_candle_close_at,
+                    "detected_at": signal.detected_at,
+                    "emitted_at": signal.emitted_at,
+                    "received_at": signal.received_at,
+                    "queued_at": signal.queued_at,
+                    "execution_started_at": signal.execution_started_at,
+                },
+            )
+            metrics.increment("signal.stale_rejected")
+            _set_latency_gauge("latency.market_signal_age_ms", signal_age_ms)
+            _set_latency_gauge(
+                "latency.emit_to_receive_ms",
+                _elapsed(signal.emitted_at, signal.received_at),
+            )
+            _set_latency_gauge(
+                "latency.receive_to_execute_ms",
+                _elapsed(signal.received_at, pipeline_start_ms),
+            )
+            self._bus.emit(
+                Events.RISK_REJECTED, {"signal": signal, "reason": "stale_signal"}
+            )
+            return None
+
         try:
             account_info = self._mt5_positions.get_account_info()
             symbol_info = self._mt5_positions.get_symbol_info(_resolved)
@@ -189,6 +246,7 @@ class ExecutionEngine:
         # poll; when price reaches TP1 the poll moves the broker SL to breakeven
         # so the trade runs the rest of the way to TP2 risk-free.
         broker_send_ms = now_ms()  # [5] broker round-trip start
+        signal = replace(signal, order_sent_at=broker_send_ms)
 
         try:
             ticket, executed_price, filled_volume = self._orders.execute_market_order(
@@ -202,7 +260,9 @@ class ExecutionEngine:
             metrics.increment("orders.rejected")
             return None
 
-        broker_round_trip_ms = now_ms() - broker_send_ms  # [5]
+        order_filled_at = now_ms()
+        signal = replace(signal, order_filled_at=order_filled_at)
+        broker_round_trip_ms = order_filled_at - broker_send_ms  # [5]
 
         # ── 5. Resolve final SL/TP levels ─────────────────────────────────
         # fill_slippage is signed: positive = filled above signal entry (buy
@@ -276,6 +336,7 @@ class ExecutionEngine:
 
         # ── 6. Create Trade record ─────────────────────────────────────────
         ts = now_ms()
+        signal = replace(signal, trade_opened_at=ts)
         trade = Trade(
             id=str(uuid.uuid4()),
             signal_id=signal.id,
@@ -344,12 +405,23 @@ class ExecutionEngine:
         metrics.set_gauge("trades.open_count", len(self._store.get_open_trades()))
 
         # ── [5] Latency metrics ────────────────────────────────────────────
-        signal_to_trade_ms = ts - (signal.triggered_at or pipeline_start_ms)
-        pipeline_only_ms = ts - pipeline_start_ms
+        market_signal_age_ms = (
+            pipeline_start_ms - signal.setup_candle_close_at
+            if signal.setup_candle_close_at is not None
+            else signal_age_ms
+        )
+        emit_to_receive_ms = _elapsed(signal.emitted_at, signal.received_at)
+        receive_to_execute_ms = _elapsed(signal.received_at, pipeline_start_ms)
+        execution_pipeline_ms = ts - pipeline_start_ms
+        signal_to_trade_ms = _elapsed(signal.emitted_at, ts)
 
-        metrics.set_gauge("latency.signal_to_trade_ms", signal_to_trade_ms)
-        metrics.set_gauge("latency.pipeline_ms", pipeline_only_ms)
+        _set_latency_gauge("latency.market_signal_age_ms", market_signal_age_ms)
+        _set_latency_gauge("latency.emit_to_receive_ms", emit_to_receive_ms)
+        _set_latency_gauge("latency.receive_to_execute_ms", receive_to_execute_ms)
+        metrics.set_gauge("latency.execution_pipeline_ms", execution_pipeline_ms)
+        metrics.set_gauge("latency.pipeline_ms", execution_pipeline_ms)
         metrics.set_gauge("latency.broker_round_trip_ms", broker_round_trip_ms)
+        _set_latency_gauge("latency.signal_to_trade_ms", signal_to_trade_ms)
 
         logger.info(
             "Trade opened",
@@ -362,8 +434,36 @@ class ExecutionEngine:
                 "tp1": round(plan.tp1, 5),
                 "tp2": round(plan.tp2, 5),
                 "signal_to_trade_ms": signal_to_trade_ms,
-                "pipeline_ms": pipeline_only_ms,
+                "market_signal_age_ms": market_signal_age_ms,
+                "emit_to_receive_ms": emit_to_receive_ms,
+                "receive_to_execute_ms": receive_to_execute_ms,
+                "execution_pipeline_ms": execution_pipeline_ms,
                 "broker_round_trip_ms": broker_round_trip_ms,
+                "setup_candle_open_at": signal.setup_candle_open_at,
+                "setup_candle_close_at": signal.setup_candle_close_at,
+                "detected_at": signal.detected_at,
+                "emitted_at": signal.emitted_at,
+                "received_at": signal.received_at,
+                "queued_at": signal.queued_at,
+                "execution_started_at": signal.execution_started_at,
+                "order_sent_at": signal.order_sent_at,
+                "order_filled_at": signal.order_filled_at,
+                "trade_opened_at": signal.trade_opened_at,
             },
         )
         return trade
+
+
+def _actionable_signal_at(signal: InboundSignal) -> int | None:
+    return signal.setup_candle_close_at or signal.detected_at or signal.emitted_at
+
+
+def _elapsed(start: int | None, end: int | None) -> int | None:
+    if start is None or end is None:
+        return None
+    return end - start
+
+
+def _set_latency_gauge(name: str, value: int | None) -> None:
+    if value is not None:
+        metrics.set_gauge(name, value)

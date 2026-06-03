@@ -20,6 +20,7 @@ from .signal_types import (
 )
 from .signal_validator import SignalValidator
 from src.domain.signal_interface import InboundSignal
+from src.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,22 @@ class SignalConsumer:
             metrics.increment("signal.deserialise_errors")
             return
 
+        received_log_at = signal.received_at or now_ms()
+        actionable_at = signal.setup_candle_close_at or signal.triggered_at
+        logger.info(
+            "Signal received",
+            extra={
+                "signal_id": signal.id,
+                "symbol": signal.symbol,
+                "setup_candle_open_at": signal.setup_candle_open_at,
+                "setup_candle_close_at": signal.setup_candle_close_at,
+                "triggered_at": signal.triggered_at,
+                "emitted_at": signal.emitted_at,
+                "received_at": signal.received_at,
+                "age_ms": received_log_at - actionable_at if actionable_at else None,
+            },
+        )
+
         result = self._validator.validate(signal)
 
         if not result.valid:
@@ -128,6 +145,11 @@ class SignalConsumer:
                     "signal_id": signal.id,
                     "symbol": signal.symbol,
                     "direction": signal.direction.value,
+                    "setup_candle_open_at": signal.setup_candle_open_at,
+                    "setup_candle_close_at": signal.setup_candle_close_at,
+                    "triggered_at": signal.triggered_at,
+                    "emitted_at": signal.emitted_at,
+                    "received_at": signal.received_at,
                 },
             )
             metrics.increment("signal.triggered")
@@ -139,7 +161,6 @@ class SignalConsumer:
                 extra={"event": event, "signal_id": signal.id},
             )
             metrics.increment(f"signal.close.{event}")
-
 
 
 

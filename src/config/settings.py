@@ -56,6 +56,7 @@ class ExecutionConfig:
     close_on_slippage_exceed: bool
     order_retry_delay_sec: float
     adjust_levels_on_slippage: bool = False
+    max_signal_age_ms: int = 90_000
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,7 @@ class AppConfig:
                 close_on_slippage_exceed=bool(exe.get("close_on_slippage_exceed", False)),
                 order_retry_delay_sec=float(exe.get("order_retry_delay_sec", 0.5)),
                 adjust_levels_on_slippage=bool(exe.get("adjust_levels_on_slippage", False)),
+                max_signal_age_ms=int(exe.get("max_signal_age_ms", 90_000)),
             ),
             storage_path=str(eng.get("storage_path", "./data")),
             log_level=str(eng.get("log_level", "INFO")),

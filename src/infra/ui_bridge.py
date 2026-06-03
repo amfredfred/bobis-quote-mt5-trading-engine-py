@@ -458,10 +458,12 @@ class UIBridge:
         peak_equity = max(peak_eq, current_equity) if current_equity else peak_eq
         daily_loss_amount = round(start_eq * daily_loss / 100.0, 2) if start_eq else 0.0
         daily_budget_left = max(daily_budget - daily_loss_amount, 0.0) if daily_budget else 0.0
-        risk_slots = config.risk.max_losing_streak + 1
+        risk_slots = config.risk.max_losing_streak
         risk_per_trade = round(daily_budget / risk_slots, 2) if daily_budget and risk_slots else 0.0
 
         result = {
+            "raw_counters":       counters,
+            "raw_gauges":         gauges,
             "configured_symbols":  list(config.signal.symbols),
             "active_symbol":       config.signal.symbols[0] if config.signal.symbols else None,
             "start_balance":      start_eq,
@@ -482,10 +484,41 @@ class UIBridge:
             "max_trades":         risk_slots,
             "pending_signals":    self._container.signal_queue.depth(),
             "total_trades_today": counters.get("trades.opened", 0),
+            "orders_opened":      counters.get("mt5.orders.opened", counters.get("orders.opened", 0)),
+            "orders_filled":      counters.get("orders.filled", 0),
+            "orders_rejected":    counters.get("orders.rejected", 0),
+            "orders_retried":     counters.get("orders.retried", 0),
+            "orders_partial_fills": counters.get("orders.partial_fills", 0),
+            "orders_margin_reduced": counters.get("orders.margin_reduced", 0),
+            "orders_slippage_rejected": counters.get("orders.slippage_rejected", 0),
+            "orders_emergency_closes": counters.get("orders.emergency_closes", 0),
+            "signals_received":   counters.get("signal.received", 0),
+            "signals_triggered":  counters.get("signal.triggered", 0),
+            "signals_validation_failures": counters.get("signal.validation_failures", 0),
+            "signals_parse_errors": counters.get("signal.parse_errors", 0),
+            "signals_deserialise_errors": counters.get("signal.deserialise_errors", 0),
+            "signal_duplicates_ignored": counters.get("signal.duplicates_ignored", 0),
+            "risk_approved":      counters.get("risk.approved", 0),
+            "risk_rejected":      counters.get("risk.rejected", 0),
+            "trades_opened":      counters.get("trades.opened", 0),
+            "trades_closed":      counters.get("trades.closed", 0),
+            "trades_tp1_hit":     counters.get("trades.tp1_hit", 0),
+            "trades_tp2_hit":     counters.get("trades.tp2_hit", 0),
+            "trades_sl_hit":      counters.get("trades.sl_hit", 0),
+            "trades_open_count":  gauges.get("trades.open_count", len(open_trades)),
+            "trades_tracking_failures": counters.get("trades.tracking_failures", 0),
+            "trades_persistence_failures": counters.get("trades.persistence_failures", 0),
             "winning_trades":     wins,
             "losing_trades":      sl,
             "win_rate":           round(wins / total_closed * 100, 1) if total_closed else 0.0,
             "signal_to_trade_ms": int(gauges.get("latency.signal_to_trade_ms") or 0),
+            "latency_signal_to_trade_ms": int(gauges.get("latency.signal_to_trade_ms") or 0),
+            "latency_market_signal_age_ms": int(gauges.get("latency.market_signal_age_ms") or 0),
+            "latency_emit_to_receive_ms": int(gauges.get("latency.emit_to_receive_ms") or 0),
+            "latency_receive_to_execute_ms": int(gauges.get("latency.receive_to_execute_ms") or 0),
+            "latency_execution_pipeline_ms": int(gauges.get("latency.execution_pipeline_ms") or 0),
+            "latency_pipeline_ms": int(gauges.get("latency.execution_pipeline_ms") or gauges.get("latency.pipeline_ms") or 0),
+            "latency_broker_round_trip_ms": int(gauges.get("latency.broker_round_trip_ms") or 0),
         }
         if account:
             result.update(

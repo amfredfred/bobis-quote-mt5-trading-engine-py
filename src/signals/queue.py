@@ -18,12 +18,14 @@ Queue depth:
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 import queue
 import threading
 from typing import Callable, Optional, Set
 
 from src.domain.signal_interface import InboundSignal
+from src.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,7 @@ class SignalQueue:
           - Queue is full (flood protection)
         """
         with self._symbols_lock:
+            signal = replace(signal, queued_at=signal.queued_at or now_ms())
             if signal.resolved_symbol in self._queued_symbols:
                 logger.debug(
                     "SignalQueue: dropped — symbol already queued",
