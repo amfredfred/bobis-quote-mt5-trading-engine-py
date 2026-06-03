@@ -128,6 +128,21 @@ def _trade_outcome(trade: Any) -> str:
     if reason == "SL_HIT":
         return "loss"
 
+    side = _enum_value(getattr(trade, "side", "") or "").upper()
+    entry = getattr(trade, "entry_price", None)
+    close = getattr(trade, "close_price", None)
+    if entry is not None and close is not None:
+        if side == "BUY":
+            if close > entry:
+                return "win"
+            if close < entry:
+                return "loss"
+        elif side == "SELL":
+            if close < entry:
+                return "win"
+            if close > entry:
+                return "loss"
+
     rr = getattr(trade, "realized_rr", None)
     if rr is None:
         return "breakeven"

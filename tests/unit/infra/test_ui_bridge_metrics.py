@@ -80,12 +80,27 @@ def test_metrics_hydrate_final_outcomes_from_persisted_trades() -> None:
                 status="CLOSED",
                 close_reason="TP2_HIT",
                 realized_rr=0.0,
+                side="BUY",
+                entry_price=100.0,
+                close_price=110.0,
                 closed_at=now_ms,
             ),
             SimpleNamespace(
                 status="CLOSED",
                 close_reason="MANUAL",
                 realized_rr=-0.5,
+                side="SELL",
+                entry_price=100.0,
+                close_price=102.0,
+                closed_at=now_ms,
+            ),
+            SimpleNamespace(
+                status="CLOSED",
+                close_reason="MANUAL",
+                realized_rr=0.8,
+                side="BUY",
+                entry_price=100.0,
+                close_price=99.0,
                 closed_at=now_ms,
             ),
         ]
@@ -104,9 +119,9 @@ def test_metrics_hydrate_final_outcomes_from_persisted_trades() -> None:
     )
 
     assert metrics["winning_trades"] == 1
-    assert metrics["losing_trades"] == 1
-    assert metrics["total_trades"] == 2
-    assert metrics["win_rate"] == 50.0
+    assert metrics["losing_trades"] == 2
+    assert metrics["total_trades"] == 3
+    assert metrics["win_rate"] == 33.3
 
 
 def test_metrics_show_positive_daily_pnl_from_equity_delta() -> None:

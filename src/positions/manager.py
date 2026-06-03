@@ -461,11 +461,13 @@ class PositionManager:
             metrics.increment(metric_key)
             if not is_stub:
                 metrics.increment("trades.closed")
-                if close_reason == CloseReason.TP2_HIT or realized_rr > 0:
+                closed_in_profit = is_profitable_close(updated)
+                closed_in_loss = is_losing_close(updated)
+                if close_reason == CloseReason.TP2_HIT or closed_in_profit or realized_rr > 0:
                     metrics.increment("trades.winning")
                     if close_reason == CloseReason.MANUAL:
                         metrics.increment("trades.manual_profit")
-                elif close_reason == CloseReason.SL_HIT or realized_rr < 0:
+                elif close_reason == CloseReason.SL_HIT or closed_in_loss or realized_rr < 0:
                     metrics.increment("trades.losing")
                     if close_reason == CloseReason.MANUAL:
                         metrics.increment("trades.manual_loss")
@@ -495,6 +497,26 @@ def calculate_realized_rr(trade: Trade, close_price: float) -> float:
     if risk <= 0:
         return 0.0
     return reward / risk
+
+
+def is_profitable_close(trade: Trade) -> bool:
+    if trade.entry_price is None or trade.close_price is None:
+        return False
+    if trade.side.value == "BUY":
+        return trade.close_price > trade.entry_price
+    if trade.side.value == "SELL":
+        return trade.close_price < trade.entry_price
+    return False
+
+
+def is_losing_close(trade: Trade) -> bool:
+    if trade.entry_price is None or trade.close_price is None:
+        return False
+    if trade.side.value == "BUY":
+        return trade.close_price < trade.entry_price
+    if trade.side.value == "SELL":
+        return trade.close_price > trade.entry_price
+    return False
 
 
 def _trade_stub_from_position(pos) -> Trade:
