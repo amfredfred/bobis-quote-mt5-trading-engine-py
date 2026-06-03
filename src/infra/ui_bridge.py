@@ -462,6 +462,8 @@ class UIBridge:
         risk_per_trade = round(daily_budget / risk_slots, 2) if daily_budget and risk_slots else 0.0
 
         result = {
+            "configured_symbols":  list(config.signal.symbols),
+            "active_symbol":       config.signal.symbols[0] if config.signal.symbols else None,
             "start_balance":      start_eq,
             "current_balance":    account["balance"] if account else current_equity,
             "equity":             current_equity,
