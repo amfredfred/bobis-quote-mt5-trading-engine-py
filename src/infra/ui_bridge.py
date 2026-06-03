@@ -219,7 +219,7 @@ class UIBridge:
 
         async def metrics_pusher() -> None:
             while not self._stop_event.is_set():  # type: ignore[union-attr]
-                await asyncio.sleep(5)
+                await asyncio.sleep(1)
                 if not self._clients:
                     continue
                 try:
