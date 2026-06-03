@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _started_at = time.time()
-_METRICS_PUSH_INTERVAL_SEC = 5.0
-_ACCOUNT_CACHE_TTL_SEC = 5.0
+_METRICS_PUSH_INTERVAL_SEC = 1.5
+_ACCOUNT_CACHE_TTL_SEC = 1.5
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

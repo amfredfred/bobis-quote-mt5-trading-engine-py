@@ -74,3 +74,4 @@ execution.zip
 # RepoWise
 .repowise/.env
 logs
+nssm/
