@@ -237,6 +237,53 @@ def _validate_symbol_info(si: SymbolInfo | None) -> Optional[RuleResult]:
     return None
 
 
+def _actual_reward_risk(
+    *,
+    direction: SignalDirection,
+    fill_price: float,
+    stop_loss: float,
+    tp2: float,
+    pip: float,
+) -> tuple[float, float, RuleResult | None]:
+    """Return directional live SL/TP distances, or a rejection for invalid levels."""
+    if direction == SignalDirection.LONG:
+        if fill_price <= stop_loss:
+            return 0.0, 0.0, RuleResult(
+                approved=False,
+                reason=(
+                    f"Actual fill {fill_price:.5f} is at/below LONG stop "
+                    f"{stop_loss:.5f}"
+                ),
+            )
+        if fill_price >= tp2:
+            return 0.0, 0.0, RuleResult(
+                approved=False,
+                reason=(
+                    f"Actual fill {fill_price:.5f} is at/above LONG TP2 "
+                    f"{tp2:.5f}"
+                ),
+            )
+        return (fill_price - stop_loss) / pip, (tp2 - fill_price) / pip, None
+
+    if fill_price >= stop_loss:
+        return 0.0, 0.0, RuleResult(
+            approved=False,
+            reason=(
+                f"Actual fill {fill_price:.5f} is at/above SHORT stop "
+                f"{stop_loss:.5f}"
+            ),
+        )
+    if fill_price <= tp2:
+        return 0.0, 0.0, RuleResult(
+            approved=False,
+            reason=(
+                f"Actual fill {fill_price:.5f} is at/below SHORT TP2 "
+                f"{tp2:.5f}"
+            ),
+        )
+    return (stop_loss - fill_price) / pip, (fill_price - tp2) / pip, None
+
+
 def min_rr_rule(ctx: RuleContext) -> RuleResult:
     """Check R:R from the actual fill price, not the stale signal entry_price.
 
@@ -255,8 +302,15 @@ def min_rr_rule(ctx: RuleContext) -> RuleResult:
 
     fill_price = _resolve_fill_price(si, ctx.signal.direction)
 
-    sl_pips = abs(fill_price - ctx.signal.stop_loss) / pip
-    tp_pips = abs(fill_price - ctx.signal.tp2) / pip
+    sl_pips, tp_pips, invalid = _actual_reward_risk(
+        direction=ctx.signal.direction,
+        fill_price=fill_price,
+        stop_loss=ctx.signal.stop_loss,
+        tp2=ctx.signal.tp2,
+        pip=pip,
+    )
+    if invalid:
+        return invalid
 
     if sl_pips == 0:
         return RuleResult(approved=False, reason="SL distance is zero")
