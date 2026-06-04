@@ -110,10 +110,10 @@ def test_fresh_signal_executes_with_timing_fields() -> None:
     assert any(event == Events.TRADE_OPENED for event, _ in bus.events)
 
 
-def test_price_parity_rejects_broker_quote_far_from_signal_entry() -> None:
+def test_price_drift_does_not_bypass_live_rr_risk_evaluation() -> None:
     ts = now_ms()
     signal = replace(
-        _signal("sig-price-mismatch"),
+        _signal("sig-price-drift"),
         setup_candle_close_at=ts - 1_000,
         emitted_at=ts - 900,
         received_at=ts - 800,
@@ -133,11 +133,12 @@ def test_price_parity_rejects_broker_quote_far_from_signal_entry() -> None:
         exec_config=_execution_config(max_signal_age_ms=90_000),
     )
 
-    assert engine.execute(signal) is None
-    assert risk.calls == 0
-    assert orders.calls == 0
-    assert bus.events[0][0] == Events.RISK_REJECTED
-    assert "Broker price differs from signal entry" in bus.events[0][1]["reason"]
+    trade = engine.execute(signal)
+
+    assert trade is not None
+    assert risk.calls == 1
+    assert orders.calls == 1
+    assert any(event == Events.TRADE_OPENED for event, _ in bus.events)
 
 
 class _Bus:
