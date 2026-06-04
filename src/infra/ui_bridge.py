@@ -86,11 +86,28 @@ def _extract_signal(payload: Any) -> dict | None:
         return None
 
     direction = getattr(signal, "direction", None)
+    htf_interval = getattr(signal, "htf_interval", None)
+    ltf_interval = getattr(signal, "ltf_interval", None)
+    pattern = None
+    rejection = getattr(signal, "rejection_candle", None)
+    if rejection is not None:
+        pattern_value = getattr(rejection, "pattern", None)
+        pattern = pattern_value.value if hasattr(pattern_value, "value") else pattern_value
+    setup = pattern or getattr(signal, "setup", None)
     return {
-        "id":        getattr(signal, "id", _now_hms()),
-        "symbol":    signal.symbol,
-        "direction": direction.value if hasattr(direction, "value") else str(direction),
-        "reason":    reason,
+        "id":              getattr(signal, "id", _now_hms()),
+        "symbol":          signal.symbol,
+        "direction":       direction.value if hasattr(direction, "value") else str(direction),
+        "timeframe":       "/".join(str(v) for v in (htf_interval, ltf_interval) if v),
+        "strategy":        pattern or getattr(signal, "strategy", None),
+        "entryPrice":      getattr(signal, "entry_price", None),
+        "stopLoss":        getattr(signal, "stop_loss", None),
+        "tp1":             getattr(signal, "tp1", None),
+        "tp2":             getattr(signal, "tp2", None),
+        "takeProfit":      getattr(signal, "tp2", None),
+        "riskRewardRatio": getattr(signal, "risk_reward_ratio", None),
+        "setup":           setup,
+        "reason":          reason,
     }
 
 def _build_signal_event(event_name: str, payload: Any) -> dict | None:
@@ -108,12 +125,21 @@ def _build_signal_event(event_name: str, payload: Any) -> dict | None:
     if info is None:
         return None
     return {
-        "id":        info["id"],
-        "symbol":    info["symbol"],
-        "direction": info["direction"],
-        "status":    status,
-        "timestamp": _now_hms(),
-        "reason":    info.get("reason"),
+        "id":              info["id"],
+        "symbol":          info["symbol"],
+        "timeframe":       info.get("timeframe"),
+        "strategy":        info.get("strategy"),
+        "direction":       info["direction"],
+        "status":          status,
+        "entryPrice":      info.get("entryPrice"),
+        "stopLoss":        info.get("stopLoss"),
+        "tp1":             info.get("tp1"),
+        "tp2":             info.get("tp2"),
+        "takeProfit":      info.get("takeProfit"),
+        "riskRewardRatio": info.get("riskRewardRatio"),
+        "setup":           info.get("setup"),
+        "timestamp":       _now_hms(),
+        "reason":          info.get("reason"),
     }
 
 
