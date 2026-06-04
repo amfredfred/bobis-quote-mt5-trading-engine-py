@@ -26,9 +26,9 @@ risk:
   min_lot_size: 0.01
   # Reject if live spread costs more than this fraction of the SL distance.
   # Example: 0.25 rejects 14.0 spread / 36.7 SL = 0.38.
-  sl_ratio_threshold: 0.25
+  sl_ratio_threshold: 0.35
   symbol_sl_ratio_threshold:
-    XAUUSD: 0.25
+    XAUUSD: 0.35
   no_hedging: true
   # Intraday capital-protection guards (0 = disabled)
   max_equity_drawdown_percent: 2.0
@@ -37,18 +37,17 @@ risk:
 
 execution:
   # TP1 fires when price reaches this % of entry→TP2 range
-  tp1_trigger_pct: 40.0
-  tp1_percentage: 50.0
+  tp1_trigger_pct: 50.0
+  tp1_percentage: 0.0
   move_sl_to_be_on_tp1: true
   # Per-pair overrides use "HTF_minutes/LTF_minutes" from signal htfInterval/ltfInterval.
   tf_overrides:
-    "1/1":
-      tp1_trigger_pct: 5.0
-      # Optional: tp1_percentage: 0.0
+    "2/2":
+      tp1_trigger_pct: 2.0
     "5/5":
       tp1_trigger_pct: 5.0
     "30/30":
-      tp1_trigger_pct: 7.5
+      tp1_trigger_pct: 20
   spread_risk_multiplier: 1.0
   order_retry_count: 2
   order_retry_delay_sec: 0.5
