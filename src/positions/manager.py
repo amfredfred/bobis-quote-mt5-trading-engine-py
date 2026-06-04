@@ -265,6 +265,8 @@ class PositionManager:
         # ── Step 1: Partial close ─────────────────────────────────────────
         partial_closed = False
         tp1_close_price: float | None = None
+        symbol_info = None
+        tick = None
 
         if trade.tp1_lots > 0 and trade.entry_ticket:
             try:
@@ -311,9 +313,38 @@ class PositionManager:
         be_ok = False
         if self._cfg.move_sl_to_be_on_tp1 and trade.entry_ticket:
             try:
+                if symbol_info is None:
+                    symbol_info = self._mt5_pos.get_symbol_info(trade.symbol)
+                if tick is None:
+                    tick = self._mt5_pos.get_current_tick(trade.symbol)
+                if tick is None:
+                    raise RuntimeError(f"Cannot get tick for {trade.symbol}")
+
+                be_sl = _valid_breakeven_sl(trade, symbol_info, tick)
+                if be_sl is None:
+                    if not partial_closed:
+                        logger.warning(
+                            "PositionManager: BE move deferred until broker stop distance allows it",
+                            extra={
+                                "trade_id": trade.id,
+                                "ticket": trade.entry_ticket,
+                                "symbol": trade.symbol,
+                                "entry_price": trade.entry_price,
+                                "bid": getattr(tick, "bid", None),
+                                "ask": getattr(tick, "ask", None),
+                                "stops_level": symbol_info.stops_level,
+                                "freeze_level": symbol_info.freeze_level,
+                                "point": symbol_info.point,
+                            },
+                        )
+                        return
+                    raise RuntimeError(
+                        "Breakeven SL violates broker stop/freeze distance"
+                    )
+
                 self._mt5_orders.modify_position(
                     ticket=trade.entry_ticket,
-                    sl=trade.entry_price,
+                    sl=be_sl,
                     tp=trade.tp2,
                 )
                 be_ok = True
@@ -322,7 +353,7 @@ class PositionManager:
                     extra={
                         "trade_id": trade.id,
                         "ticket": trade.entry_ticket,
-                        "be_price": trade.entry_price,
+                        "be_price": be_sl,
                     },
                 )
             except Exception:
@@ -497,6 +528,37 @@ def calculate_realized_rr(trade: Trade, close_price: float) -> float:
     if risk <= 0:
         return 0.0
     return reward / risk
+
+
+def _valid_breakeven_sl(trade: Trade, symbol_info, tick) -> float | None:
+    """Return entry as SL only when MT5 stop/freeze distance allows it."""
+    if trade.entry_price is None:
+        return None
+
+    entry = float(trade.entry_price)
+    min_points = max(
+        int(getattr(symbol_info, "stops_level", 0) or 0),
+        int(getattr(symbol_info, "freeze_level", 0) or 0),
+    )
+    # One extra point keeps us off the exact broker boundary, where some MT5
+    # servers still answer INVALID_STOPS because price moves during the request.
+    min_distance = (min_points + 1) * float(symbol_info.point)
+    digits = int(getattr(symbol_info, "digits", 5) or 5)
+
+    if trade.side.value == "BUY":
+        bid = float(getattr(tick, "bid", 0.0) or 0.0)
+        if bid <= 0.0:
+            return None
+        if entry <= bid - min_distance:
+            return round(entry, digits)
+        return None
+
+    ask = float(getattr(tick, "ask", 0.0) or 0.0)
+    if ask <= 0.0:
+        return None
+    if entry >= ask + min_distance:
+        return round(entry, digits)
+    return None
 
 
 def is_profitable_close(trade: Trade) -> bool:

@@ -1,5 +1,7 @@
+from types import SimpleNamespace
+
 from src.domain.trade import OrderSide, Trade, TradePlan, TradeStatus
-from src.positions.manager import calculate_realized_rr
+from src.positions.manager import calculate_realized_rr, _valid_breakeven_sl
 
 
 def test_calculate_realized_rr_buy_manual_loss_is_negative() -> None:
@@ -18,6 +20,38 @@ def test_calculate_realized_rr_sell_profit_is_positive() -> None:
     trade = _trade(OrderSide.SELL, entry=100.0, stop=105.0)
 
     assert calculate_realized_rr(trade, 90.0) == 2.0
+
+
+def test_valid_breakeven_sl_defers_buy_when_entry_inside_stop_distance() -> None:
+    trade = _trade(OrderSide.BUY, entry=100.0, stop=99.0)
+    symbol = SimpleNamespace(stops_level=50, freeze_level=0, point=0.01, digits=2)
+    tick = SimpleNamespace(bid=100.40, ask=100.45)
+
+    assert _valid_breakeven_sl(trade, symbol, tick) is None
+
+
+def test_valid_breakeven_sl_allows_buy_when_entry_outside_stop_distance() -> None:
+    trade = _trade(OrderSide.BUY, entry=100.0, stop=99.0)
+    symbol = SimpleNamespace(stops_level=50, freeze_level=0, point=0.01, digits=2)
+    tick = SimpleNamespace(bid=100.60, ask=100.65)
+
+    assert _valid_breakeven_sl(trade, symbol, tick) == 100.0
+
+
+def test_valid_breakeven_sl_defers_sell_when_entry_inside_stop_distance() -> None:
+    trade = _trade(OrderSide.SELL, entry=100.0, stop=101.0)
+    symbol = SimpleNamespace(stops_level=50, freeze_level=0, point=0.01, digits=2)
+    tick = SimpleNamespace(bid=99.55, ask=99.60)
+
+    assert _valid_breakeven_sl(trade, symbol, tick) is None
+
+
+def test_valid_breakeven_sl_allows_sell_when_entry_outside_stop_distance() -> None:
+    trade = _trade(OrderSide.SELL, entry=100.0, stop=101.0)
+    symbol = SimpleNamespace(stops_level=50, freeze_level=0, point=0.01, digits=2)
+    tick = SimpleNamespace(bid=99.35, ask=99.40)
+
+    assert _valid_breakeven_sl(trade, symbol, tick) == 100.0
 
 
 def _trade(side: OrderSide, entry: float, stop: float) -> Trade:
