@@ -121,7 +121,13 @@ class TradePlanner:
         # This keeps TP1 proportional to the actual trade range regardless of RRR,
         # so a 5R trade doesn't move SL to BE on a mere 1R move.
         trade_range = abs(signal.tp2 - signal.entry_price)
-        tp1_offset = (self._exec.tp1_trigger_pct / 100.0) * trade_range
+        tp1_trigger_pct = self._exec.tp1_trigger_pct_for(
+            signal.htf_interval, signal.ltf_interval
+        )
+        tp1_percentage = self._exec.tp1_percentage_for(
+            signal.htf_interval, signal.ltf_interval
+        )
+        tp1_offset = (tp1_trigger_pct / 100.0) * trade_range
         static_tp1 = (
             signal.entry_price + tp1_offset
             if signal.direction == SignalDirection.LONG
@@ -137,8 +143,8 @@ class TradePlanner:
         # which guarantees static_tp1 is strictly between entry and tp2.
         import math
         volume_step = symbol_info.volume_step if symbol_info.volume_step else 0.01
-        if self._exec.tp1_percentage > 0 and 0 < self._exec.tp1_trigger_pct < 100:
-            raw_tp1_lots = calc.lot_size * (self._exec.tp1_percentage / 100.0)
+        if tp1_percentage > 0 and 0 < tp1_trigger_pct < 100:
+            raw_tp1_lots = calc.lot_size * (tp1_percentage / 100.0)
             tp1_lots = math.floor(raw_tp1_lots / volume_step) * volume_step
             tp1_lots = round(tp1_lots, 2)
             # Ensure at least one step and never consumes the full position
@@ -192,10 +198,11 @@ class TradePlanner:
                 ),
                 "pessimistic_sl_pips": round(raw_sl_distance / pip, 1),
                 "adjusted_sl_pips": round(adjusted_sl_distance / pip, 1),
-                "tp1_trigger_pct": self._exec.tp1_trigger_pct,
+                "tp1_trigger_pct": tp1_trigger_pct,
                 "trade_range_pips": round(trade_range / pip, 1) if pip else 0,
-                "tp1_eligible": 0 < self._exec.tp1_trigger_pct < 100,
-                "tp1_percentage": self._exec.tp1_percentage,
+                "tp1_eligible": 0 < tp1_trigger_pct < 100,
+                "tp1_percentage": tp1_percentage,
+                "tf_pair": f"{signal.htf_interval}:{signal.ltf_interval}",
                 "tp1_lots": tp1_lots,
                 "signal_tp1": signal.tp1,
                 "static_tp1": round(static_tp1, 5),

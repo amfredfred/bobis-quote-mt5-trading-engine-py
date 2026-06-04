@@ -156,6 +156,8 @@ class InboundSignal:
     ltf_range: LtfRange
     rejection_candle: RejectionCandle
     created_at: int
+    htf_interval: str = ""
+    ltf_interval: str = ""
     pending_at: Optional[int] = None
     triggered_at: Optional[int] = None
     tp1_hit_at: Optional[int] = None
@@ -217,6 +219,8 @@ class InboundSignal:
             ltf_range=LtfRange.from_dict(d["ltfRange"]),
             rejection_candle=RejectionCandle.from_dict(d["rejectionCandle"]),
             created_at=d["createdAt"],
+            htf_interval=str(d.get("htfInterval") or d.get("htf_interval") or ""),
+            ltf_interval=str(d.get("ltfInterval") or d.get("ltf_interval") or ""),
             pending_at=d.get("pendingAt"),
             triggered_at=triggered_at,
             tp1_hit_at=d.get("tp1HitAt"),
@@ -248,7 +252,6 @@ def _optional_int(d: dict, *keys: str) -> Optional[int]:
             continue
         return int(value)
     return None
-
 
 
 

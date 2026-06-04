@@ -40,6 +40,15 @@ execution:
   tp1_trigger_pct: 40.0
   tp1_percentage: 50.0
   move_sl_to_be_on_tp1: true
+  # Per-pair overrides use "HTF_minutes/LTF_minutes" from signal htfInterval/ltfInterval.
+  tf_overrides:
+    "1/1":
+      tp1_trigger_pct: 5.0
+      # Optional: tp1_percentage: 0.0
+    "5/5":
+      tp1_trigger_pct: 5.0
+    "30/30":
+      tp1_trigger_pct: 7.5
   spread_risk_multiplier: 1.0
   order_retry_count: 2
   order_retry_delay_sec: 0.5

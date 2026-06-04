@@ -9,15 +9,75 @@ Usage:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
 
 from src.utils.symbol import normalise_symbol
+
+
+def _validate_pct_range(name: str, value: float) -> None:
+    if value <= 0.0 or value >= 100.0:
+        raise ValueError(f"{name} must be > 0 and < 100.")
+
+
+def _validate_pct_inclusive(name: str, value: float) -> None:
+    if value < 0.0 or value > 100.0:
+        raise ValueError(f"{name} must be between 0 and 100.")
+
+
+def _parse_tf_overrides(raw: Any) -> Dict[str, Dict[str, Any]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("execution.tf_overrides must be a mapping.")
+
+    parsed: Dict[str, Dict[str, Any]] = {}
+    for pair, values in raw.items():
+        if not isinstance(values, dict):
+            raise ValueError(f"execution.tf_overrides.{pair} must be a mapping.")
+        override: Dict[str, Any] = {}
+        if "tp1_trigger_pct" in values:
+            override["tp1_trigger_pct"] = float(values["tp1_trigger_pct"])
+        if "tp1_percentage" in values:
+            override["tp1_percentage"] = float(values["tp1_percentage"])
+        if "tp1_close_pct" in values:
+            override["tp1_percentage"] = float(values["tp1_close_pct"])
+        parsed[str(pair)] = override
+    return parsed
+
+
+def _tf_pair_key(htf_interval: str | None, ltf_interval: str | None) -> str | None:
+    if not htf_interval or not ltf_interval:
+        return None
+    return f"{_interval_to_minutes(htf_interval)}/{_interval_to_minutes(ltf_interval)}"
+
+
+def _interval_to_minutes(interval: str) -> int:
+    value = interval.strip().lower()
+    units = (
+        ("minutes", 1),
+        ("minute", 1),
+        ("mins", 1),
+        ("min", 1),
+        ("m", 1),
+        ("hours", 60),
+        ("hour", 60),
+        ("hrs", 60),
+        ("hr", 60),
+        ("h", 60),
+        ("days", 1440),
+        ("day", 1440),
+        ("d", 1440),
+    )
+    for suffix, multiplier in units:
+        if value.endswith(suffix):
+            return int(value[: -len(suffix)]) * multiplier
+    return int(value)
 
 
 @dataclass(frozen=True)
@@ -57,6 +117,50 @@ class ExecutionConfig:
     order_retry_delay_sec: float
     adjust_levels_on_slippage: bool = False
     max_signal_age_ms: int = 90_000
+    tf_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_pct_range("execution.tp1_trigger_pct", self.tp1_trigger_pct)
+        _validate_pct_inclusive("execution.tp1_percentage", self.tp1_percentage)
+        for key, override in self.tf_overrides.items():
+            if "tp1_trigger_pct" in override:
+                _validate_pct_range(
+                    f"execution.tf_overrides.{key}.tp1_trigger_pct",
+                    float(override["tp1_trigger_pct"]),
+                )
+            if "tp1_percentage" in override:
+                _validate_pct_inclusive(
+                    f"execution.tf_overrides.{key}.tp1_percentage",
+                    float(override["tp1_percentage"]),
+                )
+            if "tp1_close_pct" in override:
+                _validate_pct_inclusive(
+                    f"execution.tf_overrides.{key}.tp1_close_pct",
+                    float(override["tp1_close_pct"]),
+                )
+
+    def tp1_trigger_pct_for(
+        self, htf_interval: str | None, ltf_interval: str | None
+    ) -> float:
+        key = _tf_pair_key(htf_interval, ltf_interval)
+        if key is None:
+            return self.tp1_trigger_pct
+        override = self.tf_overrides.get(key, {})
+        return float(override.get("tp1_trigger_pct", self.tp1_trigger_pct))
+
+    def tp1_percentage_for(
+        self, htf_interval: str | None, ltf_interval: str | None
+    ) -> float:
+        key = _tf_pair_key(htf_interval, ltf_interval)
+        if key is None:
+            return self.tp1_percentage
+        override = self.tf_overrides.get(key, {})
+        return float(
+            override.get(
+                "tp1_percentage",
+                override.get("tp1_close_pct", self.tp1_percentage),
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -153,6 +257,7 @@ class AppConfig:
                 order_retry_delay_sec=float(exe.get("order_retry_delay_sec", 0.5)),
                 adjust_levels_on_slippage=bool(exe.get("adjust_levels_on_slippage", False)),
                 max_signal_age_ms=int(exe.get("max_signal_age_ms", 90_000)),
+                tf_overrides=_parse_tf_overrides(exe.get("tf_overrides")),
             ),
             storage_path=str(eng.get("storage_path", "./data")),
             log_level=str(eng.get("log_level", "INFO")),
