@@ -38,20 +38,20 @@ def test_valid_breakeven_sl_allows_buy_when_entry_outside_stop_distance() -> Non
     assert _valid_breakeven_sl(trade, symbol, tick) == 100.0
 
 
-def test_valid_breakeven_sl_adds_profit_buffer_for_buy() -> None:
+def test_valid_breakeven_sl_adds_spread_buffer_for_buy() -> None:
     trade = _trade(OrderSide.BUY, entry=100.0, stop=95.0)
     symbol = SimpleNamespace(stops_level=10, freeze_level=0, point=0.01, digits=2)
-    tick = SimpleNamespace(bid=101.0, ask=101.05)
+    tick = SimpleNamespace(bid=101.0, ask=101.10)
 
-    assert _valid_breakeven_sl(trade, symbol, tick, 5.0) == 100.25
+    assert _valid_breakeven_sl(trade, symbol, tick, 1.5, 10.0) == 100.15
 
 
 def test_valid_breakeven_sl_defers_buffered_buy_inside_stop_distance() -> None:
     trade = _trade(OrderSide.BUY, entry=100.0, stop=95.0)
     symbol = SimpleNamespace(stops_level=50, freeze_level=0, point=0.01, digits=2)
-    tick = SimpleNamespace(bid=100.70, ask=100.75)
+    tick = SimpleNamespace(bid=100.50, ask=100.55)
 
-    assert _valid_breakeven_sl(trade, symbol, tick, 5.0) is None
+    assert _valid_breakeven_sl(trade, symbol, tick, 1.5, 10.0) is None
 
 
 def test_valid_breakeven_sl_defers_sell_when_entry_inside_stop_distance() -> None:
@@ -70,12 +70,28 @@ def test_valid_breakeven_sl_allows_sell_when_entry_outside_stop_distance() -> No
     assert _valid_breakeven_sl(trade, symbol, tick) == 100.0
 
 
-def test_valid_breakeven_sl_adds_profit_buffer_for_sell() -> None:
+def test_valid_breakeven_sl_adds_spread_buffer_for_sell() -> None:
     trade = _trade(OrderSide.SELL, entry=100.0, stop=105.0)
     symbol = SimpleNamespace(stops_level=10, freeze_level=0, point=0.01, digits=2)
-    tick = SimpleNamespace(bid=98.95, ask=99.0)
+    tick = SimpleNamespace(bid=98.90, ask=99.0)
 
-    assert _valid_breakeven_sl(trade, symbol, tick, 5.0) == 99.75
+    assert _valid_breakeven_sl(trade, symbol, tick, 1.5, 10.0) == 99.85
+
+
+def test_valid_breakeven_sl_cap_never_reduces_buffer_below_spread() -> None:
+    trade = _trade(OrderSide.BUY, entry=100.0, stop=95.0)
+    symbol = SimpleNamespace(stops_level=10, freeze_level=0, point=0.01, digits=2)
+    tick = SimpleNamespace(bid=102.0, ask=103.0)
+
+    assert _valid_breakeven_sl(trade, symbol, tick, 2.0, 10.0) == 101.0
+
+
+def test_valid_breakeven_sl_zero_multiplier_uses_entry() -> None:
+    trade = _trade(OrderSide.BUY, entry=100.0, stop=95.0)
+    symbol = SimpleNamespace(stops_level=10, freeze_level=0, point=0.01, digits=2)
+    tick = SimpleNamespace(bid=101.0, ask=101.10)
+
+    assert _valid_breakeven_sl(trade, symbol, tick, 0.0, 10.0) == 100.0
 
 
 def _trade(side: OrderSide, entry: float, stop: float) -> Trade:

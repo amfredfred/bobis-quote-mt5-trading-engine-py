@@ -324,7 +324,8 @@ class PositionManager:
                     trade,
                     symbol_info,
                     tick,
-                    self._cfg.breakeven_buffer_pct_of_risk,
+                    self._cfg.breakeven_spread_multiplier,
+                    self._cfg.breakeven_max_buffer_pct_of_risk,
                 )
                 if be_sl is None:
                     if not partial_closed:
@@ -335,7 +336,8 @@ class PositionManager:
                                 "ticket": trade.entry_ticket,
                                 "symbol": trade.symbol,
                                 "entry_price": trade.entry_price,
-                                "breakeven_buffer_pct_of_risk": self._cfg.breakeven_buffer_pct_of_risk,
+                                "breakeven_spread_multiplier": self._cfg.breakeven_spread_multiplier,
+                                "breakeven_max_buffer_pct_of_risk": self._cfg.breakeven_max_buffer_pct_of_risk,
                                 "bid": getattr(tick, "bid", None),
                                 "ask": getattr(tick, "ask", None),
                                 "stops_level": symbol_info.stops_level,
@@ -360,7 +362,8 @@ class PositionManager:
                         "trade_id": trade.id,
                         "ticket": trade.entry_ticket,
                         "be_price": be_sl,
-                        "breakeven_buffer_pct_of_risk": self._cfg.breakeven_buffer_pct_of_risk,
+                        "breakeven_spread_multiplier": self._cfg.breakeven_spread_multiplier,
+                        "breakeven_max_buffer_pct_of_risk": self._cfg.breakeven_max_buffer_pct_of_risk,
                     },
                 )
             except Exception:
@@ -541,7 +544,8 @@ def _valid_breakeven_sl(
     trade: Trade,
     symbol_info,
     tick,
-    buffer_pct_of_risk: float = 0.0,
+    spread_multiplier: float = 0.0,
+    max_buffer_pct_of_risk: float = 100.0,
 ) -> float | None:
     """Return a buffered breakeven SL when MT5 stop/freeze distance allows it."""
     if trade.entry_price is None:
@@ -550,7 +554,15 @@ def _valid_breakeven_sl(
     entry = float(trade.entry_price)
     original_stop = float(getattr(trade.plan, "stop_loss", trade.stop_loss))
     initial_risk = abs(entry - original_stop)
-    buffer = initial_risk * max(float(buffer_pct_of_risk), 0.0) / 100.0
+    bid = float(getattr(tick, "bid", 0.0) or 0.0)
+    ask = float(getattr(tick, "ask", 0.0) or 0.0)
+    spread = max(ask - bid, 0.0)
+    multiplier = max(float(spread_multiplier), 0.0)
+    spread_buffer = spread * multiplier
+    risk_cap = initial_risk * max(float(max_buffer_pct_of_risk), 0.0) / 100.0
+    # Once enabled, never let the risk cap reduce protected breakeven below
+    # one spread; otherwise a "breakeven" stop still realizes a net loss.
+    buffer = 0.0 if multiplier == 0.0 else max(spread, min(spread_buffer, risk_cap))
     min_points = max(
         int(getattr(symbol_info, "stops_level", 0) or 0),
         int(getattr(symbol_info, "freeze_level", 0) or 0),
@@ -562,7 +574,6 @@ def _valid_breakeven_sl(
 
     if trade.side.value == "BUY":
         protected_sl = entry + buffer
-        bid = float(getattr(tick, "bid", 0.0) or 0.0)
         if bid <= 0.0:
             return None
         if protected_sl <= bid - min_distance:
@@ -570,7 +581,6 @@ def _valid_breakeven_sl(
         return None
 
     protected_sl = entry - buffer
-    ask = float(getattr(tick, "ask", 0.0) or 0.0)
     if ask <= 0.0:
         return None
     if protected_sl >= ask + min_distance:

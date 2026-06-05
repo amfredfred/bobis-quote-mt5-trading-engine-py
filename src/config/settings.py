@@ -115,7 +115,8 @@ class ExecutionConfig:
     max_entry_slippage_pct_of_stop: float
     close_on_slippage_exceed: bool
     order_retry_delay_sec: float
-    breakeven_buffer_pct_of_risk: float = 5.0
+    breakeven_spread_multiplier: float = 1.5
+    breakeven_max_buffer_pct_of_risk: float = 10.0
     adjust_levels_on_slippage: bool = False
     max_signal_age_ms: int = 90_000
     tf_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -123,9 +124,16 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         _validate_pct_range("execution.tp1_trigger_pct", self.tp1_trigger_pct)
         _validate_pct_inclusive("execution.tp1_percentage", self.tp1_percentage)
+        if (
+            self.breakeven_spread_multiplier < 0.0
+            or 0.0 < self.breakeven_spread_multiplier < 1.0
+        ):
+            raise ValueError(
+                "execution.breakeven_spread_multiplier must be 0 or >= 1."
+            )
         _validate_pct_inclusive(
-            "execution.breakeven_buffer_pct_of_risk",
-            self.breakeven_buffer_pct_of_risk,
+            "execution.breakeven_max_buffer_pct_of_risk",
+            self.breakeven_max_buffer_pct_of_risk,
         )
         for key, override in self.tf_overrides.items():
             if "tp1_trigger_pct" in override:
@@ -260,8 +268,11 @@ class AppConfig:
                 max_entry_slippage_pct_of_stop=float(exe.get("max_entry_slippage_pct_of_stop", 0.20)),
                 close_on_slippage_exceed=bool(exe.get("close_on_slippage_exceed", False)),
                 order_retry_delay_sec=float(exe.get("order_retry_delay_sec", 0.5)),
-                breakeven_buffer_pct_of_risk=float(
-                    exe.get("breakeven_buffer_pct_of_risk", 5.0)
+                breakeven_spread_multiplier=float(
+                    exe.get("breakeven_spread_multiplier", 1.5)
+                ),
+                breakeven_max_buffer_pct_of_risk=float(
+                    exe.get("breakeven_max_buffer_pct_of_risk", 10.0)
                 ),
                 adjust_levels_on_slippage=bool(exe.get("adjust_levels_on_slippage", False)),
                 max_signal_age_ms=int(exe.get("max_signal_age_ms", 90_000)),
