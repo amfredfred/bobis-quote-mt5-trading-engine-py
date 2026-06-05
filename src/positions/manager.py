@@ -320,7 +320,12 @@ class PositionManager:
                 if tick is None:
                     raise RuntimeError(f"Cannot get tick for {trade.symbol}")
 
-                be_sl = _valid_breakeven_sl(trade, symbol_info, tick)
+                be_sl = _valid_breakeven_sl(
+                    trade,
+                    symbol_info,
+                    tick,
+                    self._cfg.breakeven_buffer_pct_of_risk,
+                )
                 if be_sl is None:
                     if not partial_closed:
                         logger.warning(
@@ -330,6 +335,7 @@ class PositionManager:
                                 "ticket": trade.entry_ticket,
                                 "symbol": trade.symbol,
                                 "entry_price": trade.entry_price,
+                                "breakeven_buffer_pct_of_risk": self._cfg.breakeven_buffer_pct_of_risk,
                                 "bid": getattr(tick, "bid", None),
                                 "ask": getattr(tick, "ask", None),
                                 "stops_level": symbol_info.stops_level,
@@ -354,6 +360,7 @@ class PositionManager:
                         "trade_id": trade.id,
                         "ticket": trade.entry_ticket,
                         "be_price": be_sl,
+                        "breakeven_buffer_pct_of_risk": self._cfg.breakeven_buffer_pct_of_risk,
                     },
                 )
             except Exception:
@@ -363,7 +370,7 @@ class PositionManager:
                 )
 
         # ── Step 3: Update in-memory store and persist ────────────────────
-        new_sl = trade.entry_price if be_ok else trade.stop_loss
+        new_sl = be_sl if be_ok else trade.stop_loss
         new_current_lots = (
             round(trade.current_lots - trade.tp1_lots, 2)
             if partial_closed
@@ -530,12 +537,20 @@ def calculate_realized_rr(trade: Trade, close_price: float) -> float:
     return reward / risk
 
 
-def _valid_breakeven_sl(trade: Trade, symbol_info, tick) -> float | None:
-    """Return entry as SL only when MT5 stop/freeze distance allows it."""
+def _valid_breakeven_sl(
+    trade: Trade,
+    symbol_info,
+    tick,
+    buffer_pct_of_risk: float = 0.0,
+) -> float | None:
+    """Return a buffered breakeven SL when MT5 stop/freeze distance allows it."""
     if trade.entry_price is None:
         return None
 
     entry = float(trade.entry_price)
+    original_stop = float(getattr(trade.plan, "stop_loss", trade.stop_loss))
+    initial_risk = abs(entry - original_stop)
+    buffer = initial_risk * max(float(buffer_pct_of_risk), 0.0) / 100.0
     min_points = max(
         int(getattr(symbol_info, "stops_level", 0) or 0),
         int(getattr(symbol_info, "freeze_level", 0) or 0),
@@ -546,18 +561,20 @@ def _valid_breakeven_sl(trade: Trade, symbol_info, tick) -> float | None:
     digits = int(getattr(symbol_info, "digits", 5) or 5)
 
     if trade.side.value == "BUY":
+        protected_sl = entry + buffer
         bid = float(getattr(tick, "bid", 0.0) or 0.0)
         if bid <= 0.0:
             return None
-        if entry <= bid - min_distance:
-            return round(entry, digits)
+        if protected_sl <= bid - min_distance:
+            return round(protected_sl, digits)
         return None
 
+    protected_sl = entry - buffer
     ask = float(getattr(tick, "ask", 0.0) or 0.0)
     if ask <= 0.0:
         return None
-    if entry >= ask + min_distance:
-        return round(entry, digits)
+    if protected_sl >= ask + min_distance:
+        return round(protected_sl, digits)
     return None
 
 

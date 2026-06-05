@@ -40,6 +40,8 @@ execution:
   tp1_trigger_pct: 50.0
   tp1_percentage: 0.0
   move_sl_to_be_on_tp1: true
+  # Move SL beyond entry by this percentage of the initial risk (5.0 = +0.05R).
+  breakeven_buffer_pct_of_risk: 5.0
   # Per-pair overrides use "HTF_minutes/LTF_minutes" from signal htfInterval/ltfInterval.
   tf_overrides:
     "5/5":
