@@ -438,11 +438,60 @@ class UIBridge:
         return {
             "connected":  connected_mt5,
             "engine":     self._build_engine_info(lt),
+            "config":     self._build_config_snapshot(config),
             "trades":     [_serialize_trade(t) for t in trades],
             "riskGuards": self._build_risk_guards(lt, config),
             "metrics":    self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
             "signals":    [],
             "logs":       list(self._log_buf)[-50:],
+        }
+
+    @staticmethod
+    def _build_config_snapshot(config: Any) -> dict:
+        return {
+            "mode": "LIVE",
+            "symbols": list(config.signal.symbols),
+            "signal_ws_url": config.signal.ws_url,
+            "risk": {
+                "max_losing_streak": config.risk.max_losing_streak,
+                "max_daily_loss_percent": config.risk.max_daily_loss_percent,
+                "max_exposure_per_symbol": config.risk.max_exposure_per_symbol,
+                "min_rr_ratio": config.risk.min_rr_ratio,
+                "max_lot_size": config.risk.max_lot_size,
+                "min_lot_size": config.risk.min_lot_size,
+                "sl_ratio_threshold": config.risk.sl_ratio_threshold,
+                "symbol_sl_ratio_threshold": dict(config.risk.symbol_sl_ratio_threshold),
+                "no_hedging": config.risk.no_hedging,
+                "max_equity_drawdown_percent": config.risk.max_equity_drawdown_percent,
+                "rolling_window_size": config.risk.rolling_window_size,
+                "rolling_drawdown_pct": config.risk.rolling_drawdown_pct,
+            },
+            "execution": {
+                "tp1_trigger_pct": config.execution.tp1_trigger_pct,
+                "tp1_percentage": config.execution.tp1_percentage,
+                "move_sl_to_be_on_tp1": config.execution.move_sl_to_be_on_tp1,
+                "breakeven_spread_multiplier": config.execution.breakeven_spread_multiplier,
+                "breakeven_max_buffer_pct_of_risk": config.execution.breakeven_max_buffer_pct_of_risk,
+                "tf_overrides": dict(config.execution.tf_overrides),
+                "spread_risk_multiplier": config.execution.spread_risk_multiplier,
+                "max_entry_slippage_pct_of_stop": config.execution.max_entry_slippage_pct_of_stop,
+                "max_signal_age_ms": config.execution.max_signal_age_ms,
+                "close_on_slippage_exceed": config.execution.close_on_slippage_exceed,
+                "adjust_levels_on_slippage": config.execution.adjust_levels_on_slippage,
+                "order_retry_count": config.execution.order_retry_count,
+                "order_retry_delay_sec": config.execution.order_retry_delay_sec,
+            },
+            "mt5": {
+                "login": config.mt5.login,
+                "server": config.mt5.server,
+                "magic": config.execution.magic,
+                "slippage": config.execution.slippage,
+            },
+            "engine": {
+                "timezone": str(config.engine_timezone),
+                "position_poll_interval": config.position_poll_interval,
+                "monitoring_port": config.monitoring_port,
+            },
         }
 
     def _account_snapshot(self) -> dict | None:
