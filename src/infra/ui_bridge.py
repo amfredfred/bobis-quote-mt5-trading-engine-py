@@ -194,6 +194,7 @@ class UIBridge:
         self._clients:    set[Any]                         = set()
 
         self._log_buf: collections.deque[dict] = collections.deque(maxlen=200)
+        self._signal_buf: collections.deque[dict] = collections.deque(maxlen=100)
         self._log_handler = _LogHandler(self._log_buf)
         self._account_cache: dict | None = None
         self._account_cache_at: float = 0.0
@@ -221,6 +222,9 @@ class UIBridge:
     # ── Thread-safe enqueue (called from engine threads) ──────────────────
 
     def record_event(self, event_name: str, payload: Any) -> None:
+        signal = _build_signal_event(event_name, payload)
+        if signal:
+            self._signal_buf.appendleft(signal)
         if self._loop and self._queue:
             try:
                 self._loop.call_soon_threadsafe(
@@ -442,7 +446,7 @@ class UIBridge:
             "trades":     [_serialize_trade(t) for t in trades],
             "riskGuards": self._build_risk_guards(lt, config),
             "metrics":    self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
-            "signals":    [],
+            "signals":    list(self._signal_buf),
             "logs":       list(self._log_buf)[-50:],
         }
 
@@ -631,7 +635,11 @@ class UIBridge:
             "orders_margin_reduced": counters.get("orders.margin_reduced", 0),
             "orders_slippage_rejected": counters.get("orders.slippage_rejected", 0),
             "orders_emergency_closes": counters.get("orders.emergency_closes", 0),
-            "signals_received":   counters.get("signal.received", 0),
+            "signals_received":   sum(
+                value
+                for key, value in counters.items()
+                if key == "signal.received" or key.startswith("signal.received.")
+            ),
             "signals_triggered":  counters.get("signal.triggered", 0),
             "signals_validation_failures": counters.get("signal.validation_failures", 0),
             "signals_parse_errors": counters.get("signal.parse_errors", 0),
