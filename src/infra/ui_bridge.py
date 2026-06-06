@@ -446,6 +446,12 @@ class UIBridge:
             "logs":       list(self._log_buf)[-50:],
         }
 
+    def build_remote_snapshot(self) -> dict:
+        snapshot = self._build_snapshot()
+        snapshot.pop("config", None)
+        snapshot.pop("logs", None)
+        return snapshot
+
     @staticmethod
     def _build_config_snapshot(config: Any) -> dict:
         return {

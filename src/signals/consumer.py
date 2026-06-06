@@ -12,7 +12,7 @@ import queue
 import socket
 import threading
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 from src.core.events import Events
@@ -73,6 +73,9 @@ class SignalConsumer:
         self._lifecycle_thread: threading.Thread | None = None
         self._lifecycle_queue: queue.Queue[tuple[str, dict]] = queue.Queue(maxsize=1000)
         self._heartbeat_sequence = 0
+        self._metrics_subscribed = threading.Event()
+        self._snapshot_provider: Callable[[], dict] | None = None
+        self._metrics_thread: threading.Thread | None = None
         self._hello_message_id: str | None = None
         self._activation_message_id: str | None = None
         self._ws = WebSocketClient(
@@ -105,11 +108,20 @@ class SignalConsumer:
             daemon=True,
         )
         self._lifecycle_thread.start()
+        self._metrics_thread = threading.Thread(
+            target=self._send_metrics_snapshots,
+            name="gateway-metrics-reporter",
+            daemon=True,
+        )
+        self._metrics_thread.start()
         self._ws.start()
 
     def stop(self) -> None:
         self._stopped.set()
         self._ws.stop()
+
+    def set_snapshot_provider(self, provider: Callable[[], dict]) -> None:
+        self._snapshot_provider = provider
 
     # ── Private ───────────────────────────────────────────────────────────
 
@@ -160,6 +172,7 @@ class SignalConsumer:
 
     def _on_disconnected(self) -> None:
         self._activated.clear()
+        self._metrics_subscribed.clear()
         logger.warning("TradeRelay Gateway disconnected")
 
     def _refresh_rooms(self) -> None:
@@ -172,6 +185,15 @@ class SignalConsumer:
         while not self._stopped.wait(30.0):
             if self._activated.is_set():
                 self._heartbeat()
+
+    def _send_metrics_snapshots(self) -> None:
+        while not self._stopped.wait(1.5):
+            if (
+                self._activated.is_set()
+                and self._metrics_subscribed.is_set()
+                and self._snapshot_provider
+            ):
+                self._send("execution.metrics.snapshot", self._snapshot_provider())
 
     def _heartbeat(self) -> None:
         self._heartbeat_sequence += 1
@@ -347,7 +369,22 @@ class SignalConsumer:
                 )
             return True
 
-        return event in {"protocol.accepted", "activation.accepted"}
+        if event == "execution.metrics.subscribe":
+            self._metrics_subscribed.set()
+            if self._snapshot_provider:
+                self._send("execution.metrics.snapshot", self._snapshot_provider())
+            return True
+
+        if event == "execution.metrics.unsubscribe":
+            self._metrics_subscribed.clear()
+            return True
+
+        return event in {
+            "protocol.accepted",
+            "activation.accepted",
+            "execution.metrics.subscribe",
+            "execution.metrics.unsubscribe",
+        }
 
     def _process(self, event: str, payload: dict) -> None:
         try:

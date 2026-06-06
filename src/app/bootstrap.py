@@ -109,6 +109,9 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     # UI bridge — WebSocket server for the dashboard
     from src.infra.ui_bridge import UIBridge
     container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
+    container.signal_consumer.set_snapshot_provider(
+        container.ui_bridge.build_remote_snapshot
+    )
 
     # Start all services
     container.ui_bridge.start()
