@@ -240,7 +240,6 @@ See [Risk Rules Documentation](docs/risk_rules.md) for configuration and tuning.
 | `MT5_LOGIN` | MT5 account login | Yes |
 | `MT5_PASSWORD` | MT5 account password | Yes |
 | `MT5_SERVER` | MT5 server address | Yes |
-| `WS_SECRET` | WebSocket authentication secret | No |
 | `LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | No |
 
 ### Risk Configuration

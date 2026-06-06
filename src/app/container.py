@@ -108,9 +108,13 @@ def build_container(config: AppConfig) -> AppContainer:
     signal_consumer = SignalConsumer(
         event_bus=event_bus,
         validator=validator,
-        ws_url=config.signal.ws_url,
-        ws_secret_key=config.signal.ws_secret_key,
-        symbols=config.signal.symbols,
+        ws_url=config.gateway.ws_url,
+        activation_key=config.gateway.activation_key,
+        symbols=config.gateway.symbols,
+        engine_id=config.gateway.engine_id,
+        engine_version=config.gateway.engine_version,
+        room_ttl_seconds=config.gateway.room_ttl_seconds,
+        account_login=str(config.mt5.login),
     )
 
     # ── Strategies ────────────────────────────────────────────────────────

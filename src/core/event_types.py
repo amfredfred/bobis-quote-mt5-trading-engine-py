@@ -31,6 +31,7 @@ SIGNAL_RECEIVED = "signal.received"
 SIGNAL_VALIDATED = "signal.validated"
 SIGNAL_REJECTED = "signal.rejected"
 SIGNAL_TRIGGERED = "signal.triggered"
+EXECUTION_ATTEMPTED = "execution.attempted"
 
 # Risk
 RISK_APPROVED = "risk.approved"
@@ -68,6 +69,7 @@ EventName = Literal[
     "signal.validated",
     "signal.rejected",
     "signal.triggered",
+    "execution.attempted",
     "risk.approved",
     "risk.rejected",
     "trade.planned",
@@ -147,6 +149,7 @@ class Events:
     SIGNAL_VALIDATED: EventName = "signal.validated"
     SIGNAL_REJECTED: EventName = "signal.rejected"
     SIGNAL_TRIGGERED: EventName = "signal.triggered"
+    EXECUTION_ATTEMPTED: EventName = "execution.attempted"
 
     # Risk
     RISK_APPROVED: EventName = "risk.approved"
@@ -194,6 +197,7 @@ EventPayloadMap = {
     SIGNAL_RECEIVED: SignalReceivedPayload,
     SIGNAL_REJECTED: SignalRejectedPayload,
     SIGNAL_TRIGGERED: InboundSignal,
+    EXECUTION_ATTEMPTED: InboundSignal,
     RISK_APPROVED: RiskApprovedPayload,
     RISK_REJECTED: RiskRejectedPayload,
     TRADE_PLANNED: TradePlannedPayload,

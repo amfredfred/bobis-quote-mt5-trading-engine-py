@@ -1,16 +1,18 @@
-# Execution Engine — configuration
+﻿# Execution Engine â€” configuration
 # Copy to config.yaml and fill in your values. config.yaml is git-ignored.
-# Secrets (MT5_PASSWORD, WS_SECRET_KEY) go in .env — never in this file.
+# Secrets (MT5_PASSWORD, TRADERELAY_ACTIVATION_KEY) go in .env.
 
-signal:
-  ws_url: ws://localhost:8765
-  # ws_secret_key → set WS_SECRET_KEY in .env
+gateway:
+  ws_url: ws://localhost:4000/engine
+  engine_id: execution-demo-001
+  engine_version: 0.1.0
+  room_ttl_seconds: 3600
   symbols:
     - XAUUSD
 
 mt5:
   login: 106189638
-  # password → set MT5_PASSWORD in .env
+  # password â†’ set MT5_PASSWORD in .env
   server: FBS-Demo
   path: C:\Program Files\FBS MetaTrader 5\terminal64.exe
   magic: 8858
@@ -36,7 +38,7 @@ risk:
   rolling_drawdown_pct: 2.0
 
 execution:
-  # TP1 fires when price reaches this % of entry→TP2 range
+  # TP1 fires when price reaches this % of entryâ†’TP2 range
   tp1_trigger_pct: 50.0
   tp1_percentage: 0.0
   move_sl_to_be_on_tp1: true

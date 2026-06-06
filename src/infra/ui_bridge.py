@@ -450,8 +450,8 @@ class UIBridge:
     def _build_config_snapshot(config: Any) -> dict:
         return {
             "mode": "LIVE",
-            "symbols": list(config.signal.symbols),
-            "signal_ws_url": config.signal.ws_url,
+            "symbols": list(config.gateway.symbols),
+            "signal_ws_url": config.gateway.ws_url,
             "risk": {
                 "max_losing_streak": config.risk.max_losing_streak,
                 "max_daily_loss_percent": config.risk.max_daily_loss_percent,
@@ -596,8 +596,8 @@ class UIBridge:
         result = {
             "raw_counters":       counters,
             "raw_gauges":         gauges,
-            "configured_symbols":  list(config.signal.symbols),
-            "active_symbol":       config.signal.symbols[0] if config.signal.symbols else None,
+            "configured_symbols":  list(config.gateway.symbols),
+            "active_symbol":       config.gateway.symbols[0] if config.gateway.symbols else None,
             "start_balance":      start_eq,
             "current_balance":    account["balance"] if account else current_equity,
             "equity":             current_equity,

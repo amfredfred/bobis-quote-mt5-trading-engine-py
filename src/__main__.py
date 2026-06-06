@@ -75,8 +75,9 @@ def main() -> None:
         extra={
             "pid": os.getpid(),
             "python": sys.executable,
-            "symbols": cfg.signal.symbols,
-            "signal_ws": cfg.signal.ws_url,
+            "symbols": cfg.gateway.symbols,
+            "gateway_ws": cfg.gateway.ws_url,
+            "engine_id": cfg.gateway.engine_id,
             "mt5_login": cfg.mt5.login,
             "mt5_server": cfg.mt5.server,
             "mt5_path": cfg.mt5.path,
@@ -132,7 +133,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
 
 

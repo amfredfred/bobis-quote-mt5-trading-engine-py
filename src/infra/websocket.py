@@ -10,9 +10,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from typing import TYPE_CHECKING
 
 import websocket  # websocket-client
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +24,9 @@ class WebSocketClient:
     def __init__(
         self,
         url: str,
-        secret_key: str,
         on_message: Callable[[str], None],
-        on_connected: Optional[Callable[[], None]] = None,
-        on_disconnected: Optional[Callable[[], None]] = None,
+        on_connected: Callable[[], None] | None = None,
+        on_disconnected: Callable[[], None] | None = None,
         reconnect_delay: float = 2.0,
         max_reconnect_delay: float = 30.0,
         ping_interval: float = 20.0,
@@ -36,11 +38,10 @@ class WebSocketClient:
         self._reconnect_delay   = reconnect_delay
         self._max_reconnect     = max_reconnect_delay
         self._ping_interval     = ping_interval
-        self._secret_key        = secret_key
 
-        self._ws:      Optional[websocket.WebSocketApp] = None
+        self._ws:      websocket.WebSocketApp | None = None
         self._stopped  = threading.Event()
-        self._thread:  Optional[threading.Thread] = None
+        self._thread:  threading.Thread | None = None
         self._current_delay = reconnect_delay
 
     # ── Public API ────────────────────────────────────────────────────────
@@ -72,7 +73,6 @@ class WebSocketClient:
         while not self._stopped.is_set():
             self._ws = websocket.WebSocketApp(
                 self._url,
-                header={"sec-websocket-protocol": f"{self._secret_key}"},
                 on_open=self._handle_open,
                 on_message=self._handle_message,
                 on_error=self._handle_error,
@@ -108,8 +108,8 @@ class WebSocketClient:
     def _handle_close(
         self,
         ws: websocket.WebSocketApp,
-        close_status_code: Optional[int],
-        close_msg: Optional[str],
+        close_status_code: int | None,
+        close_msg: str | None,
     ) -> None:
         logger.warning(
             "WebSocketClient closed: code=%s msg=%s", close_status_code, close_msg

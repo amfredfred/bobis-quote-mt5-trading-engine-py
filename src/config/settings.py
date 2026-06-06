@@ -185,10 +185,23 @@ class Mt5Config:
 
 
 @dataclass(frozen=True)
-class SignalConfig:
+class GatewayConfig:
     ws_url: str
-    ws_secret_key: str
-    symbols: List[str]
+    activation_key: str
+    engine_id: str
+    engine_version: str
+    symbols: list[str]
+    room_ttl_seconds: int
+
+    def __post_init__(self) -> None:
+        if len(self.engine_id) < 8:
+            raise ValueError("gateway.engine_id must be at least 8 characters.")
+        if len(self.activation_key) < 16:
+            raise ValueError("TRADERELAY_ACTIVATION_KEY must be at least 16 characters.")
+        if self.room_ttl_seconds < 30 or self.room_ttl_seconds > 86400:
+            raise ValueError("gateway.room_ttl_seconds must be between 30 and 86400.")
+        if not self.symbols:
+            raise ValueError("gateway.symbols must contain at least one symbol.")
 
 
 @dataclass(frozen=True)
@@ -196,7 +209,7 @@ class AppConfig:
     risk: RiskConfig
     execution: ExecutionConfig
     mt5: Mt5Config
-    signal: SignalConfig
+    gateway: GatewayConfig
     storage_path: str
     log_level: str
     position_poll_interval: float
@@ -211,25 +224,30 @@ class AppConfig:
         with open(path, "r", encoding="utf-8") as fh:
             raw: dict = yaml.safe_load(fh)
 
-        sig = raw.get("signal", {})
+        gateway = raw.get("gateway", {})
         mt5 = raw.get("mt5", {})
         risk = raw.get("risk", {})
         exe = raw.get("execution", {})
         eng = raw.get("engine", {})
 
-        symbols_raw = sig.get("symbols", [])
-        if isinstance(symbols_raw, str):
-            symbols_raw = [s.strip() for s in symbols_raw.split(",")]
+        gateway_symbols_raw = gateway.get("symbols", [])
+        if isinstance(gateway_symbols_raw, str):
+            gateway_symbols_raw = [s.strip() for s in gateway_symbols_raw.split(",")]
 
         # Secrets are sourced from .env only
         mt5_password = os.environ.get("MT5_PASSWORD", "")
-        ws_secret = os.environ.get("WS_SECRET_KEY", "")
+        activation_key = os.environ.get("TRADERELAY_ACTIVATION_KEY", "")
 
         return cls(
-            signal=SignalConfig(
-                ws_url=sig["ws_url"],
-                ws_secret_key=ws_secret,
-                symbols=[normalise_symbol(s) for s in symbols_raw],
+            gateway=GatewayConfig(
+                ws_url=str(gateway["ws_url"]),
+                activation_key=activation_key,
+                engine_id=str(gateway.get("engine_id", f"execution-{mt5['login']}")),
+                engine_version=str(gateway.get("engine_version", "0.1.0")),
+                symbols=[
+                    normalise_symbol(str(symbol)) for symbol in gateway_symbols_raw
+                ],
+                room_ttl_seconds=int(gateway.get("room_ttl_seconds", 3600)),
             ),
             mt5=Mt5Config(
                 login=int(mt5["login"]),

@@ -225,6 +225,7 @@ class ExecutionEngine:
             self._reserve(signal.resolved_symbol, signal.id)
 
         self._bus.emit(Events.RISK_APPROVED, {"signal": signal})
+        self._bus.emit(Events.EXECUTION_ATTEMPTED, signal)
 
         # ── 3. Plan trade ──────────────────────────────────────────────────
         try:

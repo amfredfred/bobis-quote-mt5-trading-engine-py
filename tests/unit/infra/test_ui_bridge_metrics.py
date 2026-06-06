@@ -10,14 +10,14 @@ class _Queue:
 
 
 class _Repo:
-    def __init__(self, trades=None) -> None:
+    def __init__(self, trades: list | None = None) -> None:
         self._trades = trades or []
 
     def load_all(self) -> list:
         return self._trades
 
 
-def _bridge(trades=None) -> UIBridge:
+def _bridge(trades: list | None = None) -> UIBridge:
     bridge = UIBridge.__new__(UIBridge)
     bridge._container = SimpleNamespace(signal_queue=_Queue(), trade_repo=_Repo(trades))
     return bridge
@@ -25,7 +25,7 @@ def _bridge(trades=None) -> UIBridge:
 
 def _config() -> SimpleNamespace:
     return SimpleNamespace(
-        signal=SimpleNamespace(symbols=["XAUUSD"]),
+        gateway=SimpleNamespace(symbols=["XAUUSD"]),
         risk=SimpleNamespace(
             max_losing_streak=3,
             max_daily_loss_percent=2.0,

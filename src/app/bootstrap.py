@@ -103,6 +103,9 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 
     container.event_bus.on_any(on_any_event)
 
+    # Report customer-visible execution lifecycle transitions off the trading path.
+    container.event_bus.on_any(container.signal_consumer.report_event)
+
     # UI bridge — WebSocket server for the dashboard
     from src.infra.ui_bridge import UIBridge
     container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
@@ -117,8 +120,8 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     logger.info(
         "Execution Engine started",
         extra={
-            "symbols":          config.signal.symbols,
-            "signal_ws":        config.signal.ws_url,
+            "symbols":          config.gateway.symbols,
+            "gateway_ws":       config.gateway.ws_url,
             "max_losing_streak": config.risk.max_losing_streak,
             "max_open_trades":  config.risk.max_losing_streak + 1,
         },
