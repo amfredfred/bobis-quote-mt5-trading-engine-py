@@ -79,11 +79,7 @@ if (-not $SkipPackage) {
     )
     if (-not $PyInstaller) {
         Write-Host ""
-        Write-Error @"
-pyinstaller not found.
-Install it into the execution-engine venv:
-  venv\Scripts\pip install pyinstaller
-"@
+        Write-Error "pyinstaller not found.`nInstall it into the execution-engine venv:`n  venv\Scripts\pip install pyinstaller"
         exit 1
     }
     Write-Host "      Using : $PyInstaller" -ForegroundColor DarkGray
@@ -133,11 +129,9 @@ if (-not $SkipInstaller) {
 
     if (-not $Iscc) {
         Write-Host ""
-        Write-Warning @"
-Inno Setup (ISCC.exe) not found — skipping installer build.
-Install Inno Setup 6 from: https://jrsoftware.org/isdl.php
-The packaged engine in dist\TradeRelay-Engine\ is still usable for testing.
-"@
+        Write-Warning "Inno Setup (ISCC.exe) not found — skipping installer build."
+        Write-Warning "Install Inno Setup 6 from: https://jrsoftware.org/isdl.php"
+        Write-Warning "The packaged engine in dist\TradeRelay-Engine\ is still usable for testing."
     } else {
         Write-Host "      Using : $Iscc" -ForegroundColor DarkGray
         $IssFile = Join-Path $EngineDir "installer\TradeRelay.iss"
@@ -150,8 +144,9 @@ The packaged engine in dist\TradeRelay-Engine\ is still usable for testing.
 
         $setupExe = Join-Path $EngineDir "installer\Output\TradeRelaySetup.exe"
         if (Test-Path $setupExe) {
-            $sizeMB = [math]::Round((Get-Item $setupExe).Length / 1MB, 1)
-            Write-Host "      Done  : installer\Output\TradeRelaySetup.exe ($sizeMB MB)" -ForegroundColor Green
+            $sizeMB   = [math]::Round((Get-Item $setupExe).Length / 1MB, 1)
+            $sizeStr  = "$sizeMB MB"
+            Write-Host "      Done  : installer\Output\TradeRelaySetup.exe ($sizeStr)" -ForegroundColor Green
         } else {
             Write-Host "      Done  : installer\Output\TradeRelaySetup.exe" -ForegroundColor Green
         }
