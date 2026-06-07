@@ -4,25 +4,123 @@ SQLite persistence layer.
 Single file database at <storage_path>/engine.db
 
 Tables:
-    trades          — full trade lifecycle, open and closed
-    signals         — every inbound signal received
+    trades           — full trade lifecycle, open and closed
+    signals          — every inbound signal received
     metrics_counters — persisted counter values (survive restarts)
     metrics_gauges   — persisted gauge values (survive restarts)
+    event_outbox     — reliable outbound event delivery
+    device_state     — persistent KV store (device credential, etc.)
 
 All writes are atomic. The DB is created and migrated on init().
 Thread-safe — SQLite WAL mode + per-call connections via check_same_thread=False.
+
+4.7 — Encrypted device state
+    On Windows, sensitive values stored via save_device_state() are encrypted
+    with DPAPI (CryptProtectData / CryptUnprotectData) using ctypes so that no
+    extra dependencies are required.  The credential is tied to the current
+    Windows user account and cannot be decrypted on another machine or by
+    another user.  On non-Windows platforms (dev / Linux containers) values are
+    stored as plaintext with a warning.
 """
 
 from __future__ import annotations
 
+import base64
+import ctypes
 import json
 import logging
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# DPAPI helpers (Windows only)
+# ---------------------------------------------------------------------------
+
+_DPAPI_AVAILABLE = sys.platform == "win32"
+
+
+def _dpapi_encrypt(plaintext: str) -> str:
+    """
+    Encrypt *plaintext* with Windows DPAPI.
+    Returns a base64-encoded ciphertext string suitable for SQLite storage.
+    Raises RuntimeError if DPAPI is unavailable or fails.
+    """
+    if not _DPAPI_AVAILABLE:
+        raise RuntimeError("DPAPI is only available on Windows")
+
+    data = plaintext.encode("utf-8")
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", ctypes.c_ulong), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    input_blob  = DATA_BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_char)))
+    output_blob = DATA_BLOB()
+
+    # CRYPTPROTECT_UI_FORBIDDEN = 0x01 — never show a dialog
+    result = ctypes.windll.crypt32.CryptProtectData(  # type: ignore[attr-defined]
+        ctypes.byref(input_blob),
+        None,           # description (optional)
+        None,           # optional entropy
+        None,           # reserved
+        None,           # prompt struct
+        0x01,           # flags: CRYPTPROTECT_UI_FORBIDDEN
+        ctypes.byref(output_blob),
+    )
+
+    if not result:
+        raise RuntimeError(f"CryptProtectData failed (error {ctypes.GetLastError()})")
+
+    try:
+        raw = ctypes.string_at(output_blob.pbData, output_blob.cbData)
+        return base64.b64encode(raw).decode("ascii")
+    finally:
+        ctypes.windll.kernel32.LocalFree(output_blob.pbData)  # type: ignore[attr-defined]
+
+
+def _dpapi_decrypt(ciphertext_b64: str) -> str:
+    """
+    Decrypt a base64-encoded DPAPI ciphertext.
+    Returns the original plaintext string.
+    Raises RuntimeError if DPAPI is unavailable, the blob is corrupt, or
+    the calling user/machine doesn't match the one that encrypted it.
+    """
+    if not _DPAPI_AVAILABLE:
+        raise RuntimeError("DPAPI is only available on Windows")
+
+    raw = base64.b64decode(ciphertext_b64)
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", ctypes.c_ulong), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    input_blob  = DATA_BLOB(len(raw), ctypes.cast(ctypes.create_string_buffer(raw), ctypes.POINTER(ctypes.c_char)))
+    output_blob = DATA_BLOB()
+
+    result = ctypes.windll.crypt32.CryptUnprotectData(  # type: ignore[attr-defined]
+        ctypes.byref(input_blob),
+        None,   # description out (ignored)
+        None,   # optional entropy
+        None,   # reserved
+        None,   # prompt struct
+        0x01,   # flags: CRYPTPROTECT_UI_FORBIDDEN
+        ctypes.byref(output_blob),
+    )
+
+    if not result:
+        raise RuntimeError(f"CryptUnprotectData failed (error {ctypes.GetLastError()})")
+
+    try:
+        return ctypes.string_at(output_blob.pbData, output_blob.cbData).decode("utf-8")
+    finally:
+        ctypes.windll.kernel32.LocalFree(output_blob.pbData)  # type: ignore[attr-defined]
+
+
+# Prefix used to distinguish encrypted blobs from legacy plaintext values
+_DPAPI_PREFIX = "DPAPI:"
 
 
 class Database:
@@ -413,17 +511,37 @@ class Database:
             )
             return cur.rowcount
 
-    # ── Device state (1.16 — credential storage) ─────────────────────────
+    # ── Device state (1.16 — credential storage, 4.7 — DPAPI encryption) ────
 
     def save_device_state(self, key: str, value: str) -> None:
         """
         Upsert a persistent device state entry.
 
-        Used to store the device credential issued by the gateway so it
-        survives engine restarts and can be presented in ``engine.hello``
+        On Windows the value is encrypted with DPAPI before writing so that it
+        cannot be read by other users or on other machines.  On non-Windows
+        platforms a plaintext fallback is used with a one-time warning.
+
+        Used primarily to store the device credential issued by the gateway so
+        it survives engine restarts and can be presented in ``engine.hello``
         for fast-path reconnects.
         """
         from src.utils.time import now_ms
+
+        stored_value: str
+        if _DPAPI_AVAILABLE:
+            try:
+                stored_value = _DPAPI_PREFIX + _dpapi_encrypt(value)
+            except Exception as exc:
+                logger.warning("DPAPI encrypt failed — storing plaintext (%s)", exc)
+                stored_value = value
+        else:
+            if not getattr(self, "_dpapi_warned", False):
+                logger.warning(
+                    "DPAPI not available on this platform — device credential stored in plaintext. "
+                    "This is acceptable in dev/Linux environments but not recommended in production."
+                )
+                self._dpapi_warned = True  # type: ignore[attr-defined]
+            stored_value = value
 
         with self._connect() as conn:
             conn.execute(
@@ -434,19 +552,46 @@ class Database:
                   SET value = excluded.value,
                       updated_at = excluded.updated_at
                 """,
-                (key, value, now_ms()),
+                (key, stored_value, now_ms()),
             )
 
     def load_device_state(self, key: str) -> Optional[str]:
         """
         Load a persistent device state entry.  Returns None if not set.
+
+        Automatically detects DPAPI-encrypted values (``DPAPI:`` prefix) and
+        decrypts them transparently.  Falls back to returning the raw value if
+        decryption fails (e.g. credential was stored on a different machine).
         """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT value FROM device_state WHERE key = ?", (key,)
             ).fetchone()
-            return str(row["value"]) if row else None
+
+        if not row:
+            return None
+
+        raw = str(row["value"])
+
+        if raw.startswith(_DPAPI_PREFIX):
+            if not _DPAPI_AVAILABLE:
+                logger.warning(
+                    "DPAPI-encrypted device state found but DPAPI is not available — "
+                    "cannot decrypt.  The credential will be discarded."
+                )
+                return None
+            try:
+                return _dpapi_decrypt(raw[len(_DPAPI_PREFIX):])
+            except Exception as exc:
+                logger.warning(
+                    "DPAPI decrypt failed for key %r — discarding stored value (%s). "
+                    "The engine will re-activate on next connection.",
+                    key, exc,
+                )
+                return None
+
+        return raw
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
