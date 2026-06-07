@@ -1,5 +1,5 @@
 """
-Trading Execution Engine — entry point.
+Apex Quant Trader — agent entry point.
 
 Modes:
     GUI (default)      python -m src
@@ -7,9 +7,13 @@ Modes:
     Custom config      python -m src path/to/config.yaml
     Headless + config  python -m src --headless config/custom.yaml
 
-GUI mode launches the CustomTkinter desktop app which manages the engine
-internally.  Headless mode runs the engine with no window — suitable for
-NSSM Windows services and Docker containers.
+GUI mode opens the desktop control panel.  The panel connects to the
+running apex-quant-trader-agent Windows service and lets you start/stop
+it, edit config, and monitor live trades.  Closing the GUI does NOT stop
+the engine service.
+
+Headless mode IS the service — run by NSSM directly.  The engine connects
+to the cloud gateway so the online dashboard works 24/7.
 """
 
 from __future__ import annotations

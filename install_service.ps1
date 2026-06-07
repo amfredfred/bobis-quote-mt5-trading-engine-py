@@ -1,4 +1,4 @@
-# install_service.ps1 — Run as Administrator
+﻿# install_service.ps1 - Run as Administrator
 #
 # Installs, removes, or updates the Apex Quant Trader Windows service via NSSM.
 #
@@ -9,8 +9,8 @@
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1 -VenvName .venv
 #
 # Resolution order for the engine executable:
-#   1. dist\apex-quant-trader-agent\apex-quant-trader-agent.exe  (packaged build — preferred)
-#   2. <VenvName>\Scripts\execution-engine.exe        (dev venv install — fallback)
+#   1. dist\apex-quant-trader-agent\apex-quant-trader-agent.exe  (packaged build - preferred)
+#   2. <VenvName>\Scripts\execution-engine.exe        (dev venv install - fallback)
 
 param(
     [ValidateSet("install", "uninstall", "update")]
@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $PackagedExe) {
 }
 
 # ---------------------------------------------------------------------------
-# NSSM — auto-download if missing
+# NSSM - auto-download if missing
 # ---------------------------------------------------------------------------
 function Ensure-Nssm {
     if (Test-Path -LiteralPath $NssmExe) { return }
@@ -80,7 +80,7 @@ function Stop-ServiceSafe {
         if (-not $svc -or $svc.Status -eq "Stopped") { return }
         Start-Sleep 1
     }
-    Write-Warning "Service did not stop within 20 s — continuing anyway"
+    Write-Warning "Service did not stop within 20 s - continuing anyway"
 }
 
 function Remove-ServiceSafe {
@@ -108,22 +108,22 @@ function Cleanup-Orphans {
 
 function Validate-Exe {
     if (-not $AppExe) {
-        Write-Error @"
-No engine executable found.
-Expected (packaged):  $PackagedExe
-Expected (dev venv):  $VenvExe
-
-Build the packaged exe first:
-  powershell -ExecutionPolicy Bypass -File installer\build.ps1
-
-Or install the dev venv:
-  $VenvName\Scripts\pip install -e .
-"@
+        Write-Host ""
+        Write-Host "ERROR: No engine executable found." -ForegroundColor Red
+        Write-Host "  Expected (packaged): $PackagedExe" -ForegroundColor Red
+        Write-Host "  Expected (dev venv): $VenvExe" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Build the packaged exe first:" -ForegroundColor Yellow
+        Write-Host "    powershell -ExecutionPolicy Bypass -File installer\build.ps1" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  Or install the dev venv:" -ForegroundColor Yellow
+        Write-Host "    $VenvName\Scripts\pip install -e ." -ForegroundColor Yellow
+        Write-Host ""
         exit 1
     }
 }
 
-function Install-Service {
+function _install {
     Validate-Exe
     Remove-ServiceSafe
     Cleanup-Orphans
@@ -141,7 +141,7 @@ function Install-Service {
     & $NssmExe set $ServiceName AppDirectory      $EngineDir
     & $NssmExe set $ServiceName AppParameters     ""
 
-    # Environment — prevent user-site packages from leaking into service env
+    # Environment - prevent user-site packages from leaking into service env
     & $NssmExe set $ServiceName AppEnvironmentExtra `
         "PYTHONNOUSERSITE=1" `
         "PYTHONPATH=$EngineDir"
@@ -158,7 +158,7 @@ function Install-Service {
     & $NssmExe set $ServiceName AppStopMethodWindow   15000
     & $NssmExe set $ServiceName AppStopMethodThreads  15000
 
-    # Restart policy — 5 s backoff, 5-minute reset window
+    # Restart policy - 5 s backoff, 5-minute reset window
     & $NssmExe set $ServiceName AppThrottle       5000
     & $NssmExe set $ServiceName AppExit           Default Restart
 
@@ -183,7 +183,7 @@ function Install-Service {
     Write-Host "    Get-Content '$LogDir\stdout.log' -Tail 50 -Wait"
 }
 
-function Update-Service {
+function _update {
     Validate-Exe
 
     Write-Host "  Updating $ServiceName executable..."
@@ -204,16 +204,12 @@ function Update-Service {
 # ---------------------------------------------------------------------------
 Ensure-Nssm
 
-switch ($Action) {
-    "uninstall" {
-        Remove-ServiceSafe
-        Cleanup-Orphans
-        Write-Host "Uninstall complete."
-    }
-    "update" {
-        Update-Service
-    }
-    default {
-        Install-Service
-    }
+if ($Action -eq "uninstall") {
+    Remove-ServiceSafe
+    Cleanup-Orphans
+    Write-Host "Uninstall complete."
+} elseif ($Action -eq "update") {
+    _update
+} else {
+    _install
 }

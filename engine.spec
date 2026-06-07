@@ -20,7 +20,7 @@
 
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules  # noqa: F401
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all  # noqa: F401
 
 block_cipher = None
 
@@ -81,16 +81,11 @@ hidden_imports = [
     "numpy.core",
     "numpy.core.multiarray",
 
-    # ── customtkinter (GUI) ──────────────────────────────────────────────────
-    "customtkinter",
-    "darkdetect",
-    "PIL",
-    "PIL.Image",
-    "PIL.ImageTk",
-    "PIL.ImageDraw",
+    # ── tkinter (stdlib GUI toolkit) ────────────────────────────────────────
     "tkinter",
     "tkinter.ttk",
     "tkinter.filedialog",
+    "_tkinter",
 ]
 
 # Collect every submodule in our src package
@@ -99,8 +94,18 @@ hidden_imports += collect_submodules("src")
 # Collect all numpy submodules (covers _core, linalg, fft, random, etc.)
 hidden_imports += collect_submodules("numpy")
 
-# Collect all customtkinter submodules (themes, widgets, etc.)
-hidden_imports += collect_submodules("customtkinter")
+# ---------------------------------------------------------------------------
+# customtkinter — use collect_all for complete coverage
+#   (hidden imports + data files + binaries in one call)
+# ---------------------------------------------------------------------------
+_ctk_data, _ctk_bin, _ctk_hi = collect_all("customtkinter")
+hidden_imports += _ctk_hi
+
+_dk_data, _dk_bin, _dk_hi = collect_all("darkdetect")
+hidden_imports += _dk_hi
+
+_pil_data, _pil_bin, _pil_hi = collect_all("PIL")
+hidden_imports += _pil_hi
 
 # ---------------------------------------------------------------------------
 # Data files
@@ -108,6 +113,8 @@ hidden_imports += collect_submodules("customtkinter")
 datas = [
     # Version file — used by the auto-updater script and GUI header
     ("version.txt", "."),
+    # Default config — placed next to the exe so the GUI finds it on first launch
+    ("config.yaml",  "."),
 ]
 
 # Include the full tzdata IANA timezone database
@@ -116,8 +123,10 @@ datas += collect_data_files("tzdata")
 # numpy data files (.pyd C extensions, .pyi stubs, etc.)
 datas += collect_data_files("numpy")
 
-# customtkinter themes / assets (JSON theme files, images)
-datas += collect_data_files("customtkinter")
+# customtkinter / darkdetect / Pillow data files
+datas += _ctk_data
+datas += _dk_data
+datas += _pil_data
 
 # ---------------------------------------------------------------------------
 # Analysis
@@ -131,7 +140,7 @@ _base_python_dir = sys.base_prefix
 a = Analysis(
     ["src/__main__.py"],
     pathex=[".", _base_python_dir],
-    binaries=[],
+    binaries=_ctk_bin + _dk_bin + _pil_bin,
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],
@@ -166,9 +175,11 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # ---------------------------------------------------------------------------
 # EXE
-#   console=True  — keeps NSSM log capture working in --headless mode.
-#                   In GUI mode the console window flashes briefly then the
-#                   CTk window takes over; acceptable trade-off.
+#   console=False  — no terminal window; NSSM captures stdout/stderr via its
+#                    own pipe redirect even for Windows-subsystem (GUI) exes.
+#   uac_admin=True — embeds requireAdministrator manifest so Windows always
+#                    elevates via UAC; needed so sc.exe start/stop work from
+#                    the GUI control panel without extra prompts.
 # ---------------------------------------------------------------------------
 _icon = None
 if sys.platform == "win32":
@@ -186,7 +197,8 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,          # UPX can corrupt MT5 DLL loading — leave disabled
-    console=True,
+    console=False,      # no terminal window for GUI mode
+    uac_admin=True,     # requireAdministrator — needed for sc.exe service control
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

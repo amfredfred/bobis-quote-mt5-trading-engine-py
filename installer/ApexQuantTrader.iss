@@ -34,7 +34,6 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\Apex Quant Trader
 DefaultGroupName=Apex Quant Trader
 AllowNoIcons=yes
-LicenseFile=..\LICENSE
 OutputDir=Output
 OutputBaseFilename=ApexQuantTraderSetup
 SetupIconFile=assets\icon.ico
@@ -81,9 +80,8 @@ Source: "..\dist\apex-quant-trader-agent\*"; \
     DestDir: "{app}\apex-quant-trader-agent"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Config template + version (also inside dist\ but explicit copy simplifies paths)
-Source: "..\config.example.yaml"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\version.txt";         DestDir: "{app}"; Flags: ignoreversion
+; Version stamp
+Source: "..\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Service installer + reconfiguration wizard
 Source: "..\install_service.ps1"; DestDir: "{app}"; Flags: ignoreversion
@@ -103,29 +101,26 @@ Source: "..\nssm\nssm-2.24\win64\nssm.exe"; \
 ; ============================================================================
 [Icons]
 ; ============================================================================
-Name: "{group}\Reconfigure Apex Quant Trader"; \
-    Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -File ""{app}\setup.ps1"""; \
-    WorkingDir: "{app}"
-Name: "{group}\View Logs"; \
-    Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -Command ""Get-Content '{app}\logs\stderr.log' -Tail 80 -Wait"""
-Name: "{group}\Support Bundle"; \
-    Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -File ""{app}\scripts\support-bundle.ps1"""
+; Primary shortcut — launches the desktop control panel (GUI)
+Name: "{group}\Apex Quant Trader"; \
+    Filename: "{app}\{#MyAppExeName}"; \
+    WorkingDir: "{app}"; \
+    IconFilename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\Apex Quant Trader"; \
-    Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -File ""{app}\setup.ps1"""; \
+    Filename: "{app}\{#MyAppExeName}"; \
+    WorkingDir: "{app}"; \
+    IconFilename: "{app}\{#MyAppExeName}"; \
     Tasks: desktopicon
 
 ; ============================================================================
 [Run]
 ; ============================================================================
-; Open the Apex Quant Trader dashboard after successful install (Finish page checkbox)
-Filename: "https://app.apexquanttrader.io"; \
-    Description: "Open Apex Quant Trader dashboard in browser"; \
-    Flags: postinstall shellexec nowait skipifsilent
+; Launch the desktop control panel from the Finish page (checkbox, ticked by default)
+Filename: "{app}\{#MyAppExeName}"; \
+    Description: "Launch Apex Quant Trader"; \
+    Flags: postinstall nowait skipifsilent; \
+    WorkingDir: "{app}"
 
 ; ============================================================================
 [UninstallRun]
@@ -532,13 +527,11 @@ function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
 
-  // ── Activation key: must start TR- and be ≥ 24 chars ───────────────────
+  // ── Activation key: must not be empty ──────────────────────────────────
   if CurPageID = ActivationKeyPage.ID then begin
-    if (Pos('TR-', TrimStr(ActivationKeyPage.Values[0])) <> 1) or
-       (Length(TrimStr(ActivationKeyPage.Values[0])) < 24) then begin
+    if TrimStr(ActivationKeyPage.Values[0]) = '' then begin
       MsgBox(
-        'Please enter a valid activation key.' + #13#10 +
-        'Keys start with "TR-" and are at least 24 characters.' + #13#10 + #13#10 +
+        'Please enter your activation key.' + #13#10 + #13#10 +
         'Your key was included in your purchase confirmation email.',
         mbError, MB_OK
       );
@@ -622,8 +615,7 @@ procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = wpFinished then
     WizardForm.FinishedLabel.Caption :=
-      'Apex Quant Trader has been installed successfully.' + #13#10 + #13#10 +
-      'Click Finish to open the Apex Quant Trader dashboard in your browser.' + #13#10 + #13#10 +
-      'Tip: use the "Reconfigure Apex Quant Trader" Start Menu shortcut' + #13#10 +
-      'at any time to update your settings.';
+      'Apex Quant Trader has been installed and the engine service has started.' + #13#10 + #13#10 +
+      'Tick the checkbox below to open the control panel now.' + #13#10 + #13#10 +
+      'You can reopen it any time from the desktop or Start Menu shortcut.';
 end;

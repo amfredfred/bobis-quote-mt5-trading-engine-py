@@ -233,6 +233,27 @@ class UIBridge:
             except Exception:
                 pass
 
+    def push_event(self, event_type: str, payload: Any) -> None:
+        """Send an arbitrary typed message to all connected GUI clients.
+
+        Used by bootstrap to push MT5 connection errors before the event bus
+        is wired up, so the GUI always shows the real failure reason.
+        """
+        if self._loop and self._clients:
+            frame = json.dumps({"type": event_type, "payload": payload}, default=str)
+
+            async def _send_all() -> None:
+                for client in list(self._clients):
+                    try:
+                        await client.send(frame)
+                    except Exception:
+                        self._clients.discard(client)
+
+            try:
+                asyncio.run_coroutine_threadsafe(_send_all(), self._loop)
+            except Exception:
+                pass
+
     # ── Asyncio loop ──────────────────────────────────────────────────────
 
     def _run_loop(self) -> None:
