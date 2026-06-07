@@ -125,6 +125,14 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_outbox_sent
                     ON event_outbox(sent);
+
+                -- 1.16 — Persistent key/value store for device state
+                -- (e.g. device_credential issued by the gateway)
+                CREATE TABLE IF NOT EXISTS device_state (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
             """
             )
         logger.info("Database initialised", extra={"path": self._path})
@@ -404,6 +412,41 @@ class Database:
                 "DELETE FROM event_outbox WHERE sent=1 AND sent_at < ?", (cutoff,)
             )
             return cur.rowcount
+
+    # ── Device state (1.16 — credential storage) ─────────────────────────
+
+    def save_device_state(self, key: str, value: str) -> None:
+        """
+        Upsert a persistent device state entry.
+
+        Used to store the device credential issued by the gateway so it
+        survives engine restarts and can be presented in ``engine.hello``
+        for fast-path reconnects.
+        """
+        from src.utils.time import now_ms
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO device_state (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE
+                  SET value = excluded.value,
+                      updated_at = excluded.updated_at
+                """,
+                (key, value, now_ms()),
+            )
+
+    def load_device_state(self, key: str) -> Optional[str]:
+        """
+        Load a persistent device state entry.  Returns None if not set.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT value FROM device_state WHERE key = ?", (key,)
+            ).fetchone()
+            return str(row["value"]) if row else None
 
     # ── Helpers ───────────────────────────────────────────────────────────
 

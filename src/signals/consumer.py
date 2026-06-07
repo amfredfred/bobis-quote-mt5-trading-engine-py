@@ -82,6 +82,16 @@ class SignalConsumer:
         self._seen_ids: OrderedDict[str, None] = OrderedDict()
         # 2.11 — Reliable event outbox
         self._db: Optional["Database"] = db
+        # 1.16 — Device credential: loaded from local DB, presented in engine.hello
+        # for fast-path reconnect.  Updated whenever the gateway issues a new one.
+        self._device_credential: Optional[str] = None
+        if db is not None:
+            try:
+                self._device_credential = db.load_device_state("device_credential")
+                if self._device_credential:
+                    logger.info("Device credential loaded from local store")
+            except Exception:
+                logger.warning("Could not load device credential from DB")
         self._started_at = self._utc_now()
         self._stopped = threading.Event()
         self._activated = threading.Event()
@@ -164,16 +174,17 @@ class SignalConsumer:
 
     def _on_connected(self) -> None:
         self._activated.clear()
-        self._hello_message_id = self._send(
-            "engine.hello",
-            {
-                "engine_id": self._engine_id,
-                "engine_version": self._engine_version,
-                "protocol_versions": ["1.0"],
-                "started_at": self._started_at,
-                "accounts": [],
-            },
-        )
+        # 1.16 — Include device credential if available for fast-path activation
+        hello_payload: dict = {
+            "engine_id": self._engine_id,
+            "engine_version": self._engine_version,
+            "protocol_versions": ["1.0"],
+            "started_at": self._started_at,
+            "accounts": [],
+        }
+        if self._device_credential:
+            hello_payload["device_credential"] = self._device_credential
+        self._hello_message_id = self._send("engine.hello", hello_payload)
 
     def _activate(self) -> None:
         architecture = "arm64" if platform.machine().lower() == "arm64" else "x64"
@@ -406,19 +417,38 @@ class SignalConsumer:
             return True
 
         if event == "activation.accepted":
-            if message_id != self._activation_message_id:
+            # Accept both normal activation.request response (activation_message_id)
+            # and 1.16 fast-path response correlated to engine.hello (hello_message_id).
+            valid_ids = {self._activation_message_id, self._hello_message_id}
+            if message_id not in valid_ids:
                 logger.warning("Ignoring unexpected Gateway activation response")
                 return True
             if data.get("engine_id") != self._engine_id:
                 logger.error("Gateway activation response engine_id mismatch")
                 return True
+            # 1.16 — Store fresh credential if the gateway issued one
+            new_cred = data.get("device_credential")
+            if new_cred and isinstance(new_cred, str):
+                self._device_credential = new_cred
+                if self._db is not None:
+                    try:
+                        self._db.save_device_state("device_credential", new_cred)
+                        logger.info("Device credential stored for future fast-path reconnects")
+                    except Exception:
+                        logger.exception("Failed to persist device credential")
             self._activated.set()
             self._subscribe()
             # 2.11 — Replay any lifecycle events that were persisted but not delivered
             self._replay_outbox()
+            fast_path = message_id == self._hello_message_id and self._activation_message_id is None
             logger.info(
                 "TradeRelay activation accepted",
-                extra={"engine_id": self._engine_id, "symbols": data.get("symbols", [])},
+                extra={
+                    "engine_id": self._engine_id,
+                    "symbols": data.get("symbols", []),
+                    "fast_path": fast_path,
+                    "credential_received": bool(new_cred),
+                },
             )
             return True
 
