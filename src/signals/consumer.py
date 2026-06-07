@@ -5,14 +5,17 @@ validates them, and emits them onto the EventBus.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import platform
 import queue
 import socket
 import threading
+from collections import OrderedDict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Optional
 from uuid import uuid4
 
 from src.core.events import Events
@@ -29,6 +32,7 @@ from .signal_types import (
 
 if TYPE_CHECKING:
     from src.core.event_bus import EventBus
+    from src.infra.db import Database
 
     from .signal_validator import SignalValidator
 
@@ -45,6 +49,10 @@ class SignalConsumer:
     If downstream handlers are long-running, consider dispatching to a queue.
     """
 
+    # Maximum number of signal IDs to retain for deduplication.
+    # Oldest entries are evicted once this limit is reached.
+    _SEEN_IDS_MAX = 10_000
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -56,6 +64,8 @@ class SignalConsumer:
         engine_version: str,
         room_ttl_seconds: int,
         account_login: str,
+        signal_hmac_secret: Optional[str] = None,
+        db: Optional["Database"] = None,
     ) -> None:
         self._bus = event_bus
         self._validator = validator
@@ -65,19 +75,31 @@ class SignalConsumer:
         self._engine_version = engine_version
         self._room_ttl_seconds = room_ttl_seconds
         self._account_login = account_login
+        self._signal_hmac_secret: Optional[bytes] = (
+            signal_hmac_secret.encode() if signal_hmac_secret else None
+        )
+        # 2.10 — Bounded seen-IDs set for deduplication (thread-safe via GIL + OrderedDict)
+        self._seen_ids: OrderedDict[str, None] = OrderedDict()
+        # 2.11 — Reliable event outbox
+        self._db: Optional["Database"] = db
         self._started_at = self._utc_now()
         self._stopped = threading.Event()
         self._activated = threading.Event()
         self._refresh_thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
         self._lifecycle_thread: threading.Thread | None = None
-        self._lifecycle_queue: queue.Queue[tuple[str, dict]] = queue.Queue(maxsize=1000)
+        # Each item is (event, report, outbox_id_or_None)
+        self._lifecycle_queue: queue.Queue[tuple[str, dict, Optional[int]]] = queue.Queue(maxsize=1000)
         self._heartbeat_sequence = 0
         self._metrics_subscribed = threading.Event()
         self._snapshot_provider: Callable[[], dict] | None = None
         self._metrics_thread: threading.Thread | None = None
         self._hello_message_id: str | None = None
         self._activation_message_id: str | None = None
+        # Remote command callbacks — registered by bootstrap after wiring
+        self._on_pause: Optional[Callable[[], None]] = None
+        self._on_resume: Optional[Callable[[], None]] = None
+        self._on_emergency_stop: Optional[Callable[[], None]] = None
         self._ws = WebSocketClient(
             url=ws_url,
             on_message=self._handle_raw,
@@ -122,6 +144,21 @@ class SignalConsumer:
 
     def set_snapshot_provider(self, provider: Callable[[], dict]) -> None:
         self._snapshot_provider = provider
+
+    def set_command_callbacks(
+        self,
+        on_pause: Callable[[], None],
+        on_resume: Callable[[], None],
+        on_emergency_stop: Callable[[], None],
+    ) -> None:
+        """
+        Register callables that are invoked when the gateway sends remote
+        command events to this engine.  Call this once in bootstrap after all
+        components are wired.
+        """
+        self._on_pause = on_pause
+        self._on_resume = on_resume
+        self._on_emergency_stop = on_emergency_stop
 
     # ── Private ───────────────────────────────────────────────────────────
 
@@ -260,8 +297,21 @@ class SignalConsumer:
             report["trade_id"] = trade_id
         if broker_ticket:
             report["broker_ticket"] = broker_ticket
+        # 2.11 — Persist to outbox before enqueuing so the event survives a WS disconnect
+        outbox_id: Optional[int] = None
+        if self._db is not None:
+            try:
+                outbox_id = self._db.outbox_enqueue(
+                    "execution.lifecycle", json.dumps(report, separators=(",", ":"))
+                )
+            except Exception:
+                logger.exception(
+                    "Outbox write failed; event will be sent in-band only",
+                    extra={"stage": stage, "signal_id": signal_id},
+                )
+
         try:
-            self._lifecycle_queue.put_nowait(("execution.lifecycle", report))
+            self._lifecycle_queue.put_nowait(("execution.lifecycle", report, outbox_id))
         except queue.Full:
             logger.error(
                 "Execution lifecycle queue full; report dropped",
@@ -273,10 +323,20 @@ class SignalConsumer:
             if not self._activated.wait(timeout=1.0):
                 continue
             try:
-                event, report = self._lifecycle_queue.get(timeout=1.0)
+                event, report, outbox_id = self._lifecycle_queue.get(timeout=1.0)
             except queue.Empty:
                 continue
-            if not self._send(event, report):
+            sent = self._send(event, report)
+            if sent:
+                # 2.11 — Mark delivered in the outbox so it is not replayed on reconnect
+                if outbox_id is not None and self._db is not None:
+                    try:
+                        self._db.outbox_mark_sent(outbox_id)
+                    except Exception:
+                        logger.exception(
+                            "Outbox mark-sent failed", extra={"outbox_id": outbox_id}
+                        )
+            else:
                 logger.warning(
                     "Execution lifecycle report could not be sent",
                     extra={"stage": report["stage"], "signal_id": report["signal_id"]},
@@ -354,6 +414,8 @@ class SignalConsumer:
                 return True
             self._activated.set()
             self._subscribe()
+            # 2.11 — Replay any lifecycle events that were persisted but not delivered
+            self._replay_outbox()
             logger.info(
                 "TradeRelay activation accepted",
                 extra={"engine_id": self._engine_id, "symbols": data.get("symbols", [])},
@@ -379,14 +441,189 @@ class SignalConsumer:
             self._metrics_subscribed.clear()
             return True
 
+        if event in {"command.pause", "command.resume", "command.emergency_stop"}:
+            self._handle_command(event, data)
+            return True
+
+        if event == "license.updated":
+            self._handle_license_updated(data)
+            return True
+
         return event in {
             "protocol.accepted",
             "activation.accepted",
             "execution.metrics.subscribe",
             "execution.metrics.unsubscribe",
+            "license.updated",
         }
 
+    def _replay_outbox(self) -> None:
+        """
+        2.11 — On reconnect, re-enqueue any lifecycle events that were persisted
+        to the outbox but never confirmed delivered.  Called after activation.
+        """
+        if self._db is None:
+            return
+        try:
+            pending = self._db.outbox_load_pending()
+        except Exception:
+            logger.exception("Outbox replay: could not load pending events")
+            return
+        if not pending:
+            return
+
+        replayed = 0
+        for row_id, ev, payload_json in pending:
+            try:
+                report = json.loads(payload_json)
+            except json.JSONDecodeError:
+                logger.warning("Outbox replay: invalid JSON in row %d — skipping", row_id)
+                continue
+            try:
+                self._lifecycle_queue.put_nowait((ev, report, row_id))
+                replayed += 1
+            except queue.Full:
+                logger.warning(
+                    "Outbox replay: lifecycle queue full — %d event(s) not replayed",
+                    len(pending) - replayed,
+                )
+                break
+
+        if replayed:
+            logger.info("Outbox replay: re-enqueued %d pending event(s)", replayed)
+
+    def _handle_license_updated(self, data: dict) -> None:
+        """
+        2.12 — Reacts to a ``license.updated`` push from the gateway.
+
+        Status transitions:
+          - ``active``: log info — no action needed, licence was already accepted
+          - ``suspended`` / ``revoked``: log a critical warning and disconnect.
+            The gateway will refuse re-activation until the key is re-issued.
+          - Any other status: log a warning for visibility.
+
+        Disconnecting causes the WebSocket client to reconnect and re-run the
+        activation handshake, which will fail with the new status. This is the
+        correct behaviour — the engine should not continue executing trades on
+        a suspended licence.
+        """
+        status = str(data.get("status", "")).lower()
+        license_id = data.get("license_id") or data.get("id", "<unknown>")
+
+        if status == "active":
+            logger.info(
+                "license.updated: licence is active — no action required",
+                extra={"license_id": license_id},
+            )
+            return
+
+        if status in {"suspended", "revoked", "expired"}:
+            logger.critical(
+                "license.updated: licence status=%s — disconnecting engine. "
+                "Re-issue the activation key to resume.",
+                status,
+                extra={"license_id": license_id},
+            )
+            self._activated.clear()
+            self._ws.stop()
+            return
+
+        logger.warning(
+            "license.updated: unrecognised status=%s — no action taken",
+            status,
+            extra={"license_id": license_id, "data": data},
+        )
+
+    def _handle_command(self, event: str, data: dict) -> None:
+        """
+        Handles remote command events from the gateway.
+
+        Each command is executed in the calling thread (the WebSocket reader),
+        which is acceptable because pause/resume are non-blocking and
+        emergency_stop closes positions via a brief MT5 call on a daemon thread.
+
+        Replies ``command.completed`` on success or ``command.failed`` on error.
+        """
+        command_id = data.get("command_id") or data.get("data", {}).get("command_id")
+        if not command_id:
+            logger.warning("Received %s with no command_id — ignoring", event)
+            return
+
+        logger.info("Remote command received", extra={"event": event, "command_id": command_id})
+
+        callback_map: dict[str, Callable[[], None] | None] = {
+            "command.pause":          self._on_pause,
+            "command.resume":         self._on_resume,
+            "command.emergency_stop": self._on_emergency_stop,
+        }
+        callback = callback_map.get(event)
+
+        if callback is None:
+            reason = f"No handler registered for {event}"
+            logger.error(reason, extra={"command_id": command_id})
+            self._send("command.failed", {"command_id": command_id, "reason": reason})
+            return
+
+        # Execute the action in a background thread so the WS reader is not stalled
+        def _run() -> None:
+            try:
+                callback()  # type: ignore[misc]
+                logger.info(
+                    "Remote command completed", extra={"event": event, "command_id": command_id}
+                )
+                self._send("command.completed", {"command_id": command_id, "result": {}})
+            except Exception as exc:
+                reason = str(exc)
+                logger.exception(
+                    "Remote command failed",
+                    extra={"event": event, "command_id": command_id, "reason": reason},
+                )
+                self._send("command.failed", {"command_id": command_id, "reason": reason})
+
+        t = threading.Thread(target=_run, name=f"cmd-{event}", daemon=True)
+        t.start()
+
     def _process(self, event: str, payload: dict) -> None:
+        # ── 2.8 — Cryptographic signature validation ───────────────────────
+        if self._signal_hmac_secret is not None:
+            provided_sig = payload.get("signature")
+            if not provided_sig:
+                logger.warning(
+                    "SignalConsumer: signal rejected — signature field missing "
+                    "and SIGNAL_HMAC_SECRET is configured",
+                    extra={"event": event},
+                )
+                metrics.increment("signal.signature_missing")
+                return
+            # Build canonical message: serialise payload without the signature field
+            body = {k: v for k, v in payload.items() if k != "signature"}
+            body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+            expected_sig = hmac.new(
+                self._signal_hmac_secret, body_bytes, hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(provided_sig, expected_sig):
+                logger.warning(
+                    "SignalConsumer: signal rejected — HMAC signature mismatch",
+                    extra={"event": event},
+                )
+                metrics.increment("signal.signature_invalid")
+                return
+
+        # ── 2.10 — Duplicate signal ID deduplication ───────────────────────
+        signal_id = payload.get("id") or payload.get("signal_id") or ""
+        if signal_id:
+            if signal_id in self._seen_ids:
+                logger.debug(
+                    "SignalConsumer: duplicate signal_id dropped",
+                    extra={"signal_id": signal_id, "event": event},
+                )
+                metrics.increment("signal.duplicate_dropped")
+                return
+            # Bounded eviction — remove oldest entry if at capacity
+            if len(self._seen_ids) >= self._SEEN_IDS_MAX:
+                self._seen_ids.popitem(last=False)
+            self._seen_ids[signal_id] = None
+
         try:
             signal = InboundSignal.from_dict(payload)
         except Exception:

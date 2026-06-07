@@ -113,6 +113,18 @@ class Database:
                     value       REAL NOT NULL DEFAULT 0,
                     updated_at  INTEGER
                 );
+
+                CREATE TABLE IF NOT EXISTS event_outbox (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event       TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    sent        INTEGER NOT NULL DEFAULT 0,
+                    created_at  INTEGER NOT NULL,
+                    sent_at     INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_outbox_sent
+                    ON event_outbox(sent);
             """
             )
         logger.info("Database initialised", extra={"path": self._path})
@@ -338,6 +350,60 @@ class Database:
                 ).fetchall()
             }
         return counters, gauges
+
+    # ── Event outbox (2.11 — reliable event delivery) ─────────────────────
+
+    def outbox_enqueue(self, event: str, payload_json: str) -> int:
+        """
+        Persist an event to the outbox before transmission.
+        Returns the auto-incremented row ID so the caller can later mark it sent.
+        """
+        from src.utils.time import now_ms
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO event_outbox (event, payload_json, sent, created_at) VALUES (?, ?, 0, ?)",
+                (event, payload_json, now_ms()),
+            )
+            return cur.lastrowid  # type: ignore[return-value]
+
+    def outbox_mark_sent(self, row_id: int) -> None:
+        """Mark an outbox row as successfully delivered."""
+        from src.utils.time import now_ms
+
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE event_outbox SET sent=1, sent_at=? WHERE id=?",
+                (now_ms(), row_id),
+            )
+
+    def outbox_load_pending(self, max_age_ms: int = 3_600_000) -> list[tuple[int, str, str]]:
+        """
+        Return all unsent outbox rows newer than ``max_age_ms`` milliseconds,
+        oldest first.  Returns list of (row_id, event, payload_json).
+        """
+        from src.utils.time import now_ms
+
+        cutoff = now_ms() - max_age_ms
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, event, payload_json FROM event_outbox "
+                "WHERE sent=0 AND created_at >= ? ORDER BY id ASC",
+                (cutoff,),
+            ).fetchall()
+        return [(r["id"], r["event"], r["payload_json"]) for r in rows]
+
+    def outbox_evict_sent(self, older_than_ms: int = 86_400_000) -> int:
+        """Delete sent outbox rows older than ``older_than_ms`` ms. Returns count deleted."""
+        from src.utils.time import now_ms
+
+        cutoff = now_ms() - older_than_ms
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM event_outbox WHERE sent=1 AND sent_at < ?", (cutoff,)
+            )
+            return cur.rowcount
 
     # ── Helpers ───────────────────────────────────────────────────────────
 

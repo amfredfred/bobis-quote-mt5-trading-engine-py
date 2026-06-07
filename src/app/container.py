@@ -104,7 +104,7 @@ def build_container(config: AppConfig) -> AppContainer:
 
     # ── Signal ingestion ──────────────────────────────────────────────────
     signal_queue = SignalQueue(on_signal=execution_engine.execute)
-    validator = SignalValidator()
+    validator = SignalValidator(max_age_ms=config.execution.max_signal_age_ms)
     signal_consumer = SignalConsumer(
         event_bus=event_bus,
         validator=validator,
@@ -115,6 +115,8 @@ def build_container(config: AppConfig) -> AppContainer:
         engine_version=config.gateway.engine_version,
         room_ttl_seconds=config.gateway.room_ttl_seconds,
         account_login=str(config.mt5.login),
+        signal_hmac_secret=config.gateway.signal_hmac_secret,
+        db=db,
     )
 
     # ── Strategies ────────────────────────────────────────────────────────

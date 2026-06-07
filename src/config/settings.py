@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -192,6 +192,7 @@ class GatewayConfig:
     engine_version: str
     symbols: list[str]
     room_ttl_seconds: int
+    signal_hmac_secret: Optional[str] = None
 
     def __post_init__(self) -> None:
         if len(self.engine_id) < 8:
@@ -237,6 +238,7 @@ class AppConfig:
         # Secrets are sourced from .env only
         mt5_password = os.environ.get("MT5_PASSWORD", "")
         activation_key = os.environ.get("TRADERELAY_ACTIVATION_KEY", "")
+        signal_hmac_secret = os.environ.get("SIGNAL_HMAC_SECRET") or None
 
         return cls(
             gateway=GatewayConfig(
@@ -248,6 +250,7 @@ class AppConfig:
                     normalise_symbol(str(symbol)) for symbol in gateway_symbols_raw
                 ],
                 room_ttl_seconds=int(gateway.get("room_ttl_seconds", 3600)),
+                signal_hmac_secret=signal_hmac_secret,
             ),
             mt5=Mt5Config(
                 login=int(mt5["login"]),

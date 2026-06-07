@@ -127,7 +127,7 @@ def test_lifecycle_report_contains_only_execution_reference_data() -> None:
 
     consumer._queue_lifecycle("attempted", "signal-test-001")
 
-    event, report = consumer._lifecycle_queue.get_nowait()
+    event, report, _outbox_id = consumer._lifecycle_queue.get_nowait()
     assert event == "execution.lifecycle"
     assert report["stage"] == "attempted"
     assert report["signal_id"] == "signal-test-001"

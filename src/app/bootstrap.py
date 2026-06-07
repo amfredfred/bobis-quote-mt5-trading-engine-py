@@ -113,6 +113,39 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
         container.ui_bridge.build_remote_snapshot
     )
 
+    # Wire remote command callbacks — called by the gateway's command.pause /
+    # command.resume / command.emergency_stop events via SignalConsumer.
+    # Each callback raises ValueError with a machine-readable reason code when
+    # the command is invalid for the current engine state.  The caller
+    # (SignalConsumer._handle_command) catches the exception and sends
+    # command.failed back to the gateway.
+
+    def _on_pause() -> None:
+        """Reject if already paused; otherwise pause the signal queue."""
+        if container.signal_queue.is_paused():
+            raise ValueError("ENGINE_ALREADY_PAUSED")
+        container.signal_queue.pause()
+
+    def _on_resume() -> None:
+        """Reject if not paused; otherwise resume the signal queue."""
+        if not container.signal_queue.is_paused():
+            raise ValueError("ENGINE_NOT_PAUSED")
+        container.signal_queue.resume()
+
+    def _on_emergency_stop() -> None:
+        """Reject if no open positions; otherwise pause and close all."""
+        open_trades = container.position_store.get_open_trades()
+        if not open_trades:
+            raise ValueError("NO_OPEN_POSITIONS")
+        container.signal_queue.pause()
+        container.position_manager.emergency_close_all()
+
+    container.signal_consumer.set_command_callbacks(
+        on_pause=_on_pause,
+        on_resume=_on_resume,
+        on_emergency_stop=_on_emergency_stop,
+    )
+
     # Start all services
     container.ui_bridge.start()
     container.signal_queue.start()

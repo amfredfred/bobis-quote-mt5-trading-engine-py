@@ -525,9 +525,17 @@ class UIBridge:
             return None
 
     def _build_engine_info(self, lt: dict) -> dict:
-        c = self._container
+        c           = self._container
+        # cmd_paused: set by dashboard command.pause / command.resume
+        # risk_paused: set by loss-tracker risk guards
+        cmd_paused  = c.signal_queue.is_paused()
+        risk_paused = bool(lt.get("paused"))
+        is_paused   = cmd_paused or risk_paused
         return {
-            "status":                  "PAUSED" if lt.get("paused") else "RUNNING",
+            "status":                  "PAUSED" if is_paused else "RUNNING",
+            # is_paused reflects command-driven pause only — used by dashboard
+            # remote-control buttons to decide whether Resume is available.
+            "is_paused":               cmd_paused,
             "uptime_sec":              int(_uptime()),
             "mode":                    getattr(self._config, "mode", "LIVE"),
             "connected_mt5":           c.mt5_client.is_connected(),

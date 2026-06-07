@@ -76,6 +76,76 @@ class PositionManager:
         if self._thread:
             self._thread.join(timeout=10)
 
+    # ── Emergency stop ────────────────────────────────────────────────────────
+
+    def emergency_close_all(self) -> None:
+        """
+        Immediately close every open position tracked in the store at market
+        price.  Intended for the remote ``command.emergency_stop`` handler.
+
+        Each position is closed in sequence. Individual failures are logged but
+        do not abort the loop — we attempt to close every position regardless.
+        Raises `RuntimeError` only if the broker is unreachable.
+
+        Note: the caller is responsible for pausing the signal queue to prevent
+        new positions from opening while this runs.
+        """
+        try:
+            broker_positions = self._mt5_pos.get_open_positions(self._cfg.magic)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Emergency stop: cannot fetch open positions from MT5 — {exc}"
+            ) from exc
+
+        if not broker_positions:
+            logger.info("Emergency stop: no open positions to close")
+            return
+
+        logger.warning(
+            "Emergency stop: closing %d open position(s)", len(broker_positions)
+        )
+        errors: list[str] = []
+        for pos in broker_positions:
+            try:
+                symbol_info = self._mt5_pos.get_symbol_info(pos.symbol)
+                tick = self._mt5_pos.get_current_tick(pos.symbol)
+                if tick is None:
+                    raise RuntimeError(f"No tick data for {pos.symbol}")
+
+                is_buy = pos.side == PositionSide.BUY
+                close_price = tick.bid if is_buy else tick.ask
+                order_type = Mt5OrderType.SELL if is_buy else Mt5OrderType.BUY
+
+                self._mt5_orders.close_position(
+                    ticket=pos.ticket,
+                    symbol=pos.symbol,
+                    side=order_type,
+                    volume=pos.lots,
+                    price=close_price,
+                    slippage=self._cfg.slippage,
+                    magic=self._cfg.magic,
+                    comment="emergency-stop",
+                    filling_mode=symbol_info.order_filling_mode,
+                )
+                logger.warning(
+                    "Emergency stop: closed ticket=%d %s %.2f lots @ %.5f",
+                    pos.ticket,
+                    pos.symbol,
+                    pos.lots,
+                    close_price,
+                )
+                metrics.increment("emergency_stop.positions_closed")
+            except Exception as exc:
+                msg = f"Emergency stop: failed to close ticket={pos.ticket} {pos.symbol}: {exc}"
+                logger.exception(msg)
+                errors.append(msg)
+
+        if errors:
+            raise RuntimeError(
+                f"Emergency stop completed with {len(errors)} error(s): "
+                + "; ".join(errors)
+            )
+
     # ── Startup hydration ─────────────────────────────────────────────────────
 
     def hydrate_from_broker(self) -> None:
