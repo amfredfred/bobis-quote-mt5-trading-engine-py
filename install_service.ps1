@@ -1,6 +1,6 @@
 # install_service.ps1 — Run as Administrator
 #
-# Installs, removes, or updates the TradeRelay Engine Windows service via NSSM.
+# Installs, removes, or updates the Apex Quant Trader Windows service via NSSM.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1
@@ -9,7 +9,7 @@
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1 -VenvName .venv
 #
 # Resolution order for the engine executable:
-#   1. dist\TradeRelay-Engine\TradeRelay-Engine.exe  (packaged build — preferred)
+#   1. dist\apex-quant-trader-agent\apex-quant-trader-agent.exe  (packaged build — preferred)
 #   2. <VenvName>\Scripts\execution-engine.exe        (dev venv install — fallback)
 
 param(
@@ -21,9 +21,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ServiceName   = "TradeRelayEngine"
-$DisplayName   = "TradeRelay Engine"
-$Description   = "Event-driven trade execution engine for MetaTrader 5 (TradeRelay)"
+$ServiceName   = "apex-quant-trader-agent"
+$DisplayName   = "Apex Quant Trader"
+$Description   = "Event-driven trade execution engine for MetaTrader 5 (Apex Quant Trader)"
 $EngineDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $NssmExe       = Join-Path $EngineDir "nssm\nssm-2.24\win64\nssm.exe"
 $LogDir        = Join-Path $EngineDir "logs"
@@ -31,7 +31,7 @@ $LogDir        = Join-Path $EngineDir "logs"
 # ---------------------------------------------------------------------------
 # Resolve executable path
 # ---------------------------------------------------------------------------
-$PackagedExe = Join-Path $EngineDir "dist\TradeRelay-Engine\TradeRelay-Engine.exe"
+$PackagedExe = Join-Path $EngineDir "dist\apex-quant-trader-agent\apex-quant-trader-agent.exe"
 $VenvExe     = Join-Path $EngineDir "$VenvName\Scripts\execution-engine.exe"
 
 $AppExe = $null
@@ -99,7 +99,7 @@ function Cleanup-Orphans {
         $_.ProcessId -ne $PID -and
         $_.CommandLine -and
         $_.CommandLine -match $escapedDir -and
-        ($_.Name -like "TradeRelay*" -or $_.Name -like "execution-engine*" -or $_.Name -like "python*")
+        ($_.Name -like "Apex Quant Trader*" -or $_.Name -like "execution-engine*" -or $_.Name -like "python*")
     } | ForEach-Object {
         Write-Host "  Stopping orphan PID $($_.ProcessId): $($_.Name)"
         Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue

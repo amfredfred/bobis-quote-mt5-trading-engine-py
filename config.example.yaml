@@ -1,6 +1,6 @@
 ﻿# Execution Engine â€” configuration
 # Copy to config.yaml and fill in your values. config.yaml is git-ignored.
-# Secrets (MT5_PASSWORD, TRADERELAY_ACTIVATION_KEY) go in .env.
+# Secrets (MT5_PASSWORD, APEX_ACTIVATION_KEY) go in .env.
 
 gateway:
   ws_url: ws://localhost:4000/engine

@@ -1,4 +1,4 @@
-# scripts\support-bundle.ps1 — TradeRelay Engine diagnostic bundle collector
+# scripts\support-bundle.ps1 — Apex Quant Trader diagnostic bundle collector
 #
 # Collects logs, redacted config, service status, and system info into a
 # zip archive that can be sent to support without exposing secrets.
@@ -7,7 +7,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\support-bundle.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\support-bundle.ps1 -OutDir C:\Temp
 #
-# Output: TradeRelay-Support-<date>.zip (in -OutDir, default: Desktop)
+# Output: Apex Quant Trader-Support-<date>.zip (in -OutDir, default: Desktop)
 
 param(
     [string]$OutDir = [Environment]::GetFolderPath("Desktop"),
@@ -18,9 +18,9 @@ $ErrorActionPreference = "Continue"
 
 $ScriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EngineDir    = Split-Path -Parent $ScriptDir
-$ServiceName  = "TradeRelayEngine"
+$ServiceName  = "apex-quant-trader-agent"
 $Timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
-$BundleName   = "TradeRelay-Support-$Timestamp"
+$BundleName   = "Apex Quant Trader-Support-$Timestamp"
 $StagingDir   = Join-Path $env:TEMP $BundleName
 $ZipOut       = Join-Path $OutDir "$BundleName.zip"
 
@@ -33,7 +33,7 @@ $SecretKeys = @(
     "activation_key_hash",
     # Legacy .env keys (backward compat)
     "MT5_PASSWORD",
-    "TRADERELAY_ACTIVATION_KEY",
+    "APEX_ACTIVATION_KEY",
     "SIGNAL_HMAC_SECRET"
 )
 
@@ -86,7 +86,7 @@ New-Item -ItemType Directory -Force -Path $OutDir      | Out-Null
 
 Write-Host ""
 Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host "  TradeRelay — Support Bundle"        -ForegroundColor Cyan
+Write-Host "  Apex Quant Trader — Support Bundle"        -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "  Engine dir : $EngineDir"
 Write-Host "  Staging    : $StagingDir"
@@ -194,7 +194,7 @@ Write-Section "Engine version"
 
 $verFile = Join-Path $EngineDir "version.txt"
 if (-not (Test-Path $verFile)) {
-    $verFile = Join-Path $EngineDir "TradeRelay-Engine\version.txt"
+    $verFile = Join-Path $EngineDir "apex-quant-trader-agent\version.txt"
 }
 if (Test-Path $verFile) {
     $ver = (Get-Content $verFile -Raw).Trim()
@@ -241,7 +241,7 @@ if (Test-Path $dbFile) {
 # ---------------------------------------------------------------------------
 $manifest = Join-Path $StagingDir "MANIFEST.txt"
 @"
-TradeRelay Support Bundle
+Apex Quant Trader Support Bundle
 Generated : $Timestamp
 Machine   : $env:COMPUTERNAME
 User      : $env:USERNAME
@@ -276,5 +276,5 @@ Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "  Bundle ready: $ZipOut"              -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Send this file to support@traderelay.io"
+Write-Host "  Send this file to support@apexquanttrader.io"
 Write-Host ""

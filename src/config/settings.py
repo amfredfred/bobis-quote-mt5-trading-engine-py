@@ -198,7 +198,7 @@ class GatewayConfig:
         if len(self.engine_id) < 8:
             raise ValueError("gateway.engine_id must be at least 8 characters.")
         if len(self.activation_key) < 16:
-            raise ValueError("TRADERELAY_ACTIVATION_KEY must be at least 16 characters.")
+            raise ValueError("APEX_ACTIVATION_KEY must be at least 16 characters.")
         if self.room_ttl_seconds < 30 or self.room_ttl_seconds > 86400:
             raise ValueError("gateway.room_ttl_seconds must be between 30 and 86400.")
         if not self.symbols:
@@ -241,7 +241,7 @@ class AppConfig:
         # existing .env-based installs continue to work without reconfiguration.
         mt5_password = str(mt5.get("password") or os.environ.get("MT5_PASSWORD", ""))
         activation_key = str(
-            gateway.get("activation_key") or os.environ.get("TRADERELAY_ACTIVATION_KEY", "")
+            gateway.get("activation_key") or os.environ.get("APEX_ACTIVATION_KEY", "")
         )
         signal_hmac_secret = (
             gateway.get("signal_hmac_secret") or os.environ.get("SIGNAL_HMAC_SECRET") or None

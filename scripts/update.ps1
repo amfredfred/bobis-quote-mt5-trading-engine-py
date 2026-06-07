@@ -1,4 +1,4 @@
-# scripts\update.ps1 — TradeRelay Engine auto-updater
+# scripts\update.ps1 — Apex Quant Trader auto-updater
 #
 # Checks the gateway for a newer engine version, downloads it, verifies the
 # SHA-256 checksum, and performs a hot-swap of the dist\ directory.
@@ -30,10 +30,10 @@ $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EngineDir  = Split-Path -Parent $ScriptDir  # scripts\ → engine root
 
 $VersionFile  = Join-Path $EngineDir "version.txt"
-$DistDir      = Join-Path $EngineDir "TradeRelay-Engine"   # {app}\TradeRelay-Engine
-$ServiceName  = "TradeRelayEngine"
-$TempDir      = Join-Path $env:TEMP "traderelay-update"
-$BackupDir    = Join-Path $EngineDir "TradeRelay-Engine.bak"
+$DistDir      = Join-Path $EngineDir "apex-quant-trader-agent"   # {app}\apex-quant-trader-agent
+$ServiceName  = "apex-quant-trader-agent"
+$TempDir      = Join-Path $env:TEMP "apexquanttrader-update"
+$BackupDir    = Join-Path $EngineDir "apex-quant-trader-agent.bak"
 
 # ── Read gateway URL from config.yaml ────────────────────────────────────
 function Get-GatewayBase {
@@ -50,7 +50,7 @@ function Get-GatewayBase {
 $GatewayBase = Get-GatewayBase
 if (-not $GatewayBase) {
     Write-Warning "Could not determine gateway URL from config.yaml — using default"
-    $GatewayBase = "https://gateway.traderelay.io"
+    $GatewayBase = "https://gateway.apexquanttrader.io"
 }
 
 $VersionEndpoint = "$GatewayBase/engine-version"
@@ -116,7 +116,7 @@ function Start-ServiceSafe {
 # ---------------------------------------------------------------------------
 $LocalVersion = Get-LocalVersion
 Write-Host ""
-Write-Host "=== TradeRelay Engine Updater ===" -ForegroundColor Cyan
+Write-Host "=== Apex Quant Trader Updater ===" -ForegroundColor Cyan
 Write-Host "  Local version  : $LocalVersion"
 Write-Host "  Version check  : $VersionEndpoint"
 Write-Host ""
@@ -167,7 +167,7 @@ Write-Host "  Updating $LocalVersion → $RemoteVersion..." -ForegroundColor Yel
 
 # ── Download ──────────────────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
-$ZipPath = Join-Path $TempDir "TradeRelay-Engine-$RemoteVersion.zip"
+$ZipPath = Join-Path $TempDir "apex-quant-trader-agent-$RemoteVersion.zip"
 
 Write-Host "  Downloading $DownloadUrl..."
 Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath -UseBasicParsing
@@ -189,7 +189,7 @@ if ($svc -and $svc.Status -eq "Running") {
 
 # ── Back up existing dist ──────────────────────────────────────────────────
 if (Test-Path $DistDir) {
-    Write-Host "  Backing up existing engine to TradeRelay-Engine.bak..."
+    Write-Host "  Backing up existing engine to apex-quant-trader-agent.bak..."
     if (Test-Path $BackupDir) { Remove-Item $BackupDir -Recurse -Force }
     Rename-Item $DistDir $BackupDir
 }
@@ -199,8 +199,8 @@ Write-Host "  Extracting..."
 Expand-Archive $ZipPath -DestinationPath $EngineDir -Force
 
 # Verify the exe appeared
-if (-not (Test-Path (Join-Path $DistDir "TradeRelay-Engine.exe"))) {
-    Write-Error "Extraction completed but TradeRelay-Engine.exe not found — rolling back"
+if (-not (Test-Path (Join-Path $DistDir "apex-quant-trader-agent.exe"))) {
+    Write-Error "Extraction completed but apex-quant-trader-agent.exe not found — rolling back"
     if (Test-Path $BackupDir) { Rename-Item $BackupDir $DistDir }
     if ($serviceWasRunning) { Start-ServiceSafe }
     exit 1

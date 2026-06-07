@@ -12,7 +12,7 @@ $EngineDir    = Split-Path -Parent $InstallerDir
 
 Write-Host ""
 Write-Host "========================================"  -ForegroundColor Cyan
-Write-Host "  TradeRelay Engine - Build Pipeline"     -ForegroundColor Cyan
+Write-Host "  Apex Quant Trader - Build Pipeline"     -ForegroundColor Cyan
 Write-Host "========================================"  -ForegroundColor Cyan
 Write-Host "  Engine dir : $EngineDir"
 Write-Host ""
@@ -89,11 +89,11 @@ if ($SkipPackage) {
         Pop-Location
     }
 
-    $distDir = Join-Path $EngineDir "dist\TradeRelay-Engine"
+    $distDir = Join-Path $EngineDir "dist\apex-quant-trader-agent"
     if (Test-Path $distDir) {
-        Write-Host "      Done  : dist\TradeRelay-Engine\" -ForegroundColor Green
+        Write-Host "      Done  : dist\apex-quant-trader-agent\" -ForegroundColor Green
     } else {
-        Write-Host "  ERROR: dist\TradeRelay-Engine\ was not created." -ForegroundColor Red
+        Write-Host "  ERROR: dist\apex-quant-trader-agent\ was not created." -ForegroundColor Red
         exit 1
     }
 }
@@ -119,24 +119,24 @@ if ($SkipInstaller) {
         Write-Host ""
         Write-Host "  WARNING: Inno Setup not found - skipping installer build." -ForegroundColor Yellow
         Write-Host "  Install : https://jrsoftware.org/isdl.php"                -ForegroundColor Yellow
-        Write-Host "  The packaged engine in dist\TradeRelay-Engine\ is usable for testing." -ForegroundColor DarkGray
+        Write-Host "  The packaged engine in dist\apex-quant-trader-agent\ is usable for testing." -ForegroundColor DarkGray
     } else {
         Write-Host "      Using : $iscc" -ForegroundColor DarkGray
 
-        $issFile = Join-Path $EngineDir "installer\TradeRelay.iss"
+        $issFile = Join-Path $EngineDir "installer\ApexQuantTrader.iss"
         & $iscc $issFile
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  ERROR: ISCC exited with code $LASTEXITCODE" -ForegroundColor Red
             exit 1
         }
 
-        $outExe = Join-Path $EngineDir "installer\Output\TradeRelaySetup.exe"
+        $outExe = Join-Path $EngineDir "installer\Output\ApexQuantTraderSetup.exe"
         if (Test-Path $outExe) {
             $bytes  = (Get-Item $outExe).Length
             $sizeMB = [math]::Round($bytes / 1048576, 1)
-            Write-Host "      Done  : installer\Output\TradeRelaySetup.exe - $sizeMB MB" -ForegroundColor Green
+            Write-Host "      Done  : installer\Output\ApexQuantTraderSetup.exe - $sizeMB MB" -ForegroundColor Green
         } else {
-            Write-Host "      Done  : installer\Output\TradeRelaySetup.exe" -ForegroundColor Green
+            Write-Host "      Done  : installer\Output\ApexQuantTraderSetup.exe" -ForegroundColor Green
         }
     }
 }

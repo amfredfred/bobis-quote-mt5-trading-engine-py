@@ -1,5 +1,5 @@
 """
-Connects to the TradeRelay Gateway WebSocket, deserialises messages,
+Connects to the Apex Quant Trader Gateway WebSocket, deserialises messages,
 validates them, and emits them onto the EventBus.
 """
 
@@ -221,7 +221,7 @@ class SignalConsumer:
     def _on_disconnected(self) -> None:
         self._activated.clear()
         self._metrics_subscribed.clear()
-        logger.warning("TradeRelay Gateway disconnected")
+        logger.warning("Apex Quant Trader Gateway disconnected")
 
     def _refresh_rooms(self) -> None:
         refresh_interval = max(15.0, self._room_ttl_seconds / 2)
@@ -442,7 +442,7 @@ class SignalConsumer:
             self._replay_outbox()
             fast_path = message_id == self._hello_message_id and self._activation_message_id is None
             logger.info(
-                "TradeRelay activation accepted",
+                "Apex Quant Trader activation accepted",
                 extra={
                     "engine_id": self._engine_id,
                     "symbols": data.get("symbols", []),
@@ -456,7 +456,7 @@ class SignalConsumer:
             if message_id in {self._hello_message_id, self._activation_message_id}:
                 self._activated.clear()
                 logger.error(
-                    "TradeRelay Gateway rejected connection setup",
+                    "Apex Quant Trader Gateway rejected connection setup",
                     extra={"message_id": message_id, "errors": data.get("errors", [])},
                 )
             return True

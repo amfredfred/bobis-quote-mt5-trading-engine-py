@@ -1,4 +1,4 @@
-# installer\setup.ps1 — TradeRelay Engine first-run setup wizard
+# installer\setup.ps1 — Apex Quant Trader first-run setup wizard
 #
 # Called automatically by the Inno Setup installer after file copy.
 # Can also be run standalone for reconfiguration:
@@ -25,17 +25,17 @@ if ($InstallDir -eq "") {
     # setup.ps1 is placed there directly.  When run from the repo for dev
     # the script is in installer\ so go up one level.
     $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    if (Test-Path (Join-Path $ScriptDir "TradeRelay-Engine\TradeRelay-Engine.exe")) {
+    if (Test-Path (Join-Path $ScriptDir "apex-quant-trader-agent\apex-quant-trader-agent.exe")) {
         $InstallDir = $ScriptDir
-    } elseif (Test-Path (Join-Path (Split-Path -Parent $ScriptDir) "dist\TradeRelay-Engine\TradeRelay-Engine.exe")) {
+    } elseif (Test-Path (Join-Path (Split-Path -Parent $ScriptDir) "dist\apex-quant-trader-agent\apex-quant-trader-agent.exe")) {
         $InstallDir = Split-Path -Parent $ScriptDir
     } else {
         $InstallDir = $ScriptDir
     }
 }
 
-$EngineExe      = Join-Path $InstallDir "TradeRelay-Engine\TradeRelay-Engine.exe"
-$ConfigTemplate = Join-Path $InstallDir "TradeRelay-Engine\config.example.yaml"
+$EngineExe      = Join-Path $InstallDir "apex-quant-trader-agent\apex-quant-trader-agent.exe"
+$ConfigTemplate = Join-Path $InstallDir "apex-quant-trader-agent\config.example.yaml"
 $ConfigOut      = Join-Path $InstallDir "config.yaml"
 $DataDir        = Join-Path $InstallDir "data"
 $LogsDir        = Join-Path $InstallDir "logs"
@@ -216,9 +216,9 @@ if ($Unattended -and (Test-Path $AnswersFile)) {
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
-Write-Banner "TradeRelay Engine — Setup Wizard"
+Write-Banner "Apex Quant Trader — Setup Wizard"
 
-$VersionFile = Join-Path $InstallDir "TradeRelay-Engine\version.txt"
+$VersionFile = Join-Path $InstallDir "apex-quant-trader-agent\version.txt"
 if (-not (Test-Path $VersionFile)) {
     $VersionFile = Join-Path $InstallDir "version.txt"
 }
@@ -284,7 +284,7 @@ $Mt5Password = Ask "MT5 account password" "" -Secret
 # ---------------------------------------------------------------------------
 Write-Step 3 9 "Gateway connection"
 
-$GatewayUrl = Ask "Gateway WebSocket URL" ($ua["GatewayUrl"] ?? "wss://gateway.traderelay.io/engine")
+$GatewayUrl = Ask "Gateway WebSocket URL" ($ua["GatewayUrl"] ?? "wss://gateway.apexquanttrader.io/engine")
 $EngineId   = Ask "Engine ID (unique name for this machine)" ($ua["EngineId"] ?? "engine-$(hostname)-01")
 
 # ---------------------------------------------------------------------------
@@ -383,7 +383,7 @@ if (-not (Test-Path $ConfigTemplate)) {
 }
 if (-not $ConfigTemplate -or -not (Test-Path $ConfigTemplate)) {
     Write-Warning "config.example.yaml not found — writing minimal config.yaml"
-    $yaml = "# TradeRelay Engine config`n"
+    $yaml = "# Apex Quant Trader config`n"
 } else {
     $yaml = Get-Content $ConfigTemplate -Raw
 }
@@ -435,7 +435,7 @@ Write-Step 8 9 "Windows service"
 
 $installSvc = $false
 if (-not $SkipService) {
-    $installSvc = AskYN "Install TradeRelay Engine as a Windows service?" $true
+    $installSvc = AskYN "Install Apex Quant Trader as a Windows service?" $true
 }
 
 if ($installSvc) {
@@ -459,7 +459,7 @@ if ($installSvc) {
 } else {
     Write-Host "  Skipping service install." -ForegroundColor DarkGray
     Write-Host "  To run manually:"
-    Write-Host "    TradeRelay-Engine\TradeRelay-Engine.exe"
+    Write-Host "    apex-quant-trader-agent\apex-quant-trader-agent.exe"
 }
 
 # ---------------------------------------------------------------------------
@@ -472,20 +472,20 @@ if ($installSvc) {
     Write-Host "  Waiting for service to start..." -ForegroundColor DarkGray
     $started = $false
     for ($i = 0; $i -lt 10; $i++) {
-        $svc = Get-Service "TradeRelayEngine" -ErrorAction SilentlyContinue
+        $svc = Get-Service "apex-quant-trader-agent" -ErrorAction SilentlyContinue
         if ($svc -and $svc.Status -eq "Running") { $started = $true; break }
         Start-Sleep 1
     }
     if ($started) {
-        Write-Host "  TradeRelayEngine service is RUNNING." -ForegroundColor Green
+        Write-Host "  apex-quant-trader-agent service is RUNNING." -ForegroundColor Green
     } else {
-        Write-Host "  Service status: $($(Get-Service 'TradeRelayEngine' -ErrorAction SilentlyContinue)?.Status ?? 'unknown')" -ForegroundColor Yellow
+        Write-Host "  Service status: $($(Get-Service 'apex-quant-trader-agent' -ErrorAction SilentlyContinue)?.Status ?? 'unknown')" -ForegroundColor Yellow
         Write-Host "  Check logs: Get-Content '$LogsDir\stderr.log' -Tail 50"
     }
 }
 
 # Open dashboard in browser
-$dashboardUrl = "https://app.traderelay.io"
+$dashboardUrl = "https://app.apexquanttrader.io"
 
 Write-Host ""
 Write-Host "  Opening dashboard: $dashboardUrl" -ForegroundColor Cyan
@@ -510,8 +510,8 @@ Write-Host "  Mode   : $ModeLabel"
 Write-Host ""
 if ($installSvc) {
     Write-Host "  Service commands:"
-    Write-Host "    Start   : Start-Service TradeRelayEngine"
-    Write-Host "    Stop    : Stop-Service  TradeRelayEngine"
+    Write-Host "    Start   : Start-Service apex-quant-trader-agent"
+    Write-Host "    Stop    : Stop-Service  apex-quant-trader-agent"
     Write-Host "    Logs    : Get-Content '$LogsDir\stderr.log' -Tail 50 -Wait"
 } else {
     Write-Host "  To start engine:"

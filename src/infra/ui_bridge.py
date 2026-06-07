@@ -305,7 +305,18 @@ class UIBridge:
                 except Exception:
                     pass
 
-        server = await websockets.serve(handler, "0.0.0.0", self._port)  # type: ignore[attr-defined]
+        try:
+            server = await websockets.serve(handler, "0.0.0.0", self._port)  # type: ignore[attr-defined]
+        except OSError as exc:
+            logger.warning(
+                "UIBridge: port %d already in use — dashboard WS disabled. "
+                "(%s)  Is another engine instance running?",
+                self._port, exc,
+            )
+            # Keep the stop_event running so the engine itself isn't affected.
+            await self._stop_event.wait()  # type: ignore[union-attr]
+            return
+
         try:
             await asyncio.gather(
                 broadcaster(),
