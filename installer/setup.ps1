@@ -37,7 +37,6 @@ if ($InstallDir -eq "") {
 $EngineExe      = Join-Path $InstallDir "TradeRelay-Engine\TradeRelay-Engine.exe"
 $ConfigTemplate = Join-Path $InstallDir "TradeRelay-Engine\config.example.yaml"
 $ConfigOut      = Join-Path $InstallDir "config.yaml"
-$EnvOut         = Join-Path $InstallDir ".env"
 $DataDir        = Join-Path $InstallDir "data"
 $LogsDir        = Join-Path $InstallDir "logs"
 $ServiceScript  = Join-Path $InstallDir "install_service.ps1"
@@ -277,7 +276,7 @@ $Mt5Server = Ask "MT5 server name"             ($ua["Mt5Server"] ?? "")
 $Mt5Magic  = Ask "Magic number for this engine" ($ua["Mt5Magic"] ?? "8858")
 
 Write-Host ""
-Write-Host "  MT5 password will be stored in .env (encrypted, current user only)." -ForegroundColor DarkGray
+Write-Host "  MT5 password will be stored in config.yaml (permissions restricted to current user)." -ForegroundColor DarkGray
 $Mt5Password = Ask "MT5 account password" "" -Secret
 
 # ---------------------------------------------------------------------------
@@ -390,15 +389,17 @@ if (-not $ConfigTemplate -or -not (Test-Path $ConfigTemplate)) {
 }
 
 # ── Gateway section ───────────────────────────────────────────────────────
-$yaml = Set-YamlValue $yaml "ws_url"         $GatewayUrl   2
-$yaml = Set-YamlValue $yaml "engine_id"      $EngineId     2
-$yaml = Set-YamlList  $yaml "symbols"        $Symbols      2
+$yaml = Set-YamlValue $yaml "ws_url"          $GatewayUrl      2
+$yaml = Set-YamlValue $yaml "engine_id"       $EngineId        2
+$yaml = Set-YamlValue $yaml "activation_key"  $ActivationKey   2
+$yaml = Set-YamlList  $yaml "symbols"         $Symbols         2
 
 # ── MT5 section ───────────────────────────────────────────────────────────
-if ($Mt5Login)  { $yaml = Set-YamlValue $yaml "login"  $Mt5Login  2 }
-if ($Mt5Server) { $yaml = Set-YamlValue $yaml "server" $Mt5Server 2 }
-if ($Mt5Path)   { $yaml = Set-YamlValue $yaml "path"   $Mt5Path   2 }
-if ($Mt5Magic)  { $yaml = Set-YamlValue $yaml "magic"  $Mt5Magic  2 }
+if ($Mt5Login)    { $yaml = Set-YamlValue $yaml "login"    $Mt5Login    2 }
+if ($Mt5Server)   { $yaml = Set-YamlValue $yaml "server"   $Mt5Server   2 }
+if ($Mt5Path)     { $yaml = Set-YamlValue $yaml "path"     $Mt5Path     2 }
+if ($Mt5Magic)    { $yaml = Set-YamlValue $yaml "magic"    $Mt5Magic    2 }
+if ($Mt5Password) { $yaml = Set-YamlValue $yaml "password" $Mt5Password 2 }
 
 # ── Risk section ──────────────────────────────────────────────────────────
 $yaml = Set-YamlValue $yaml "max_daily_loss_percent" $MaxDailyLoss    2
@@ -417,25 +418,10 @@ if ($SymbolSlRatios.Count -gt 0) {
     }
 }
 
-# ── Write config.yaml ─────────────────────────────────────────────────────
+# ── Write config.yaml and restrict permissions to current user ────────────
 Set-Content -Path $ConfigOut -Value $yaml -Encoding utf8
-Write-Host "  config.yaml written: $ConfigOut" -ForegroundColor Green
-
-# ── .env ──────────────────────────────────────────────────────────────────
-$envContent = ""
-if (Test-Path $EnvOut) {
-    $envContent = Get-Content $EnvOut -Raw
-}
-
-$envContent = Set-EnvValue $envContent "TRADERELAY_ACTIVATION_KEY" $ActivationKey
-if ($Mt5Password) {
-    $envContent = Set-EnvValue $envContent "MT5_PASSWORD" $Mt5Password
-}
-
-# Write + restrict permissions
-Set-Content -Path $EnvOut -Value $envContent -Encoding utf8
-Protect-File $EnvOut
-Write-Host "  .env written + permissions restricted: $EnvOut" -ForegroundColor Green
+Protect-File $ConfigOut
+Write-Host "  config.yaml written + permissions restricted: $ConfigOut" -ForegroundColor Green
 
 # ── Create data/ and logs/ directories ────────────────────────────────────
 New-Item -ItemType Directory -Force -Path $DataDir  | Out-Null
@@ -500,11 +486,6 @@ if ($installSvc) {
 
 # Open dashboard in browser
 $dashboardUrl = "https://app.traderelay.io"
-$envPath = Join-Path $InstallDir ".env"
-if (Test-Path $envPath) {
-    $dashLine = (Get-Content $envPath | Where-Object { $_ -match "^DASHBOARD_URL=" }) | Select-Object -First 1
-    if ($dashLine) { $dashboardUrl = ($dashLine -split "=", 2)[1].Trim() }
-}
 
 Write-Host ""
 Write-Host "  Opening dashboard: $dashboardUrl" -ForegroundColor Cyan
@@ -523,7 +504,6 @@ Write-Host "  Setup complete!" -ForegroundColor Green
 Write-Host ("=" * 50) -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Config : $ConfigOut"
-Write-Host "  Env    : $EnvOut"
 Write-Host "  Data   : $DataDir"
 Write-Host "  Logs   : $LogsDir"
 Write-Host "  Mode   : $ModeLabel"

@@ -24,13 +24,17 @@ $BundleName   = "TradeRelay-Support-$Timestamp"
 $StagingDir   = Join-Path $env:TEMP $BundleName
 $ZipOut       = Join-Path $OutDir "$BundleName.zip"
 
-# Secrets to redact from config.yaml and .env
+# Secrets to redact from config.yaml (YAML key: value format)
 $SecretKeys = @(
+    "password",
+    "activation_key",
+    "signal_hmac_secret",
+    "credential_hash",
+    "activation_key_hash",
+    # Legacy .env keys (backward compat)
     "MT5_PASSWORD",
     "TRADERELAY_ACTIVATION_KEY",
-    "SIGNAL_HMAC_SECRET",
-    "credential_hash",
-    "activation_key_hash"
+    "SIGNAL_HMAC_SECRET"
 )
 
 # ---------------------------------------------------------------------------

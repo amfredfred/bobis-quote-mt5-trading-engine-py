@@ -219,7 +219,9 @@ class AppConfig:
 
     @classmethod
     def from_yaml(cls, path: Path | str = "config.yaml") -> "AppConfig":
-        # Secrets from .env override anything — load before reading YAML
+        # Load .env if present — kept for backward compatibility with existing
+        # installations that still have a .env file.  New installs write
+        # everything into config.yaml and no longer need .env.
         load_dotenv(override=False)
 
         with open(path, "r", encoding="utf-8") as fh:
@@ -235,10 +237,15 @@ class AppConfig:
         if isinstance(gateway_symbols_raw, str):
             gateway_symbols_raw = [s.strip() for s in gateway_symbols_raw.split(",")]
 
-        # Secrets are sourced from .env only
-        mt5_password = os.environ.get("MT5_PASSWORD", "")
-        activation_key = os.environ.get("TRADERELAY_ACTIVATION_KEY", "")
-        signal_hmac_secret = os.environ.get("SIGNAL_HMAC_SECRET") or None
+        # Secrets: prefer config.yaml values; fall back to env vars so that
+        # existing .env-based installs continue to work without reconfiguration.
+        mt5_password = str(mt5.get("password") or os.environ.get("MT5_PASSWORD", ""))
+        activation_key = str(
+            gateway.get("activation_key") or os.environ.get("TRADERELAY_ACTIVATION_KEY", "")
+        )
+        signal_hmac_secret = (
+            gateway.get("signal_hmac_secret") or os.environ.get("SIGNAL_HMAC_SECRET") or None
+        )
 
         return cls(
             gateway=GatewayConfig(

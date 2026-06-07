@@ -14,6 +14,7 @@
 #   random %TEMP% path on every launch, causing DLL resolution to fail silently.
 #   --onedir keeps all binaries in a stable dist/ folder so MT5 always finds them.
 
+import os
 import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules  # noqa: F401
 
@@ -73,6 +74,16 @@ hidden_imports = [
     "_ssl",
     "certifi",
 
+    # ── numpy (required by MetaTrader5) ─────────────────────────────────────
+    # MT5 imports numpy at runtime; PyInstaller misses it because the import
+    # is inside a C extension.  Collect all submodules to get _core, linalg, etc.
+    "numpy",
+    "numpy._core",
+    "numpy._core.multiarray",
+    "numpy._core._multiarray_umath",
+    "numpy.core",
+    "numpy.core.multiarray",
+
     # ── Our own package ──────────────────────────────────────────────────────
     # Force-collect every submodule under src/ so PyInstaller doesn't miss
     # dynamically imported adapters or optional broker paths.
@@ -80,6 +91,9 @@ hidden_imports = [
 
 # Collect every submodule in our src package — catches dynamic imports
 hidden_imports += collect_submodules("src")
+
+# Collect all numpy submodules (covers _core, linalg, fft, random, etc.)
+hidden_imports += collect_submodules("numpy")
 
 # ---------------------------------------------------------------------------
 # Data files
@@ -95,12 +109,21 @@ datas = [
 # OS does not ship IANA tz files)
 datas += collect_data_files("tzdata")
 
+# numpy data files (.pyd C extensions, .pyi stubs, etc.)
+datas += collect_data_files("numpy")
+
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
+# sys.base_prefix = the base Python install dir (e.g. C:\Python312).
+# Adding it to pathex lets PyInstaller's bootloader find python312.dll when
+# running from a venv, where the DLL lives in the base install rather than
+# the venv Scripts\ folder.
+_base_python_dir = sys.base_prefix
+
 a = Analysis(
     ["src/__main__.py"],
-    pathex=["."],
+    pathex=[".", _base_python_dir],
     binaries=[],
     datas=datas,
     hiddenimports=hidden_imports,
@@ -119,8 +142,7 @@ a = Analysis(
         "wheel",
         "hatch",
         "hatchling",
-        # Heavy packages we don't use
-        "numpy",
+        # Heavy packages we don't use directly (numpy is kept — MT5 requires it)
         "pandas",
         "matplotlib",
         "scipy",
