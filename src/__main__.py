@@ -60,16 +60,19 @@ def _headless_main() -> None:
     _time.configure(cfg.engine_timezone)
 
     # File logging:
-    #   - Packaged (PyInstaller): logs go to {install_root}\logs\ where
-    #     install_root = parent of the exe folder.  The Inno Setup installer
-    #     creates that directory with authusers-modify so the service can write.
-    #     e.g. C:\Program Files\Apex Quant Trader\logs\engine.log
+    #   - Packaged (PyInstaller): logs go to %ProgramData%\Apex Quant Trader\logs\
+    #     This is the standard Windows location for app data and is always
+    #     writable by the service account. Program Files is often read-only.
+    #     e.g. C:\ProgramData\Apex Quant Trader\logs\engine.log
     #   - Dev / source run: logs go adjacent to config.yaml as before.
     from src.infra.logger import add_file_handler
     if getattr(sys, "frozen", False):
-        # sys.executable = {app}\apex-quant-trader-agent\apex-quant-trader-agent.exe
-        # parent.parent  = {app}  (e.g. C:\Program Files\Apex Quant Trader)
-        _logs_dir = Path(sys.executable).parent.parent / "logs"
+        import os as _os
+        _logs_dir = (
+            Path(_os.environ.get("PROGRAMDATA", "C:/ProgramData"))
+            / "Apex Quant Trader"
+            / "logs"
+        )
     else:
         _cfg_resolved = Path(config_path).resolve()
         _logs_dir = _cfg_resolved.parent / "logs"
