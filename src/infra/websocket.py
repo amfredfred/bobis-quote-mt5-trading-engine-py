@@ -8,8 +8,10 @@ reconnects automatically on drop.  Pass `on_message` to receive frames.
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 import time
+import urllib.parse
 from typing import TYPE_CHECKING
 
 import websocket  # websocket-client
@@ -18,6 +20,30 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _ipv4_url(url: str) -> tuple[str, dict]:
+    """
+    Resolve the hostname in a wss:// URL to its IPv4 address so the
+    connection bypasses any broken IPv6 path on the host network.
+
+    Returns (rewritten_url, sslopt) where sslopt carries the original
+    hostname as server_hostname so Cloudflare/SNI still works.
+    Falls back to the original URL silently if resolution fails.
+    """
+    parsed = urllib.parse.urlparse(url)
+    hostname = parsed.hostname or ""
+    port = parsed.port or (443 if parsed.scheme in ("wss", "https") else 80)
+    try:
+        addrs = socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
+        if addrs:
+            ipv4 = addrs[0][4][0]
+            netloc = f"{ipv4}:{port}"
+            ipv4_url = parsed._replace(netloc=netloc).geturl()
+            return ipv4_url, {"server_hostname": hostname}
+    except OSError:
+        pass
+    return url, {}
 
 
 class WebSocketClient:
@@ -71,14 +97,25 @@ class WebSocketClient:
 
     def _run_loop(self) -> None:
         while not self._stopped.is_set():
+            # Resolve to IPv4 so a broken IPv6 path doesn't cause a ~21s
+            # timeout on every reconnect attempt (Cloudflare serves both;
+            # many ISPs have broken IPv6 routing).
+            conn_url, sslopt = _ipv4_url(self._url)
             self._ws = websocket.WebSocketApp(
-                self._url,
+                conn_url,
                 on_open=self._handle_open,
                 on_message=self._handle_message,
                 on_error=self._handle_error,
                 on_close=self._handle_close,
             )
-            self._ws.run_forever(ping_interval=int(self._ping_interval))
+            self._ws.run_forever(
+                ping_interval=int(self._ping_interval),
+                sslopt=sslopt if sslopt else None,
+                # Restore the original hostname in the HTTP Host header so
+                # Cloudflare can route the request correctly (the URL contains
+                # a raw IPv4 address to bypass broken IPv6 routing).
+                host=sslopt.get("server_hostname") if sslopt else None,
+            )
 
             if self._stopped.is_set():
                 break

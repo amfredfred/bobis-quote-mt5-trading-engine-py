@@ -59,12 +59,20 @@ def _headless_main() -> None:
     setup_logging(cfg.log_level, cfg.engine_timezone)
     _time.configure(cfg.engine_timezone)
 
-    # File logging: resolve log dir relative to config file so it is always
-    # adjacent to config.yaml — works correctly whether run from dev CWD or
-    # from an installed location where NSSM's AppDirectory differs from CWD.
+    # File logging:
+    #   - Packaged (PyInstaller): logs go to {install_root}\logs\ where
+    #     install_root = parent of the exe folder.  The Inno Setup installer
+    #     creates that directory with authusers-modify so the service can write.
+    #     e.g. C:\Program Files\Apex Quant Trader\logs\engine.log
+    #   - Dev / source run: logs go adjacent to config.yaml as before.
     from src.infra.logger import add_file_handler
-    _cfg_resolved = Path(config_path).resolve()
-    _logs_dir = _cfg_resolved.parent / "logs"
+    if getattr(sys, "frozen", False):
+        # sys.executable = {app}\apex-quant-trader-agent\apex-quant-trader-agent.exe
+        # parent.parent  = {app}  (e.g. C:\Program Files\Apex Quant Trader)
+        _logs_dir = Path(sys.executable).parent.parent / "logs"
+    else:
+        _cfg_resolved = Path(config_path).resolve()
+        _logs_dir = _cfg_resolved.parent / "logs"
     try:
         add_file_handler(_logs_dir, cfg.engine_timezone)
     except Exception as _fh_exc:
