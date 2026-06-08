@@ -36,19 +36,21 @@ _TAIL_RETRY_S = 5.0   # seconds between log-file retry attempts
 
 _EVENT_META = {
     # (icon, bg, border, text_color)
-    "trade.opened":     ("📈", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
-    "trade.tp1_hit":    ("✓",  SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
-    "trade.tp2_hit":    ("✓✓", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
-    "trade.sl_hit":     ("✕",  DANGER_BG,     DANGER_BORDER,   RED),
-    "trade.closed":     ("■",  SURFACE_RAISED, LINE,            MUTED),
-    "trade.error":      ("⛔", DANGER_BG,     DANGER_BORDER,   RED),
-    "signal.received":  ("📡", INFO_BG,       INFO_BORDER,     INFO),
-    "signal.triggered": ("🎯", INFO_BG,       INFO_BORDER,     INFO),
-    "risk.approved":    ("✅", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
-    "risk.rejected":    ("🚫", WARNING_BG,    WARNING_BORDER,  YELLOW),
-    "ws_connected":     ("🔗", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
-    "ws_disconnected":  ("🔌", DANGER_BG,     DANGER_BORDER,   RED),
-    "mt5_error":        ("⚠",  DANGER_BG,     DANGER_BORDER,   RED),
+    "trade.opened":      ("📈", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
+    "trade.tp1_hit":     ("✓",  SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
+    "trade.tp2_hit":     ("✓✓", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
+    "trade.sl_hit":      ("✕",  DANGER_BG,     DANGER_BORDER,   RED),
+    "trade.closed":      ("■",  SURFACE_RAISED, LINE,            MUTED),
+    "trade.invalidated": ("⊘",  WARNING_BG,    WARNING_BORDER,  YELLOW),
+    "trade.expired":     ("⏱",  SURFACE_RAISED, LINE,            MUTED),
+    "trade.error":       ("⛔", DANGER_BG,     DANGER_BORDER,   RED),
+    "signal.received":   ("📡", INFO_BG,       INFO_BORDER,     INFO),
+    "signal.triggered":  ("🎯", INFO_BG,       INFO_BORDER,     INFO),
+    "risk.approved":     ("✅", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
+    "risk.rejected":     ("🚫", WARNING_BG,    WARNING_BORDER,  YELLOW),
+    "ws_connected":      ("🔗", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
+    "ws_disconnected":   ("🔌", DANGER_BG,     DANGER_BORDER,   RED),
+    "mt5_error":         ("⚠",  DANGER_BG,     DANGER_BORDER,   RED),
 }
 
 
