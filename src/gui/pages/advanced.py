@@ -19,15 +19,16 @@ from typing import TYPE_CHECKING, Any
 
 import customtkinter as ctk
 
+from src.gui.theme import (
+    GREEN, RED, YELLOW, MUTED, TEXT,
+    SURFACE_RAISED, BASE, LINE, LINE_STRONG,
+    WARNING_BG, WARNING_BORDER,
+    INFO_BG,
+    section_rule, page_header,
+)
+
 if TYPE_CHECKING:
     from src.gui.app import ApexTraderGUI
-
-_GREEN   = "#00d4aa"
-_RED     = "#ff4757"
-_YELLOW  = "#ffa502"
-_MUTED   = "#6b6b8a"
-_TEXT    = "#e0e0e0"
-_CARD_BG = "#111128"
 
 
 class AdvancedPage(ctk.CTkScrollableFrame):
@@ -41,33 +42,33 @@ class AdvancedPage(ctk.CTkScrollableFrame):
     # ── Build ─────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        hdr = ctk.CTkFrame(self, height=52, fg_color=_CARD_BG, corner_radius=0)
-        hdr.pack(fill="x")
-        hdr.pack_propagate(False)
-        ctk.CTkLabel(
-            hdr, text="Advanced Settings",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(side="left", padx=20)
+        page_header(self, "Advanced Settings")
 
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=24, pady=16)
 
         # Warning banner
-        warn = ctk.CTkFrame(content, corner_radius=8, fg_color="#2a1a00")
+        warn = ctk.CTkFrame(
+            content, corner_radius=8,
+            fg_color=WARNING_BG, border_width=1, border_color=WARNING_BORDER,
+        )
         warn.pack(fill="x", pady=(0, 20))
         ctk.CTkLabel(
             warn,
             text="⚠  These settings are for technical users only.\n"
                  "Incorrect values may cause the engine to stop working.",
             font=ctk.CTkFont(size=12),
-            text_color="#ffcc66",
+            text_color=YELLOW,
             justify="left",
         ).pack(padx=16, pady=10, anchor="w")
 
         # ── Gateway ───────────────────────────────────────────────────────────
-        _section_label(content, "Gateway Connection")
+        section_rule(content, "Gateway Connection")
 
-        gw_card = ctk.CTkFrame(content, corner_radius=10)
+        gw_card = ctk.CTkFrame(
+            content, corner_radius=8,
+            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
+        )
         gw_card.pack(fill="x", pady=(0, 16))
         gw_inner = ctk.CTkFrame(gw_card, fg_color="transparent")
         gw_inner.pack(padx=24, pady=14, fill="x")
@@ -78,9 +79,12 @@ class AdvancedPage(ctk.CTkScrollableFrame):
                    hint="comma-separated, e.g. XAUUSD, US100")
 
         # ── Engine ────────────────────────────────────────────────────────────
-        _section_label(content, "Engine")
+        section_rule(content, "Engine")
 
-        eng_card = ctk.CTkFrame(content, corner_radius=10)
+        eng_card = ctk.CTkFrame(
+            content, corner_radius=8,
+            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
+        )
         eng_card.pack(fill="x", pady=(0, 16))
         eng_inner = ctk.CTkFrame(eng_card, fg_color="transparent")
         eng_inner.pack(padx=24, pady=14, fill="x")
@@ -91,9 +95,12 @@ class AdvancedPage(ctk.CTkScrollableFrame):
                    hint="DEBUG / INFO / WARNING / ERROR")
 
         # ── Execution ─────────────────────────────────────────────────────────
-        _section_label(content, "Execution Parameters")
+        section_rule(content, "Execution Parameters")
 
-        exec_card = ctk.CTkFrame(content, corner_radius=10)
+        exec_card = ctk.CTkFrame(
+            content, corner_radius=8,
+            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
+        )
         exec_card.pack(fill="x", pady=(0, 16))
         exec_inner = ctk.CTkFrame(exec_card, fg_color="transparent")
         exec_inner.pack(padx=24, pady=14, fill="x")
@@ -105,9 +112,12 @@ class AdvancedPage(ctk.CTkScrollableFrame):
         _adv_field(exec_inner, "Order Retry Count",    "execution.order_retry_count",  width=80,  vars_dict=self._vars)
 
         # ── Install / service ─────────────────────────────────────────────────
-        _section_label(content, "Service Management")
+        section_rule(content, "Service Management")
 
-        svc_card = ctk.CTkFrame(content, corner_radius=10)
+        svc_card = ctk.CTkFrame(
+            content, corner_radius=8,
+            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
+        )
         svc_card.pack(fill="x", pady=(0, 16))
         svc_inner = ctk.CTkFrame(svc_card, fg_color="transparent")
         svc_inner.pack(padx=24, pady=14, fill="x")
@@ -116,7 +126,7 @@ class AdvancedPage(ctk.CTkScrollableFrame):
             svc_inner,
             text="Reinstall the service if the engine executable has changed\n"
                  "or if the service is not starting correctly.",
-            font=ctk.CTkFont(size=12), text_color=_MUTED,
+            font=ctk.CTkFont(size=12), text_color=MUTED,
             justify="left",
         )
         svc_desc.pack(anchor="w", pady=(0, 10))
@@ -126,29 +136,33 @@ class AdvancedPage(ctk.CTkScrollableFrame):
 
         ctk.CTkButton(
             btn_row, text="Reinstall Service", width=160, height=34,
-            fg_color="#3a1a00", hover_color="#5a3000",
+            fg_color=WARNING_BG, hover_color="#2a2210",
+            border_width=1, border_color=WARNING_BORDER,
+            text_color=YELLOW,
             command=self._reinstall,
         ).pack(side="left", padx=(0, 10))
 
         self._lbl_svc_result = ctk.CTkLabel(
             btn_row, text="",
-            font=ctk.CTkFont(size=11), text_color=_MUTED,
+            font=ctk.CTkFont(size=11), text_color=MUTED,
         )
         self._lbl_svc_result.pack(side="left")
 
         # ── Save ──────────────────────────────────────────────────────────────
         self._lbl_status = ctk.CTkLabel(
             content, text="",
-            font=ctk.CTkFont(size=12), text_color=_MUTED,
+            font=ctk.CTkFont(size=12), text_color=MUTED,
         )
         self._lbl_status.pack(pady=(8, 6))
 
         ctk.CTkButton(
             content,
             text="💾  Save Advanced Settings",
-            height=42, width=260,
+            height=44, width=260,
             font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#2d4a6e", hover_color="#3d5a7e",
+            fg_color=INFO_BG, hover_color="#253850",
+            border_width=1, border_color="#1d2c42",
+            text_color="#8ab4ff",
             command=self._save,
         ).pack(pady=(0, 20))
 
@@ -213,7 +227,7 @@ class AdvancedPage(ctk.CTkScrollableFrame):
 
         if errors:
             self._lbl_status.configure(
-                text="⚠  " + "  |  ".join(errors), text_color=_YELLOW,
+                text="⚠  " + "  |  ".join(errors), text_color=YELLOW,
             )
             return
 
@@ -221,12 +235,12 @@ class AdvancedPage(ctk.CTkScrollableFrame):
             self.app.save_config(cfg)
         except Exception as exc:
             self._lbl_status.configure(
-                text=f"⚠  Write failed: {exc}", text_color=_RED,
+                text=f"⚠  Write failed: {exc}", text_color=RED,
             )
             return
 
         self._lbl_status.configure(
-            text="✓  Saved — restarting engine…", text_color=_GREEN,
+            text="✓  Saved — restarting engine…", text_color=GREEN,
         )
         threading.Thread(target=self._delayed_restart, daemon=True).start()
 
@@ -236,31 +250,20 @@ class AdvancedPage(ctk.CTkScrollableFrame):
         self.app.restart_with_new_config()
 
     def _reinstall(self) -> None:
-        self._lbl_svc_result.configure(text="Installing…", text_color=_YELLOW)
+        self._lbl_svc_result.configure(text="Installing…", text_color=YELLOW)
         self.app.svc.install(self.app.config_path)
 
     def on_engine_status(self, status: str, detail: str | None) -> None:
         from src.gui.service_controller import ServiceStatus
         if status == ServiceStatus.STOPPED and detail:
             self._lbl_svc_result.configure(
-                text=detail[:80], text_color=_MUTED,
+                text=detail[:80], text_color=MUTED,
             )
         elif status == ServiceStatus.RUNNING:
             self._lbl_svc_result.configure(text="")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _section_label(parent: tk.Widget, text: str) -> None:
-    ctk.CTkLabel(
-        parent, text=text,
-        font=ctk.CTkFont(size=12, weight="bold"),
-        text_color="#7070aa",
-    ).pack(anchor="w", pady=(0, 6))
-    ctk.CTkFrame(parent, height=1, fg_color="#2a2a4a").pack(
-        fill="x", pady=(0, 10)
-    )
-
 
 def _adv_field(
     parent: tk.Widget,
@@ -276,7 +279,7 @@ def _adv_field(
 
     ctk.CTkLabel(
         row, text=label, width=200, anchor="w",
-        font=ctk.CTkFont(size=12),
+        font=ctk.CTkFont(size=12), text_color=TEXT,
     ).pack(side="left")
 
     var = tk.StringVar()
@@ -291,5 +294,5 @@ def _adv_field(
     if hint:
         ctk.CTkLabel(
             row, text=hint,
-            font=ctk.CTkFont(size=10), text_color=_MUTED, anchor="w",
+            font=ctk.CTkFont(size=10), text_color=MUTED, anchor="w",
         ).pack(side="left")

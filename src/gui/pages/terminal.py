@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING
 import customtkinter as ctk
 import yaml
 
+from src.gui.theme import (
+    GREEN, RED, YELLOW, MUTED, TEXT, TEXT_SOFT,
+    SURFACE_RAISED, BASE, LINE, LINE_STRONG,
+    SUCCESS_BG, SUCCESS_BORDER,
+    section_rule, page_header,
+)
+
 if TYPE_CHECKING:
     from src.gui.app import ApexTraderGUI
     from src.gui.mt5_detector import MT5Install
-
-_GREEN   = "#00d4aa"
-_RED     = "#ff4757"
-_YELLOW  = "#ffa502"
-_MUTED   = "#6b6b8a"
-_TEXT    = "#e0e0e0"
-_CARD_BG = "#111128"
 
 
 class TerminalPage(ctk.CTkScrollableFrame):
@@ -43,27 +43,20 @@ class TerminalPage(ctk.CTkScrollableFrame):
     # ── Build ─────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        # Inline header (scrolls with content for scrollable frame)
-        hdr = ctk.CTkFrame(self, height=52, fg_color=_CARD_BG, corner_radius=0)
-        hdr.pack(fill="x")
-        hdr.pack_propagate(False)
-        ctk.CTkLabel(
-            hdr, text="Trading Platform",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(side="left", padx=20)
+        page_header(self, "Trading Platform")
 
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=24, pady=16)
 
         # ── Terminal detection section ────────────────────────────────────────
-        _section_label(content, "Detected Installations")
+        section_rule(content, "Detected Installations")
 
         detect_row = ctk.CTkFrame(content, fg_color="transparent")
         detect_row.pack(fill="x", pady=(0, 10))
 
         self._lbl_scan_status = ctk.CTkLabel(
             detect_row, text="Scanning…",
-            font=ctk.CTkFont(size=12), text_color=_MUTED,
+            font=ctk.CTkFont(size=12), text_color=MUTED,
         )
         self._lbl_scan_status.pack(side="left")
 
@@ -77,9 +70,12 @@ class TerminalPage(ctk.CTkScrollableFrame):
         self._cards_frame.pack(fill="x", pady=(0, 20))
 
         # ── Account credentials ───────────────────────────────────────────────
-        _section_label(content, "Account Credentials")
+        section_rule(content, "Account Credentials")
 
-        creds_card = ctk.CTkFrame(content, corner_radius=10)
+        creds_card = ctk.CTkFrame(
+            content, corner_radius=8,
+            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
+        )
         creds_card.pack(fill="x", pady=(0, 16))
 
         creds_inner = ctk.CTkFrame(creds_card, fg_color="transparent")
@@ -96,16 +92,18 @@ class TerminalPage(ctk.CTkScrollableFrame):
         # ── Save button ───────────────────────────────────────────────────────
         self._lbl_save_status = ctk.CTkLabel(
             content, text="",
-            font=ctk.CTkFont(size=12), text_color=_MUTED,
+            font=ctk.CTkFont(size=12), text_color=MUTED,
         )
         self._lbl_save_status.pack(pady=(0, 6))
 
         ctk.CTkButton(
             content,
             text="💾  Save & Restart Engine",
-            height=42, width=260,
+            height=44, width=260,
             font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#1a5c2a", hover_color="#22732e",
+            fg_color=SUCCESS_BG, hover_color=SUCCESS_BORDER,
+            border_width=1, border_color=SUCCESS_BORDER,
+            text_color=GREEN,
             command=self._save,
         ).pack(pady=(0, 20))
 
@@ -115,13 +113,16 @@ class TerminalPage(ctk.CTkScrollableFrame):
             content,
             text="▶  Advanced details",
             anchor="w", height=28, width=200,
-            fg_color="transparent", hover_color="#1a1a30",
-            text_color=_MUTED, font=ctk.CTkFont(size=12),
+            fg_color="transparent", hover_color=LINE_STRONG,
+            text_color=MUTED, font=ctk.CTkFont(size=12),
             command=self._toggle_advanced,
         )
         self._btn_advanced.pack(anchor="w", pady=(0, 4))
 
-        self._advanced_frame = ctk.CTkFrame(content, corner_radius=8, fg_color="#0e0e1e")
+        self._advanced_frame = ctk.CTkFrame(
+            content, corner_radius=8,
+            fg_color=BASE, border_width=1, border_color=LINE,
+        )
         # Not packed yet
 
         adv_inner = ctk.CTkFrame(self._advanced_frame, fg_color="transparent")
@@ -132,7 +133,7 @@ class TerminalPage(ctk.CTkScrollableFrame):
 
         ctk.CTkLabel(
             path_row, text="Terminal path:", width=130, anchor="w",
-            font=ctk.CTkFont(size=11), text_color=_MUTED,
+            font=ctk.CTkFont(size=11), text_color=MUTED,
         ).pack(side="left")
 
         self._var_path = tk.StringVar()
@@ -162,13 +163,16 @@ class TerminalPage(ctk.CTkScrollableFrame):
                 self._cards_frame,
                 text="No MetaTrader installation found.\n"
                      "Install MT5 from your broker, or use Browse below to locate it manually.",
-                font=ctk.CTkFont(size=13), text_color=_MUTED,
+                font=ctk.CTkFont(size=13), text_color=MUTED,
                 justify="left",
             ).pack(anchor="w", pady=8)
             return
 
         for install in self._installs:
-            card = ctk.CTkFrame(self._cards_frame, corner_radius=10, border_width=2)
+            card = ctk.CTkFrame(
+                self._cards_frame, corner_radius=8,
+                fg_color=SURFACE_RAISED, border_width=2, border_color=LINE,
+            )
             card.pack(fill="x", pady=6)
             self._card_frames[install.id] = card
 
@@ -192,11 +196,12 @@ class TerminalPage(ctk.CTkScrollableFrame):
             ctk.CTkLabel(
                 name_col, text=install.name,
                 font=ctk.CTkFont(size=14, weight="bold"),
+                text_color=TEXT,
                 anchor="w",
             ).pack(anchor="w")
 
-            status_text = "Detected  ·  Ready" if install.is_available else "Not available"
-            status_color = _GREEN if install.is_available else _RED
+            status_text  = "Detected  ·  Ready" if install.is_available else "Not available"
+            status_color = GREEN if install.is_available else RED
             ctk.CTkLabel(
                 name_col, text=status_text,
                 font=ctk.CTkFont(size=11), text_color=status_color,
@@ -222,14 +227,14 @@ class TerminalPage(ctk.CTkScrollableFrame):
     def _update_card_selection(self) -> None:
         for iid, card in self._card_frames.items():
             if iid == self._selected_id:
-                card.configure(border_color=_GREEN)
+                card.configure(border_color=GREEN)
             else:
-                card.configure(border_color="#2a2a4a")
+                card.configure(border_color=LINE)
 
     # ── Scan ──────────────────────────────────────────────────────────────────
 
     def _scan(self) -> None:
-        self._lbl_scan_status.configure(text="Scanning…", text_color=_MUTED)
+        self._lbl_scan_status.configure(text="Scanning…", text_color=MUTED)
         for widget in self._cards_frame.winfo_children():
             widget.destroy()
 
@@ -247,11 +252,11 @@ class TerminalPage(ctk.CTkScrollableFrame):
             count = len(installs)
             self._lbl_scan_status.configure(
                 text=f"Found {count} installation{'s' if count != 1 else ''}",
-                text_color=_GREEN,
+                text_color=GREEN,
             )
         else:
             self._lbl_scan_status.configure(
-                text="No installations detected", text_color=_YELLOW,
+                text="No installations detected", text_color=YELLOW,
             )
 
         # Auto-select the terminal whose path matches config
@@ -282,12 +287,12 @@ class TerminalPage(ctk.CTkScrollableFrame):
 
         if not server:
             self._lbl_save_status.configure(
-                text="⚠  Server name is required", text_color=_YELLOW,
+                text="⚠  Server name is required", text_color=YELLOW,
             )
             return
         if not login_str:
             self._lbl_save_status.configure(
-                text="⚠  Account login is required", text_color=_YELLOW,
+                text="⚠  Account login is required", text_color=YELLOW,
             )
             return
 
@@ -295,7 +300,7 @@ class TerminalPage(ctk.CTkScrollableFrame):
             login_int = int(login_str)
         except ValueError:
             self._lbl_save_status.configure(
-                text="⚠  Login must be a number", text_color=_YELLOW,
+                text="⚠  Login must be a number", text_color=YELLOW,
             )
             return
 
@@ -310,12 +315,12 @@ class TerminalPage(ctk.CTkScrollableFrame):
             self.app.save_config(cfg)
         except Exception as exc:
             self._lbl_save_status.configure(
-                text=f"⚠  Save failed: {exc}", text_color=_RED,
+                text=f"⚠  Save failed: {exc}", text_color=RED,
             )
             return
 
         self._lbl_save_status.configure(
-            text="✓  Saved — restarting engine…", text_color=_GREEN,
+            text="✓  Saved — restarting engine…", text_color=GREEN,
         )
         threading.Thread(target=self._delayed_restart, daemon=True).start()
 
@@ -358,17 +363,6 @@ class TerminalPage(ctk.CTkScrollableFrame):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _section_label(parent: tk.Widget, text: str) -> None:
-    ctk.CTkLabel(
-        parent, text=text,
-        font=ctk.CTkFont(size=12, weight="bold"),
-        text_color="#7070aa",
-    ).pack(anchor="w", pady=(0, 6))
-    ctk.CTkFrame(parent, height=1, fg_color="#2a2a4a").pack(
-        fill="x", pady=(0, 10)
-    )
-
-
 def _cred_row(
     parent: tk.Widget,
     label: str,
@@ -379,7 +373,7 @@ def _cred_row(
     row.pack(fill="x", pady=4)
     ctk.CTkLabel(
         row, text=label, width=100, anchor="w",
-        font=ctk.CTkFont(size=12), text_color=_TEXT,
+        font=ctk.CTkFont(size=12), text_color=TEXT,
     ).pack(side="left")
     ctk.CTkEntry(
         row, textvariable=var, width=300,

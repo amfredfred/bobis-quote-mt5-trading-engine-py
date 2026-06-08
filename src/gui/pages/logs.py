@@ -22,18 +22,22 @@ from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
+from src.gui.theme import (
+    GREEN, RED, YELLOW, MUTED,
+    SURFACE_RAISED, LINE,
+    page_header,
+)
+
 if TYPE_CHECKING:
     from src.gui.app import ApexTraderGUI
 
 _LEVEL_COLOURS = {
-    "DEBUG":    "#5a5a7a",
-    "INFO":     "#cccccc",
-    "WARNING":  "#ffa502",
-    "ERROR":    "#ff4757",
+    "DEBUG":    MUTED,
+    "INFO":     "#c9ced6",
+    "WARNING":  YELLOW,
+    "ERROR":    RED,
     "CRITICAL": "#ff1a2e",
 }
-_MUTED   = "#6b6b8a"
-_CARD_BG = "#111128"
 _MAX_LINES = 2000
 
 
@@ -50,17 +54,14 @@ class LogsPage(ctk.CTkFrame):
     # ── Build ─────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        hdr = ctk.CTkFrame(self, height=52, fg_color=_CARD_BG, corner_radius=0)
-        hdr.pack(fill="x")
-        hdr.pack_propagate(False)
-        ctk.CTkLabel(
-            hdr, text="Logs",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(side="left", padx=20)
+        page_header(self, "Logs")
 
         # Toolbar
-        toolbar = ctk.CTkFrame(self, fg_color="transparent", height=38)
-        toolbar.pack(fill="x", padx=12, pady=(6, 2))
+        toolbar = ctk.CTkFrame(
+            self, fg_color=SURFACE_RAISED, height=44,
+            corner_radius=0, border_width=0,
+        )
+        toolbar.pack(fill="x", padx=0, pady=0)
         toolbar.pack_propagate(False)
 
         self._auto_scroll_var = tk.BooleanVar(value=True)
@@ -69,7 +70,7 @@ class LogsPage(ctk.CTkFrame):
             variable=self._auto_scroll_var,
             command=lambda: setattr(self, "_auto_scroll", self._auto_scroll_var.get()),
             width=110,
-        ).pack(side="left", padx=4)
+        ).pack(side="left", padx=(12, 4), pady=8)
 
         ctk.CTkButton(
             toolbar, text="Clear", width=70, height=28,
@@ -81,9 +82,10 @@ class LogsPage(ctk.CTkFrame):
             command=self._reload_file,
         ).pack(side="left", padx=4)
 
-        ctk.CTkLabel(toolbar, text="Level:", font=ctk.CTkFont(size=11)).pack(
-            side="left", padx=(14, 4)
-        )
+        ctk.CTkLabel(
+            toolbar, text="Level:", font=ctk.CTkFont(size=11), text_color=MUTED,
+        ).pack(side="left", padx=(14, 4))
+
         self._level_var = tk.StringVar(value="INFO")
         ctk.CTkOptionMenu(
             toolbar,
@@ -94,9 +96,12 @@ class LogsPage(ctk.CTkFrame):
 
         self._lbl_source = ctk.CTkLabel(
             toolbar, text="",
-            font=ctk.CTkFont(size=10), text_color=_MUTED,
+            font=ctk.CTkFont(size=10), text_color=MUTED,
         )
-        self._lbl_source.pack(side="right", padx=8)
+        self._lbl_source.pack(side="right", padx=12)
+
+        # Thin separator
+        ctk.CTkFrame(self, height=1, fg_color=LINE, corner_radius=0).pack(fill="x")
 
         # Text area
         self._text = ctk.CTkTextbox(
@@ -104,8 +109,9 @@ class LogsPage(ctk.CTkFrame):
             wrap="none",
             font=ctk.CTkFont(family="Consolas", size=11),
             activate_scrollbars=True,
+            fg_color="#080a0d",
         )
-        self._text.pack(fill="both", expand=True, padx=12, pady=(2, 12))
+        self._text.pack(fill="both", expand=True, padx=0, pady=0)
         self._text.configure(state="disabled")
 
         tw = self._text._textbox

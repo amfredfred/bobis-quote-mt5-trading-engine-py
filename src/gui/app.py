@@ -42,16 +42,12 @@ import yaml
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# ── Palette ───────────────────────────────────────────────────────────────────
-
-_GREEN   = "#00d4aa"
-_RED     = "#ff4757"
-_YELLOW  = "#ffa502"
-_MUTED   = "#6b6b8a"
-_SIDEBAR = "#0c0c1a"
-_NAV_ACT = "#1a2040"
-_NAV_HOV = "#141830"
-_TEXT    = "#e0e0e0"
+from src.gui.theme import (  # noqa: E402  (after CTk setup)
+    GREEN, RED, YELLOW, MUTED,
+    TEXT, BASE, SURFACE, SURFACE_RAISED,
+    LINE, LINE_STRONG,
+    NAV_HOVER, NAV_ACTIVE_BG,
+)
 
 _NAV_PAGES = ["Overview", "Engine", "Terminal", "Risk", "Logs", "Advanced"]
 _NAV_ICONS = {
@@ -124,13 +120,13 @@ class ApexTraderGUI(ctk.CTk):
 
         # Sidebar
         self._sidebar = ctk.CTkFrame(
-            self, width=190, corner_radius=0, fg_color=_SIDEBAR,
+            self, width=190, corner_radius=0, fg_color=BASE,
         )
         self._sidebar.grid(row=0, column=0, sticky="nsew")
         self._sidebar.grid_propagate(False)
 
         # Content area
-        self._content = ctk.CTkFrame(self, corner_radius=0, fg_color="#0f0f1e")
+        self._content = ctk.CTkFrame(self, corner_radius=0, fg_color=SURFACE)
         self._content.grid(row=0, column=1, sticky="nsew")
         self._content.grid_rowconfigure(0, weight=1)
         self._content.grid_columnconfigure(0, weight=1)
@@ -148,7 +144,7 @@ class ApexTraderGUI(ctk.CTk):
             logo,
             text="⚡  Apex Trader",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=_GREEN,
+            text_color=GREEN,
         ).place(relx=0.5, rely=0.58, anchor="center")
 
         # Version
@@ -157,7 +153,7 @@ class ApexTraderGUI(ctk.CTk):
             self._sidebar,
             text=f"v{version}",
             font=ctk.CTkFont(size=10),
-            text_color=_MUTED,
+            text_color=MUTED,
         ).pack(pady=(0, 6))
 
         _divider(self._sidebar)
@@ -170,10 +166,10 @@ class ApexTraderGUI(ctk.CTk):
                 self._sidebar,
                 text=f"  {icon}  {page}",
                 anchor="w",
-                height=38, corner_radius=8,
+                height=38, corner_radius=6,
                 fg_color="transparent",
-                hover_color=_NAV_HOV,
-                text_color=_TEXT,
+                hover_color=NAV_HOVER,
+                text_color=MUTED,
                 font=ctk.CTkFont(size=13),
                 command=lambda p=page: self._show_page(p),
             )
@@ -191,7 +187,7 @@ class ApexTraderGUI(ctk.CTk):
             self._sidebar,
             text="●  Engine: --",
             font=ctk.CTkFont(size=11),
-            text_color=_MUTED,
+            text_color=MUTED,
         )
         self._sidebar_engine_status.pack(pady=(4, 14))
 
@@ -224,8 +220,10 @@ class ApexTraderGUI(ctk.CTk):
         for bname, btn in self._nav_btns.items():
             active = bname == name
             btn.configure(
-                fg_color=_NAV_ACT if active else "transparent",
-                text_color=_GREEN if active else _TEXT,
+                fg_color=NAV_ACTIVE_BG if active else "transparent",
+                text_color=GREEN if active else MUTED,
+                border_width=1 if active else 0,
+                border_color=LINE_STRONG if active else BASE,
             )
 
     def navigate(self, page: str) -> None:
@@ -268,12 +266,12 @@ class ApexTraderGUI(ctk.CTk):
         from src.gui.service_controller import ServiceStatus
 
         _colours = {
-            ServiceStatus.NOT_INSTALLED: _MUTED,
-            ServiceStatus.STOPPED:       _RED,
-            ServiceStatus.STARTING:      _YELLOW,
-            ServiceStatus.RUNNING:       _GREEN,
-            ServiceStatus.STOPPING:      _YELLOW,
-            ServiceStatus.UNKNOWN:       _MUTED,
+            ServiceStatus.NOT_INSTALLED: MUTED,
+            ServiceStatus.STOPPED:       RED,
+            ServiceStatus.STARTING:      YELLOW,
+            ServiceStatus.RUNNING:       GREEN,
+            ServiceStatus.STOPPING:      YELLOW,
+            ServiceStatus.UNKNOWN:       MUTED,
         }
         _labels = {
             ServiceStatus.NOT_INSTALLED: "Not Installed",
@@ -284,7 +282,7 @@ class ApexTraderGUI(ctk.CTk):
             ServiceStatus.UNKNOWN:       "Unknown",
         }
         label = _labels.get(status, status)
-        color = _colours.get(status, _MUTED)
+        color = _colours.get(status, MUTED)
 
         self._sidebar_engine_status.configure(
             text=f"●  Engine: {label}", text_color=color,
@@ -393,7 +391,7 @@ def _broadcast(
 
 
 def _divider(parent: ctk.CTkFrame) -> None:
-    ctk.CTkFrame(parent, height=1, fg_color="#2a2a4a").pack(
+    ctk.CTkFrame(parent, height=1, fg_color=LINE).pack(
         fill="x", padx=12, pady=6,
     )
 
