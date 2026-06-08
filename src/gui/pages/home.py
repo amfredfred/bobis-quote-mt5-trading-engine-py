@@ -159,7 +159,9 @@ class HomePage(ctk.CTkFrame):
         self._refresh_readiness()
 
     def _refresh_readiness(self) -> None:
-        cfg    = self.app.config.load(force=True)
+        # Use cached config — force-reload on every poll is the primary cause
+        # of the checklist flicker (every reload triggers a signature change).
+        cfg    = self.app.config.load()
         issues = self.app.app_state.get_readiness_issues(cfg)
 
         # Build the full checklist including done items
@@ -187,11 +189,13 @@ class HomePage(ctk.CTkFrame):
             ),
             (
                 "activation",
-                "Gateway activation key saved",
-                "Activation key is configured"
-                    if gw.get("activation_key") else "Key required",
+                "License key",
+                "License active"
+                    if gw.get("activation_key")
+                    else "Purchase or copy your key from the web dashboard.",
                 bool(gw.get("activation_key")),
-                "Enter Key", "Advanced",
+                "Open Dashboard" if not gw.get("activation_key") else "",
+                "__dashboard__"  if not gw.get("activation_key") else "",
             ),
             (
                 "risk",

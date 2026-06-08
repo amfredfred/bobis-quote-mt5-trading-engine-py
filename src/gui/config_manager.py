@@ -24,6 +24,9 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# Default web dashboard URL — override via config.yaml: dashboard.url
+DEFAULT_DASHBOARD_URL = "https://app.apexquanttrader.com"
+
 # ProgramData path (production install location)
 _APPNAME    = "Apex Quant Trader"
 _PROGDATA   = Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / _APPNAME
@@ -180,6 +183,10 @@ class ConfigManager:
                 return default
             node = node.get(key, default)
         return node
+
+    def dashboard_url(self) -> str:
+        """Return the configured web-dashboard URL, or the well-known default."""
+        return self.get("dashboard", "url") or DEFAULT_DASHBOARD_URL
 
     def masked_copy(self) -> dict:
         """Return config with sensitive values replaced by '••••••••'."""

@@ -234,6 +234,10 @@ class AppState:
         self._last_heartbeat: float           = 0.0
         self._is_paused:      bool            = False
 
+        # Stable wrappers — transient failures don't immediately flip the UI
+        self._stable_service_raw       = StableValue("unknown")
+        self._stable_service_installed = StableValue(False)
+
         # Connections
         self._mt5_connected:     bool = False
         self._gateway_connected: bool = False
@@ -328,12 +332,19 @@ class AppState:
         if old_was_running and now_stopped and engine_error is None:
             engine_error = "Engine stopped unexpectedly."
 
-        self._service_raw    = service_status
+        # Apply StableValue debounce — a single "unknown/bad" poll is ignored,
+        # only a sustained change (2+ consecutive identical values) is accepted.
+        # Good values (installed, running, stopped) are always accepted immediately.
+        raw_changed       = self._stable_service_raw.update(service_status, failure_threshold=2)
+        install_changed   = self._stable_service_installed.update(
+            service_status != ServiceStatus.NOT_INSTALLED, failure_threshold=2,
+        )
+
+        self._service_raw       = self._stable_service_raw.value
+        self._service_installed = self._stable_service_installed.value
+
         self._setup_complete = setup_complete
         self._engine_error   = engine_error
-        self._service_installed = (
-            service_status != ServiceStatus.NOT_INSTALLED
-        )
 
         self._recompute_lifecycle(engine_error)
 
@@ -483,18 +494,18 @@ class AppState:
         if not str(gw.get("activation_key", "")).strip():
             issues.append(ReadinessIssue(
                 key="activation_key",
-                title="Activation key not saved",
-                detail="Enter your Apex activation key in Advanced settings.",
-                action_label="Open Advanced",
-                action_page="Advanced",
+                title="License key required",
+                detail="Purchase or copy your license key from the web dashboard.",
+                action_label="Open Dashboard",
+                action_page="__dashboard__",
             ))
         if not str(gw.get("ws_url", "")).strip():
             issues.append(ReadinessIssue(
                 key="gateway_url",
-                title="Gateway URL not configured",
-                detail="The signal gateway address is missing. Check Advanced settings.",
-                action_label="Open Advanced",
-                action_page="Advanced",
+                title="Connection server not configured",
+                detail="The server address is missing. Check your account dashboard.",
+                action_label="Open Dashboard",
+                action_page="__dashboard__",
             ))
         risk = config.get("risk", {})
         if not (risk.get("max_daily_loss_percent") or risk.get("max_losing_streak")):

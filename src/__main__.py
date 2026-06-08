@@ -124,7 +124,36 @@ def _headless_main() -> None:
 
 
 def _gui_main() -> None:
-    """Launch the CustomTkinter desktop app."""
+    """
+    Launch the CustomTkinter desktop app — single instance only.
+
+    On Windows a named mutex is created before the window opens.  If another
+    GUI process already holds that mutex we focus its window and exit silently.
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        _MUTEX_NAME = "Global\\ApexQuantTrader_GUI_v1"
+        _ERROR_ALREADY_EXISTS = 183
+
+        kernel32 = ctypes.windll.kernel32
+        _mutex = kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+        if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+            # Another instance is running — bring its window to the foreground.
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, "Apex Quant Trader")
+            if hwnd:
+                # Restore if minimised, then force to front.
+                SW_RESTORE = 9
+                user32.ShowWindow(hwnd, SW_RESTORE)
+                user32.SetForegroundWindow(hwnd)
+            # Release our handle and exit without showing a window.
+            kernel32.CloseHandle(_mutex)
+            sys.exit(0)
+        # Keep _mutex referenced so Python doesn't GC it before mainloop exits.
+        # It is released automatically when the process ends.
+        _gui_main._mutex = _mutex  # type: ignore[attr-defined]
+
     from src.gui.app import ApexTraderGUI, resolve_config_path
     app = ApexTraderGUI(config_path=resolve_config_path(sys.argv))
     app.mainloop()

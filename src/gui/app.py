@@ -45,6 +45,7 @@ from src.gui.config_manager  import ConfigManager
 from src.gui.state           import AppState, EngineLifecycle
 from src.gui.installer       import InstallerService
 from src.gui.components      import EngineStatusBadge
+from src.gui.assets          import load_logo_image, set_window_icon
 
 
 _NAV_PAGES = ["Home", "Engine", "Platform", "Risk", "Activity", "Settings", "Advanced"]
@@ -103,8 +104,13 @@ class ApexTraderGUI(ctk.CTk):
         self.after(100, self._poll)
         self.after(1000, self._tick_heartbeat)
 
+        # Set window icon (title-bar + taskbar)
+        set_window_icon(self)
+
         self.ws.start()
-        self.after(300, self._refresh_service_status)
+        # Kick off the first service-status check quickly — users shouldn't
+        # sit on "Checking…" longer than necessary.
+        self.after(80, self._refresh_service_status)
 
         # Safety: if service query hasn't resolved CHECKING in 6 s, force UNKNOWN
         self.after(6000, self._checking_timeout)
@@ -183,12 +189,22 @@ class ApexTraderGUI(ctk.CTk):
         logo = ctk.CTkFrame(self._sidebar, fg_color="transparent", height=66)
         logo.pack(fill="x")
         logo.pack_propagate(False)
-        ctk.CTkLabel(
-            logo,
-            text="⚡  Apex Quant Trader",
-            font=ctk.CTkFont(size=15, weight="bold"),
-            text_color=GREEN,
-        ).place(relx=0.5, rely=0.62, anchor="center")
+
+        logo_img = load_logo_image(size=(28, 28))
+        if logo_img:
+            ctk.CTkLabel(
+                logo, image=logo_img, text="  Apex Quant Trader",
+                compound="left",
+                font=ctk.CTkFont(size=14, weight="bold"),
+                text_color=GREEN,
+            ).place(relx=0.5, rely=0.62, anchor="center")
+        else:
+            ctk.CTkLabel(
+                logo,
+                text="⚡  Apex Quant Trader",
+                font=ctk.CTkFont(size=15, weight="bold"),
+                text_color=GREEN,
+            ).place(relx=0.5, rely=0.62, anchor="center")
 
         version = _read_version()
         ctk.CTkLabel(
@@ -271,6 +287,9 @@ class ApexTraderGUI(ctk.CTk):
         """Called by pages and onboarding to switch pages."""
         if page == "__setup__":
             self._show_onboarding()
+        elif page == "__dashboard__":
+            import webbrowser
+            webbrowser.open(self.config.dashboard_url())
         else:
             self._show_page(page)
 
@@ -294,7 +313,13 @@ class ApexTraderGUI(ctk.CTk):
 
     def _refresh_service_status(self) -> None:
         def _check():
-            status = self.svc.query()
+            try:
+                status = self.svc.query()
+            except Exception:
+                # sc.exe unavailable or access denied — report as unknown so
+                # the UI escapes "Checking…" rather than staying there forever.
+                from src.gui.service_controller import ServiceStatus
+                status = ServiceStatus.UNKNOWN
             self.after(0, lambda: self._apply_svc_status(status, None))
         threading.Thread(target=_check, daemon=True).start()
         self.after(5000, self._refresh_service_status)

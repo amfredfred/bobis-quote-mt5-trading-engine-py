@@ -1,16 +1,15 @@
 """
 src/gui/onboarding.py — First-run setup wizard.
 
-A multi-step CTkFrame that occupies the full window content area.
-On completion it calls on_complete() so app.py can transition to the
-main dashboard.
+The wizard is presented as a centered card (not full-screen).
+On completion it calls on_complete() so app.py transitions to the dashboard.
 
 Steps
 -----
 1  Welcome          — what Apex does; why the GUI exists
-2  Trading Platform — scan + pick MetaTrader terminal (by name)
+2  Trading Platform — scan + pick MetaTrader terminal
 3  MT5 Account      — login, password, server
-4  Activation       — gateway URL + activation key
+4  License Key      — activation key + connection server
 5  Risk Profile     — daily loss %, streak, drawdown %
 6  Install Engine   — register Windows service
 7  Finish           — summary + "Start Engine" CTA
@@ -19,6 +18,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -26,9 +26,10 @@ import customtkinter as ctk
 
 from src.gui.theme import (
     GREEN, RED, YELLOW, MUTED, TEXT, TEXT_SOFT,
-    SURFACE_RAISED, BASE, LINE, LINE_STRONG,
+    SURFACE, SURFACE_RAISED, BASE, LINE, LINE_STRONG,
     SUCCESS_BG, SUCCESS_BORDER,
     DANGER_BG, WARNING_BG, WARNING_BORDER,
+    INFO_BG, INFO_BORDER, INFO,
     section_rule, page_header,
 )
 from src.gui.components import (
@@ -40,15 +41,17 @@ if TYPE_CHECKING:
     from src.gui.installer import InstallerService
 
 
-_TOTAL_STEPS = 7
+_TOTAL_STEPS  = 7
+_CARD_WIDTH   = 840   # max card width (px); shrinks on narrow windows
+_STEP_H       = 420   # fixed height for the scrollable step area
 
 
 # ── Wizard shell ──────────────────────────────────────────────────────────────
 
 class OnboardingWizard(ctk.CTkFrame):
     """
-    Full-window multi-step wizard.
-    Call .start() once to show step 1.
+    Full-window frame containing a centered card.
+    Call .start() to show step 1.
     """
 
     def __init__(
@@ -65,12 +68,35 @@ class OnboardingWizard(ctk.CTkFrame):
         self._step      = 0
         self._step_frames: list[_WizardStep] = []
         self._current_frame: Optional[_WizardStep] = None
-
-        # Shared form data (accumulated across steps)
         self._data: dict = {}
+
+        # ── Centering grid ─────────────────────────────────────────────────────
+        # Three rows: equal-weight spacers above and below the card row so the
+        # card is always vertically centred in the window.
+        self.grid_rowconfigure(0, weight=1)   # top spacer
+        self.grid_rowconfigure(1, weight=0)   # card (natural height)
+        self.grid_rowconfigure(2, weight=1)   # bottom spacer
+        self.grid_columnconfigure(0, weight=1)
+
+        # Card shell — narrower than the window and visually distinct
+        self._card = ctk.CTkFrame(
+            self,
+            fg_color=SURFACE_RAISED,
+            corner_radius=10,
+            border_width=1,
+            border_color=LINE_STRONG,
+        )
+        self._card.grid(row=1, column=0, pady=28)
+        # Width: respect a maximum but shrink gracefully on narrow windows.
+        # Achieved by binding to the outer frame's Configure event.
+        self.bind("<Configure>", self._on_outer_resize)
 
         self._build_chrome()
         self._build_steps()
+
+    def _on_outer_resize(self, event: tk.Event) -> None:
+        w = min(_CARD_WIDTH, max(560, event.width - 80))
+        self._card.configure(width=w)
 
     def start(self) -> None:
         self._goto(0)
@@ -78,15 +104,17 @@ class OnboardingWizard(ctk.CTkFrame):
     # ── Chrome ────────────────────────────────────────────────────────────────
 
     def _build_chrome(self) -> None:
-        # Top progress bar
-        top = ctk.CTkFrame(self, height=4, fg_color=BASE, corner_radius=0)
+        card = self._card
+
+        # Progress bar (top accent)
+        top = ctk.CTkFrame(card, height=4, fg_color=BASE, corner_radius=0)
         top.pack(fill="x")
         top.pack_propagate(False)
         self._progress_bar = ctk.CTkFrame(top, height=4, fg_color=GREEN, corner_radius=0)
         self._progress_bar.place(x=0, y=0, relheight=1.0, relwidth=0.0)
 
         # Header
-        hdr = ctk.CTkFrame(self, height=52, fg_color=SURFACE_RAISED, corner_radius=0)
+        hdr = ctk.CTkFrame(card, height=52, fg_color="transparent", corner_radius=0)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
         ctk.CTkFrame(hdr, width=3, fg_color=GREEN, corner_radius=0).pack(
@@ -103,19 +131,19 @@ class OnboardingWizard(ctk.CTkFrame):
         )
         self._step_lbl.pack(side="right", padx=16)
 
-        ctk.CTkFrame(self, height=1, fg_color=LINE, corner_radius=0).pack(fill="x")
+        ctk.CTkFrame(card, height=1, fg_color=LINE, corner_radius=0).pack(fill="x")
 
-        # Content area (steps rendered here)
-        self._content = ctk.CTkFrame(self, fg_color="transparent")
-        self._content.pack(fill="both", expand=True)
+        # Content area — fixed height, scrollable inside
+        self._content = ctk.CTkFrame(card, fg_color="transparent", height=_STEP_H)
+        self._content.pack(fill="x")
+        self._content.pack_propagate(False)
+
+        ctk.CTkFrame(card, height=1, fg_color=LINE, corner_radius=0).pack(fill="x")
 
         # Footer
-        footer = ctk.CTkFrame(
-            self, height=60, fg_color=SURFACE_RAISED, corner_radius=0,
-        )
-        footer.pack(fill="x", side="bottom")
+        footer = ctk.CTkFrame(card, height=60, fg_color="transparent", corner_radius=0)
+        footer.pack(fill="x")
         footer.pack_propagate(False)
-        ctk.CTkFrame(footer, height=1, fg_color=LINE, corner_radius=0).pack(fill="x")
 
         btn_area = ctk.CTkFrame(footer, fg_color="transparent")
         btn_area.pack(fill="both", expand=True, padx=20)
@@ -146,10 +174,9 @@ class OnboardingWizard(ctk.CTkFrame):
         )
         self._btn_next.pack(side="right", pady=12)
 
-    # ── Steps ──────────────────────────────────────────────────────────────────
+    # ── Steps ─────────────────────────────────────────────────────────────────
 
     def _build_steps(self) -> None:
-        cfg_data = self._cfg.load()
         self._step_frames = [
             _StepWelcome(self._content, self),
             _StepPlatform(self._content, self),
@@ -172,17 +199,14 @@ class OnboardingWizard(ctk.CTkFrame):
         frame.on_enter(self._cfg.load(), self._data)
         self._current_frame = frame
 
-        # Update chrome
         step_num = idx + 1
         self._step_lbl.configure(text=f"Step {step_num} of {_TOTAL_STEPS}")
         self._hdr_title.configure(text=frame.title)
         self._progress_bar.place(
             x=0, y=0, relheight=1.0, relwidth=step_num / _TOTAL_STEPS,
         )
-        self._btn_back.configure(
-            state="normal" if idx > 0 else "disabled",
-        )
-        # Last step
+        self._btn_back.configure(state="normal" if idx > 0 else "disabled")
+
         if idx == _TOTAL_STEPS - 1:
             self._btn_next.configure(text="Finish  ✓")
             self._btn_skip.pack_forget()
@@ -195,9 +219,9 @@ class OnboardingWizard(ctk.CTkFrame):
 
     def _next(self) -> None:
         frame = self._step_frames[self._step]
-        ok, error = frame.validate_and_save(self._cfg, self._data)
+        ok, _ = frame.validate_and_save(self._cfg, self._data)
         if not ok:
-            return  # step shows its own error
+            return
         if self._step == _TOTAL_STEPS - 1:
             self._finish()
         else:
@@ -218,8 +242,12 @@ class OnboardingWizard(ctk.CTkFrame):
             pass
 
     def navigate_to_step(self, idx: int) -> None:
-        """Used by finish step to jump back to a specific step."""
         self._goto(idx)
+
+    # ── Dashboard helper (shared by steps) ────────────────────────────────────
+
+    def open_dashboard(self) -> None:
+        webbrowser.open(self._cfg.dashboard_url())
 
 
 # ── Base step ─────────────────────────────────────────────────────────────────
@@ -237,14 +265,13 @@ class _WizardStep(ctk.CTkScrollableFrame):
         pass
 
     def on_enter(self, cfg: dict, data: dict) -> None:
-        """Called when this step becomes visible.  Pre-populate fields."""
+        pass
 
     def validate_and_save(
         self,
         config: "ConfigManager",
         data: dict,
     ) -> tuple[bool, str]:
-        """Validate inputs; save to config/data. Return (ok, error_msg)."""
         return True, ""
 
 
@@ -256,45 +283,54 @@ class _StepWelcome(_WizardStep):
 
     def _build(self) -> None:
         outer = ctk.CTkFrame(self, fg_color="transparent")
-        outer.pack(expand=True, padx=60, pady=40)
+        outer.pack(fill="x", padx=48, pady=(24, 16))
 
-        ctk.CTkLabel(
-            outer, text="⚡",
-            font=ctk.CTkFont(size=64), text_color=GREEN,
-        ).pack(pady=(0, 12))
+        # Logo image if available, otherwise emoji
+        try:
+            from src.gui.assets import load_logo_image
+            logo_img = load_logo_image(size=(56, 56))
+        except Exception:
+            logo_img = None
+
+        if logo_img:
+            ctk.CTkLabel(outer, image=logo_img, text="",
+                         fg_color="transparent").pack(pady=(0, 8))
+        else:
+            ctk.CTkLabel(outer, text="⚡",
+                         font=ctk.CTkFont(size=52), text_color=GREEN).pack(pady=(0, 8))
 
         ctk.CTkLabel(
             outer, text="Apex Quant Trader",
-            font=ctk.CTkFont(size=28, weight="bold"), text_color=TEXT,
+            font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT,
         ).pack()
 
         ctk.CTkLabel(
             outer, text="Automated trading infrastructure",
-            font=ctk.CTkFont(size=14), text_color=MUTED,
-        ).pack(pady=(4, 32))
+            font=ctk.CTkFont(size=13), text_color=MUTED,
+        ).pack(pady=(4, 20))
 
         for icon, heading, body in [
             ("🔄", "Background engine",
              "Apex runs a background service that connects to MetaTrader 5, "
-             "receives trading signals from the gateway, and executes trades "
-             "automatically — even when this control panel is closed."),
+             "receives trading signals, and executes trades automatically — "
+             "even when this control panel is closed."),
             ("🖥️", "This control panel",
              "This app lets you configure, install, start, and monitor the "
              "background engine. You do not need to keep it open while trading."),
             ("📋", "First-time setup",
-             "This wizard will walk you through selecting your MetaTrader "
-             "terminal, entering your credentials, and installing the background "
-             "engine service. It takes about two minutes."),
+             "This wizard will guide you through selecting your MetaTrader "
+             "terminal, entering your license key, and installing the "
+             "background service. It takes about two minutes."),
         ]:
             card = ctk.CTkFrame(
                 outer, corner_radius=8,
-                fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
+                fg_color=BASE, border_width=1, border_color=LINE,
             )
-            card.pack(fill="x", pady=6)
+            card.pack(fill="x", pady=4)
             row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(padx=16, pady=12, fill="x")
+            row.pack(padx=14, pady=10, fill="x")
             ctk.CTkLabel(
-                row, text=icon, font=ctk.CTkFont(size=20), width=36,
+                row, text=icon, font=ctk.CTkFont(size=18), width=32,
             ).pack(side="left", anchor="n", pady=2)
             col = ctk.CTkFrame(row, fg_color="transparent")
             col.pack(side="left", fill="x", expand=True, padx=(10, 0))
@@ -304,9 +340,9 @@ class _StepWelcome(_WizardStep):
             ).pack(anchor="w")
             ctk.CTkLabel(
                 col, text=body, anchor="w",
-                font=ctk.CTkFont(size=12), text_color=MUTED,
-                justify="left", wraplength=500,
-            ).pack(anchor="w", pady=(3, 0))
+                font=ctk.CTkFont(size=11), text_color=MUTED,
+                justify="left", wraplength=580,
+            ).pack(anchor="w", pady=(2, 0))
 
 
 # ── Step 2 — Trading Platform ─────────────────────────────────────────────────
@@ -322,18 +358,16 @@ class _StepPlatform(_WizardStep):
         self._card_frames:   dict          = {}
 
         intro = ctk.CTkFrame(self, fg_color="transparent")
-        intro.pack(fill="x", padx=32, pady=(24, 0))
+        intro.pack(fill="x", padx=32, pady=(20, 0))
         ctk.CTkLabel(
             intro,
-            text="Apex requires MetaTrader 5 to be installed on this computer. "
-                 "Select your broker's terminal below.",
+            text="Apex requires MetaTrader 5. Select your broker's terminal below.",
             font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
-            wraplength=560, justify="left",
+            wraplength=680, justify="left",
         ).pack(anchor="w")
 
-        # Scan status row
         scan_row = ctk.CTkFrame(self, fg_color="transparent")
-        scan_row.pack(fill="x", padx=32, pady=(16, 8))
+        scan_row.pack(fill="x", padx=32, pady=(14, 6))
         self._scan_lbl = ctk.CTkLabel(
             scan_row, text="Scanning…",
             font=ctk.CTkFont(size=12), text_color=MUTED,
@@ -345,13 +379,12 @@ class _StepPlatform(_WizardStep):
         ).pack(side="right")
 
         self._cards_wrap = ctk.CTkFrame(self, fg_color="transparent")
-        self._cards_wrap.pack(fill="x", padx=32, pady=(0, 16))
+        self._cards_wrap.pack(fill="x", padx=32, pady=(0, 12))
 
         self._banner = ActionBanner(self)
-        self._banner.pack(fill="x", padx=32, pady=(0, 8))
+        self._banner.pack(fill="x", padx=32, pady=(0, 4))
         self._banner.hide()
 
-        # Manual path (advanced)
         self._adv_visible = False
         ctk.CTkButton(
             self, text="▶  Manual path (advanced)",
@@ -365,10 +398,10 @@ class _StepPlatform(_WizardStep):
             self, fg_color=BASE,
             corner_radius=6, border_width=1, border_color=LINE,
         )
-        self._adv_inner = ctk.CTkFrame(self._adv_frame, fg_color="transparent")
-        self._adv_inner.pack(padx=12, pady=10, fill="x")
+        adv_inner = ctk.CTkFrame(self._adv_frame, fg_color="transparent")
+        adv_inner.pack(padx=12, pady=10, fill="x")
 
-        path_row = ctk.CTkFrame(self._adv_inner, fg_color="transparent")
+        path_row = ctk.CTkFrame(adv_inner, fg_color="transparent")
         path_row.pack(fill="x")
         ctk.CTkLabel(
             path_row, text="Path:", width=60, anchor="w",
@@ -387,7 +420,6 @@ class _StepPlatform(_WizardStep):
     def on_enter(self, cfg: dict, data: dict) -> None:
         saved = cfg.get("mt5", {}).get("path", "")
         self._var_path.set(saved)
-        # Auto-select if saved path matches a detected install
         if self._installs:
             for inst in self._installs:
                 if inst.exe_path.lower() == saved.lower():
@@ -423,11 +455,9 @@ class _StepPlatform(_WizardStep):
             )
             ctk.CTkLabel(
                 self._cards_wrap,
-                text="MetaTrader 5 was not found on this computer.\n"
-                     "Install it from your broker's website, then click Scan again.\n"
-                     "Or use the Manual path option below.",
-                font=ctk.CTkFont(size=12), text_color=MUTED,
-                justify="left",
+                text="MetaTrader 5 was not found. Install it from your broker's "
+                     "website, then click Scan again.",
+                font=ctk.CTkFont(size=12), text_color=MUTED, justify="left",
             ).pack(anchor="w", pady=8)
             return
 
@@ -437,7 +467,6 @@ class _StepPlatform(_WizardStep):
             text_color=GREEN,
         )
 
-        # Auto-select saved path
         saved = self._var_path.get().strip()
         for inst in installs:
             if inst.exe_path.lower() == saved.lower():
@@ -450,11 +479,11 @@ class _StepPlatform(_WizardStep):
                 self._cards_wrap, corner_radius=8,
                 fg_color=SURFACE_RAISED, border_width=2, border_color=LINE,
             )
-            card.pack(fill="x", pady=5)
+            card.pack(fill="x", pady=4)
             self._card_frames[inst.id] = card
 
             inner = ctk.CTkFrame(card, fg_color="transparent")
-            inner.pack(padx=14, pady=11, fill="x")
+            inner.pack(padx=14, pady=10, fill="x")
 
             badge_text = "MT5" if inst.platform == "mt5" else "MT4"
             ctk.CTkLabel(
@@ -472,11 +501,11 @@ class _StepPlatform(_WizardStep):
                 font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT, anchor="w",
             ).pack(anchor="w")
 
-            status = "Ready" if inst.is_available else "Not available"
-            sc = GREEN if inst.is_available else RED
+            st_text  = "Ready" if inst.is_available else "Not available"
+            st_color = GREEN if inst.is_available else RED
             ctk.CTkLabel(
-                col, text=status,
-                font=ctk.CTkFont(size=11), text_color=sc, anchor="w",
+                col, text=st_text,
+                font=ctk.CTkFont(size=11), text_color=st_color, anchor="w",
             ).pack(anchor="w")
 
             ctk.CTkButton(
@@ -500,7 +529,7 @@ class _StepPlatform(_WizardStep):
     def _toggle_adv(self) -> None:
         self._adv_visible = not self._adv_visible
         if self._adv_visible:
-            self._adv_frame.pack(fill="x", padx=32, pady=(4, 16))
+            self._adv_frame.pack(fill="x", padx=32, pady=(4, 12))
         else:
             self._adv_frame.pack_forget()
 
@@ -529,15 +558,13 @@ class _StepPlatform(_WizardStep):
                 "warn",
             )
             return False, "No terminal selected"
-
         if not Path(path).exists():
             self._banner.show(
-                "The selected terminal executable no longer exists on this computer. "
+                "The selected terminal executable no longer exists. "
                 "Scan again or use Browse to locate it.",
                 "danger",
             )
             return False, "Path not found"
-
         data["mt5_path"] = path
         error = config.update("mt5", {"path": path})
         if error:
@@ -555,7 +582,7 @@ class _StepAccount(_WizardStep):
 
     def _build(self) -> None:
         f = ctk.CTkFrame(self, fg_color="transparent")
-        f.pack(fill="x", padx=40, pady=(28, 0))
+        f.pack(fill="x", padx=40, pady=(20, 0))
 
         ctk.CTkLabel(
             f,
@@ -563,10 +590,10 @@ class _StepAccount(_WizardStep):
                  "These are the same credentials you use to log into MT5.",
             font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
             justify="left",
-        ).pack(anchor="w", pady=(0, 20))
+        ).pack(anchor="w", pady=(0, 16))
 
         card = SectionCard(f)
-        card.pack(fill="x", pady=(0, 16))
+        card.pack(fill="x", pady=(0, 12))
 
         self._var_login    = tk.StringVar()
         self._var_password = tk.StringVar()
@@ -574,18 +601,17 @@ class _StepAccount(_WizardStep):
 
         labeled_field(card.body, "Account number", self._var_login,
                       placeholder="e.g. 12345678")
-        labeled_field(card.body, "Password",       self._var_password,
-                      masked=True)
+        labeled_field(card.body, "Password",       self._var_password, masked=True)
         labeled_field(card.body, "Server",         self._var_server,
                       placeholder="e.g. FBS-Real")
 
         ctk.CTkLabel(
             f,
-            text="Your credentials are stored locally in config.yaml and are "
-                 "never transmitted except to MetaTrader itself.",
+            text="Your credentials are stored locally and never transmitted "
+                 "except to MetaTrader itself.",
             font=ctk.CTkFont(size=11), text_color=MUTED,
-            wraplength=500, justify="left",
-        ).pack(anchor="w", pady=(8, 0))
+            wraplength=620, justify="left",
+        ).pack(anchor="w", pady=(4, 0))
 
         self._banner = ActionBanner(f)
         self._banner.pack(fill="x", pady=(8, 0))
@@ -608,13 +634,11 @@ class _StepAccount(_WizardStep):
             self._banner.show("Password is required.", "warn"); return False, ""
         if not server:
             self._banner.show("Server name is required.", "warn"); return False, ""
-
         try:
             login_int = int(login_str)
         except ValueError:
             self._banner.show("Account number must be a number (e.g. 12345678).", "warn")
             return False, ""
-
         err = config.update("mt5", {
             "login": login_int, "password": password, "server": server,
         })
@@ -624,34 +648,100 @@ class _StepAccount(_WizardStep):
         return True, ""
 
 
-# ── Step 4 — Activation ───────────────────────────────────────────────────────
+# ── Step 4 — License Key ──────────────────────────────────────────────────────
 
 class _StepActivation(_WizardStep):
-    title     = "Gateway Activation"
+    title     = "License Key"
     skippable = False
 
     def _build(self) -> None:
         f = ctk.CTkFrame(self, fg_color="transparent")
-        f.pack(fill="x", padx=40, pady=(28, 0))
+        f.pack(fill="x", padx=40, pady=(20, 0))
+
+        # ── Dashboard callout ──────────────────────────────────────────────
+        callout = ctk.CTkFrame(
+            f, fg_color=INFO_BG,
+            corner_radius=8, border_width=1, border_color=INFO_BORDER,
+        )
+        callout.pack(fill="x", pady=(0, 16))
+
+        inner = ctk.CTkFrame(callout, fg_color="transparent")
+        inner.pack(padx=16, pady=12, fill="x")
 
         ctk.CTkLabel(
-            f,
-            text="Connect Apex to the signal gateway using the credentials "
-                 "provided by your subscription.",
-            font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
-            justify="left",
-        ).pack(anchor="w", pady=(0, 20))
+            inner,
+            text="You need an active license key to use Apex Quant Trader.",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=INFO, anchor="w",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            inner,
+            text="Purchase or manage your license key from the Apex web dashboard.",
+            font=ctk.CTkFont(size=12), text_color=TEXT_SOFT, anchor="w",
+            wraplength=680, justify="left",
+        ).pack(anchor="w", pady=(4, 8))
 
-        card = SectionCard(f)
-        card.pack(fill="x", pady=(0, 16))
+        PrimaryButton(
+            inner, text="Open Web Dashboard", tone="info",
+            width=200, height=34,
+            command=self.wizard.open_dashboard,
+        ).pack(anchor="w")
+
+        # ── Key input ──────────────────────────────────────────────────────
+        ctk.CTkLabel(
+            f,
+            text="Already have a key? Enter it below:",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
+        ).pack(anchor="w", pady=(0, 8))
+
+        key_card = SectionCard(f)
+        key_card.pack(fill="x", pady=(0, 8))
+
+        self._var_key = tk.StringVar()
+        labeled_field(
+            key_card.body, "License key", self._var_key,
+            masked=True, placeholder="Paste your license key here",
+            width=320,
+        )
+
+        # ── Connection server (advanced toggle) ────────────────────────────
+        self._adv_visible = False
+        ctk.CTkButton(
+            f, text="▶  Advanced (connection server)",
+            anchor="w", height=26, width=260,
+            fg_color="transparent", hover_color=LINE_STRONG,
+            text_color=MUTED, font=ctk.CTkFont(size=11),
+            command=self._toggle_adv,
+        ).pack(anchor="w", pady=(4, 0))
+
+        self._adv_frame = ctk.CTkFrame(
+            f, fg_color=BASE,
+            corner_radius=6, border_width=1, border_color=LINE,
+        )
+        adv_inner = ctk.CTkFrame(self._adv_frame, fg_color="transparent")
+        adv_inner.pack(padx=12, pady=10, fill="x")
+
+        ctk.CTkLabel(
+            adv_inner,
+            text="Connection server",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT,
+            anchor="w",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            adv_inner,
+            text="The WebSocket server address from your account dashboard. "
+                 "Leave blank to use the pre-configured default.",
+            font=ctk.CTkFont(size=11), text_color=MUTED,
+            wraplength=600, justify="left",
+        ).pack(anchor="w", pady=(2, 8))
 
         self._var_url = tk.StringVar()
-        self._var_key = tk.StringVar()
-
-        labeled_field(card.body, "Gateway URL",     self._var_url,
-                      placeholder="wss://gateway.example.com/engine", width=340)
-        labeled_field(card.body, "Activation key",  self._var_key,
-                      masked=True, placeholder="Your activation key")
+        url_row = ctk.CTkFrame(adv_inner, fg_color="transparent")
+        url_row.pack(fill="x")
+        ctk.CTkEntry(
+            url_row, textvariable=self._var_url, width=400,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            placeholder_text="wss://gateway.apexquanttrader.com",
+        ).pack(side="left")
 
         self._banner = ActionBanner(f)
         self._banner.pack(fill="x", pady=(8, 0))
@@ -662,14 +752,30 @@ class _StepActivation(_WizardStep):
         self._var_url.set(str(gw.get("ws_url", "")))
         self._var_key.set(str(gw.get("activation_key", "")))
 
+    def _toggle_adv(self) -> None:
+        self._adv_visible = not self._adv_visible
+        if self._adv_visible:
+            self._adv_frame.pack(fill="x", pady=(6, 0))
+        else:
+            self._adv_frame.pack_forget()
+
     def validate_and_save(self, config: "ConfigManager", data: dict) -> tuple:
-        url = self._var_url.get().strip()
         key = self._var_key.get().strip()
-        if not url:
-            self._banner.show("Gateway URL is required.", "warn"); return False, ""
+        url = self._var_url.get().strip()
+
         if not key:
-            self._banner.show("Activation key is required.", "warn"); return False, ""
-        err = config.update("gateway", {"ws_url": url, "activation_key": key})
+            self._banner.show(
+                "License key is required. Open the web dashboard to get yours.",
+                "warn",
+            )
+            return False, ""
+
+        # If no URL supplied, use config default or leave as-is
+        if not url:
+            existing = config.get("gateway", "ws_url") or ""
+            url = existing
+
+        err = config.update("gateway", {"activation_key": key, "ws_url": url})
         if err:
             self._banner.show(err, "danger"); return False, err
         self._banner.hide()
@@ -684,18 +790,18 @@ class _StepRisk(_WizardStep):
 
     def _build(self) -> None:
         f = ctk.CTkFrame(self, fg_color="transparent")
-        f.pack(fill="x", padx=40, pady=(28, 0))
+        f.pack(fill="x", padx=40, pady=(20, 0))
 
         ctk.CTkLabel(
             f,
             text="Set how much of your account the engine is allowed to risk each day. "
                  "These limits can be changed at any time on the Risk page.",
             font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
-            wraplength=540, justify="left",
-        ).pack(anchor="w", pady=(0, 20))
+            wraplength=700, justify="left",
+        ).pack(anchor="w", pady=(0, 16))
 
         card = SectionCard(f)
-        card.pack(fill="x", pady=(0, 12))
+        card.pack(fill="x", pady=(0, 10))
 
         self._var_daily_pct = tk.StringVar(value="2.5")
         self._var_streak    = tk.StringVar(value="3")
@@ -710,7 +816,7 @@ class _StepRisk(_WizardStep):
                 font=ctk.CTkFont(size=13), text_color=TEXT).pack(anchor="w")
             ctk.CTkLabel(left, text=tip, anchor="w",
                 font=ctk.CTkFont(size=11), text_color=MUTED,
-                justify="left", wraplength=380).pack(anchor="w", pady=(1, 0))
+                justify="left", wraplength=440).pack(anchor="w", pady=(1, 0))
             right = ctk.CTkFrame(row, fg_color="transparent")
             right.pack(side="right", padx=(12, 0))
             ctk.CTkEntry(right, textvariable=var, width=72,
@@ -729,15 +835,13 @@ class _StepRisk(_WizardStep):
                self._var_drawdown, "%",
                "Engine pauses if total drawdown reaches this level.")
 
-        # Calculated formula
         formula_row = ctk.CTkFrame(
             f, fg_color=BASE, corner_radius=6,
             border_width=1, border_color=LINE,
         )
         formula_row.pack(fill="x", pady=(0, 8))
         inner = ctk.CTkFrame(formula_row, fg_color="transparent")
-        inner.pack(padx=14, pady=10, fill="x")
-
+        inner.pack(padx=14, pady=8, fill="x")
         self._formula_lbl = ctk.CTkLabel(
             inner, text="Enter values above to see your risk per trade",
             font=ctk.CTkFont(size=12), text_color=MUTED,
@@ -821,19 +925,18 @@ class _StepInstall(_WizardStep):
 
     def _build(self) -> None:
         f = ctk.CTkFrame(self, fg_color="transparent")
-        f.pack(fill="x", padx=40, pady=(28, 0))
+        f.pack(fill="x", padx=40, pady=(20, 0))
 
         ctk.CTkLabel(
             f,
             text="Apex runs as a Windows background service so it can trade "
                  "even when this control panel is closed.",
             font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
-            wraplength=540, justify="left",
-        ).pack(anchor="w", pady=(0, 20))
+            wraplength=700, justify="left",
+        ).pack(anchor="w", pady=(0, 16))
 
-        # Status card
         status_card = SectionCard(f)
-        status_card.pack(fill="x", pady=(0, 16))
+        status_card.pack(fill="x", pady=(0, 14))
 
         self._status_lbl = ctk.CTkLabel(
             status_card.body, text="Checking…",
@@ -854,17 +957,16 @@ class _StepInstall(_WizardStep):
         )
         self._btn_install.pack(anchor="w", pady=(0, 8))
 
-        # Admin note
         ctk.CTkLabel(
             f,
-            text="Administrator permission is required to install the service.\n"
+            text="Administrator permission is required. "
                  "A Windows security prompt will appear — click Yes to continue.",
             font=ctk.CTkFont(size=11), text_color=MUTED,
             justify="left",
         ).pack(anchor="w", pady=(4, 0))
 
         self._banner = ActionBanner(f)
-        self._banner.pack(fill="x", pady=(12, 0))
+        self._banner.pack(fill="x", pady=(10, 0))
         self._banner.hide()
 
     def on_enter(self, cfg: dict, data: dict) -> None:
@@ -872,7 +974,7 @@ class _StepInstall(_WizardStep):
 
     def _check_service(self) -> None:
         from src.gui.service_controller import ServiceController, ServiceStatus
-        status = ServiceController().query()
+        status    = ServiceController().query()
         installed = status != ServiceStatus.NOT_INSTALLED
         if installed:
             self._status_lbl.configure(
@@ -912,8 +1014,6 @@ class _StepInstall(_WizardStep):
         self._installer.install_async(str(cfg.path))
 
     def validate_and_save(self, config: "ConfigManager", data: dict) -> tuple:
-        # Allow advancing even if not installed (service install is optional
-        # for the wizard to complete, but engine won't start without it)
         return True, ""
 
 
@@ -925,7 +1025,7 @@ class _StepFinish(_WizardStep):
 
     def _build(self) -> None:
         self._content = ctk.CTkFrame(self, fg_color="transparent")
-        self._content.pack(fill="x", padx=40, pady=(28, 0))
+        self._content.pack(fill="x", padx=40, pady=(20, 0))
 
     def on_enter(self, cfg: dict, data: dict) -> None:
         for w in self._content.winfo_children():
@@ -941,24 +1041,24 @@ class _StepFinish(_WizardStep):
                  "Click Finish to open the main dashboard.",
             font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
             justify="left",
-        ).pack(anchor="w", pady=(0, 20))
+        ).pack(anchor="w", pady=(0, 16))
 
-        mt5 = cfg.get("mt5", {})
-        gw  = cfg.get("gateway", {})
+        mt5  = cfg.get("mt5", {})
+        gw   = cfg.get("gateway", {})
         risk = cfg.get("risk", {})
 
         from src.gui.service_controller import ServiceController, ServiceStatus
         svc_installed = ServiceController().query() != ServiceStatus.NOT_INSTALLED
 
         items = [
-            ("Trading platform",  mt5.get("path", "—").split("\\")[-2] if mt5.get("path") else "—",),
+            ("Trading platform",  mt5.get("path", "—").split("\\")[-2] if mt5.get("path") else "—"),
             ("MT5 account",       f"{mt5.get('login', '—')} @ {mt5.get('server', '—')}"),
-            ("Gateway",           gw.get("ws_url", "—")),
+            ("License key",       "Saved  ✓" if gw.get("activation_key") else "Not set"),
             ("Daily loss limit",  f"{risk.get('max_daily_loss_percent', '—')}%"),
-            ("Engine service",    "Installed  ✓" if svc_installed else "Not installed — Start will prompt you"),
+            ("Engine service",    "Installed  ✓" if svc_installed else "Not installed"),
         ]
         card = SectionCard(self._content)
-        card.pack(fill="x", pady=(0, 16))
+        card.pack(fill="x", pady=(0, 12))
         for label, value in items:
             row = ctk.CTkFrame(card.body, fg_color="transparent")
             row.pack(fill="x", pady=3)
