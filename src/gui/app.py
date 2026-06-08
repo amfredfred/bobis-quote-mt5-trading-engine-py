@@ -122,8 +122,18 @@ class ApexTraderGUI(ctk.CTk):
 
     def _build_layout(self) -> None:
         self.title("Apex Quant Trader")
-        self.geometry("1200x760")
-        self.minsize(1000, 640)
+
+        # Size — cap at screen dimensions so the window is never larger than
+        # the monitor, then center it explicitly so it's never off-screen.
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        win_w = min(1200, sw - 80)
+        win_h = min(760,  sh - 80)
+        x = max(0, (sw - win_w) // 2)
+        y = max(0, (sh - win_h) // 2)
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        self.minsize(min(900, sw), min(580, sh))
 
         # Root is a single frame that swaps between onboarding and main
         self._root_frame = ctk.CTkFrame(self, fg_color=BASE, corner_radius=0)

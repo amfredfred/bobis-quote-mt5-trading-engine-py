@@ -45,6 +45,10 @@ _TOTAL_STEPS  = 7
 _CARD_WIDTH   = 840   # max card width (px); shrinks on narrow windows
 _STEP_H       = 420   # fixed height for the scrollable step area
 
+# Total card height: top(4) + header(52) + divider(1) + content(420)
+#                   + divider(1) + footer(60)
+_CARD_HEIGHT  = 4 + 52 + 1 + _STEP_H + 1 + 60  # = 538
+
 
 # ── Wizard shell ──────────────────────────────────────────────────────────────
 
@@ -70,31 +74,27 @@ class OnboardingWizard(ctk.CTkFrame):
         self._current_frame: Optional[_WizardStep] = None
         self._data: dict = {}
 
-        # ── Centering grid ─────────────────────────────────────────────────────
-        # Three rows: equal-weight spacers above and below the card row so the
-        # card is always vertically centred in the window.
-        self.grid_rowconfigure(0, weight=1)   # top spacer
-        self.grid_rowconfigure(1, weight=0)   # card (natural height)
-        self.grid_rowconfigure(2, weight=1)   # bottom spacer
-        self.grid_columnconfigure(0, weight=1)
-
-        # Card shell — narrower than the window and visually distinct
+        # Card shell — fixed size, centered with place(relx/rely=0.5).
+        # pack_propagate(False) locks the explicit width/height so children
+        # using fill="x" actually fill the card rather than collapsing it.
         self._card = ctk.CTkFrame(
             self,
+            width=640,
+            height=_CARD_HEIGHT,
             fg_color=SURFACE_RAISED,
             corner_radius=10,
             border_width=1,
             border_color=LINE_STRONG,
         )
-        self._card.grid(row=1, column=0, pady=28)
-        # Width: respect a maximum but shrink gracefully on narrow windows.
-        # Achieved by binding to the outer frame's Configure event.
+        self._card.pack_propagate(False)
+        self._card.place(relx=0.5, rely=0.5, anchor="center")
         self.bind("<Configure>", self._on_outer_resize)
 
         self._build_chrome()
         self._build_steps()
 
     def _on_outer_resize(self, event: tk.Event) -> None:
+        # Resize card width with window, keep height fixed.
         w = min(_CARD_WIDTH, max(560, event.width - 80))
         self._card.configure(width=w)
 

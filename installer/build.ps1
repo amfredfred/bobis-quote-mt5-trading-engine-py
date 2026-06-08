@@ -111,6 +111,8 @@ if ($SkipInstaller) {
     $iscc = Find-Exe @(
         "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
         "C:\Program Files\Inno Setup 6\ISCC.exe",
+        "C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
+        "C:\Program Files\Inno Setup 7\ISCC.exe",
         "C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
         "iscc"
     )
@@ -124,7 +126,7 @@ if ($SkipInstaller) {
         Write-Host "      Using : $iscc" -ForegroundColor DarkGray
 
         $issFile = Join-Path $EngineDir "installer\ApexQuantTrader.iss"
-        & $iscc $issFile
+        & $iscc "/DMyAppVersion=$EngineVersion" $issFile
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  ERROR: ISCC exited with code $LASTEXITCODE" -ForegroundColor Red
             exit 1
