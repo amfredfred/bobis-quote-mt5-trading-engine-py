@@ -3,7 +3,7 @@
 # Secrets (MT5_PASSWORD, APEX_ACTIVATION_KEY) go in .env.
 
 gateway:
-  ws_url: ws://localhost:4000/engine
+  ws_url: wss://apex-gateway.somicast.com/engine
   engine_id: execution-demo-001
   engine_version: 0.1.0
   room_ttl_seconds: 3600
