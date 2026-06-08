@@ -70,6 +70,8 @@ dashboard/.env
 data/
 *.zip
 execution.zip
+installer/Output/
+installer/apex_build*.ps1
 
 # RepoWise
 .repowise/.env

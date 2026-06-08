@@ -132,6 +132,7 @@ class TradeOpenedPayload(TypedDict):
 class TradeErrorPayload(TypedDict):
     signal: InboundSignal
     reason: str
+    message: str
 
 
 # Trade lifecycle events (TP1, TP2, SL, closed) all emit Trade directly

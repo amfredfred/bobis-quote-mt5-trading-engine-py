@@ -380,6 +380,7 @@ class ApexTraderGUI(ctk.CTk):
         elif t in (
             "trade.opened", "trade.tp1_hit",
             "trade.tp2_hit", "trade.sl_hit", "trade.closed",
+            "trade.error",
         ):
             self.app_state.on_trade_event(t, payload)
             if hasattr(self, "_pages"):

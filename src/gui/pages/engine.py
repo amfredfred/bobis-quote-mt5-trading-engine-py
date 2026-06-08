@@ -217,6 +217,15 @@ class EnginePage(ctk.CTkFrame):
 
     # ── Status callbacks ──────────────────────────────────────────────────────
 
+    def on_trade_event(self, event_type: str, payload: dict) -> None:
+        """Show a persistent banner when AutoTrading is disabled in MT5."""
+        if event_type == "trade.error" and payload and payload.get("reason") == "AUTOTRADING_DISABLED":
+            self.after(0, lambda: self._error_banner.show(
+                "⚠  AutoTrading is DISABLED in MT5. "
+                "Click the 'Algo Trading' button in your MT5 terminal to enable it.",
+                "danger",
+            ))
+
     def on_engine_status(self, status: str, detail: str | None) -> None:
         from src.gui.service_controller import ServiceStatus
 

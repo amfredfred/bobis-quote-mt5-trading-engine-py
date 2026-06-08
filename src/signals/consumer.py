@@ -270,6 +270,14 @@ class SignalConsumer:
             stage = "rejected"
             signal_id = payload["signal"].id  # type: ignore[index]
             reason = self._reason(payload["reason"])  # type: ignore[index]
+            # Forward rejection to gateway event buffer so dashboard sees it.
+            sig = payload["signal"]  # type: ignore[index]
+            self._send_event(event, {
+                "symbol":    getattr(sig, "symbol", ""),
+                "direction": self._direction(getattr(sig, "direction", None)),
+                "signal_id": signal_id,
+                "reason":    reason,
+            })
         elif event == Events.EXECUTION_ATTEMPTED:
             stage = "attempted"
             signal_id = payload.id  # type: ignore[union-attr]
@@ -279,13 +287,74 @@ class SignalConsumer:
             trade_id = payload.id  # type: ignore[union-attr]
             ticket = payload.entry_ticket  # type: ignore[union-attr]
             broker_ticket = str(ticket) if ticket is not None else None
+            # Forward trade.opened to gateway so Activity tab receives it.
+            self._send_event("trade.opened", {
+                "symbol":    getattr(payload, "symbol", ""),
+                "direction": self._direction(getattr(payload, "side", None)),
+                "trade_id":  trade_id,
+                "signal_id": signal_id,
+                "ticket":    broker_ticket,
+                "volume":    getattr(payload, "entry_lots", None),
+                "price":     getattr(payload, "entry_price", None),
+            })
         elif event == Events.TRADE_ERROR:
             stage = "failed"
             signal_id = payload["signal"].id  # type: ignore[index]
             reason = self._reason(payload["reason"])  # type: ignore[index]
+            # Forward trade.error to gateway event buffer so Rejections tab sees it.
+            sig = payload["signal"]  # type: ignore[index]
+            self._send_event("trade.error", {
+                "symbol":    getattr(sig, "symbol", ""),
+                "direction": self._direction(getattr(sig, "direction", None)),
+                "signal_id": signal_id,
+                "reason":    reason,
+                "message":   str(payload.get("message", "")),  # type: ignore[union-attr]
+            })
+        elif event in {
+            Events.TRADE_CLOSED, Events.TRADE_TP1_HIT,
+            Events.TRADE_TP2_HIT, Events.TRADE_SL_HIT,
+        }:
+            # No lifecycle stage for these — just forward to dashboard Activity tab.
+            self._send_event(event, {
+                "symbol":    getattr(payload, "symbol", ""),
+                "direction": self._direction(getattr(payload, "side", None)),
+                "trade_id":  getattr(payload, "id", None),
+                "ticket":    getattr(payload, "entry_ticket", None),
+                "volume":    getattr(payload, "current_lots", None),
+                "price":     getattr(payload, "close_price", getattr(payload, "entry_price", None)),
+                "pnl":       getattr(payload, "realized_pnl", None),
+                "profit":    getattr(payload, "realized_pnl", None),
+            })
 
         if stage and signal_id:
             self._queue_lifecycle(stage, signal_id, reason, trade_id, broker_ticket)
+
+    def _send_event(self, event_type: str, data: dict) -> None:
+        """
+        Forward an execution event to the gateway's per-engine event buffer.
+
+        The gateway stores each event in ``eventBuffers[engineId]`` and merges
+        them into ``recent_events`` on every ``execution.metrics.snapshot``
+        broadcast.  The customer dashboard reads ``recent_events`` to populate
+        the Rejections, Activity, and Logs tabs.
+
+        Silently skips if the engine is not yet activated (no WS connection).
+        """
+        if not self._activated.is_set():
+            return
+        self._send("execution.event", {
+            "event_type": event_type,
+            "data": data,
+        })
+
+    @staticmethod
+    def _direction(value: object) -> str:
+        """Return the string value of an enum direction/side, or '' if None."""
+        if value is None:
+            return ""
+        if hasattr(value, "value"):
+            return str(value.value)
+        return str(value)
 
     def _queue_lifecycle(
         self,

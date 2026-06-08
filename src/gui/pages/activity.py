@@ -41,6 +41,7 @@ _EVENT_META = {
     "trade.tp2_hit":    ("✓✓", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
     "trade.sl_hit":     ("✕",  DANGER_BG,     DANGER_BORDER,   RED),
     "trade.closed":     ("■",  SURFACE_RAISED, LINE,            MUTED),
+    "trade.error":      ("⛔", DANGER_BG,     DANGER_BORDER,   RED),
     "signal.received":  ("📡", INFO_BG,       INFO_BORDER,     INFO),
     "signal.triggered": ("🎯", INFO_BG,       INFO_BORDER,     INFO),
     "risk.approved":    ("✅", SUCCESS_BG,    SUCCESS_BORDER,  GREEN),
@@ -261,16 +262,28 @@ class ActivityPage(ctk.CTkFrame):
 
     def _find_log(self) -> Path | None:
         from src.gui.config_manager import ConfigManager
+        prog_logs = ConfigManager.programdata_logs_path()
         candidates = [
-            ConfigManager.programdata_logs_path() / "engine.log",
-            ConfigManager.programdata_logs_path() / "apex.log",
+            prog_logs / "engine.log",
+            prog_logs / "stdout.log",   # NSSM stdout capture
+            prog_logs / "apex.log",
         ]
         import sys
         exe_dir = Path(sys.executable).parent
         candidates += [
             exe_dir / "logs" / "engine.log",
-            exe_dir / "data"  / "engine.log",
+            exe_dir / "logs" / "stdout.log",   # NSSM stdout capture
+            exe_dir / "data" / "engine.log",
         ]
+        # Also check adjacent to config.yaml
+        try:
+            cfg_logs = ConfigManager().path.parent / "logs"
+            candidates += [
+                cfg_logs / "engine.log",
+                cfg_logs / "stdout.log",
+            ]
+        except Exception:
+            pass
         for p in candidates:
             if p.exists():
                 return p
@@ -358,10 +371,21 @@ def _summarise(event_type: str, payload: dict) -> str:
         sym = payload.get("symbol", payload.get("trade_id", ""))
         pnl = payload.get("pnl") or payload.get("profit")
         return f"{sym}  P&L: {pnl:+.2f}" if pnl is not None else str(sym)
+    if event_type == "trade.error":
+        sym    = payload.get("symbol", "")
+        reason = payload.get("reason", "")
+        msg    = payload.get("message", "")
+        if reason == "AUTOTRADING_DISABLED":
+            return f"{sym}  ⚠ AutoTrading is DISABLED in MT5 — no order sent"
+        return f"{sym}  {(msg or reason)[:90]}"
     if event_type == "mt5_error":
         return payload.get("message", "")[:80]
     if event_type in ("signal.received", "signal.triggered"):
         sym  = payload.get("symbol", "")
         side = payload.get("side", "")
         return f"{sym} {side}".strip()
+    if event_type == "risk.rejected":
+        sym    = payload.get("symbol", "")
+        reason = payload.get("reason", "")
+        return f"{sym}  {reason}" if reason else str(sym)
     return ""

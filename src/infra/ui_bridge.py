@@ -71,6 +71,7 @@ def _serialize_trade(trade: Any) -> dict:
 def _extract_signal(payload: Any) -> dict | None:
     signal = None
     reason: str | None = None
+    message: str | None = None
 
     if payload is None:
         return None
@@ -81,6 +82,7 @@ def _extract_signal(payload: Any) -> dict | None:
     elif isinstance(payload, dict):
         signal = payload.get("signal")
         reason = str(payload.get("reason", "")) or None
+        message = str(payload.get("message", "")) or None
 
     if signal is None or not hasattr(signal, "symbol"):
         return None
@@ -108,6 +110,7 @@ def _extract_signal(payload: Any) -> dict | None:
         "riskRewardRatio": getattr(signal, "risk_reward_ratio", None),
         "setup":           setup,
         "reason":          reason,
+        "message":         message,
     }
 
 def _build_signal_event(event_name: str, payload: Any) -> dict | None:
@@ -117,6 +120,7 @@ def _build_signal_event(event_name: str, payload: Any) -> dict | None:
         "risk.approved":    "APPROVED",
         "risk.rejected":    "REJECTED",
         "trade.opened":     "OPENED",
+        "trade.error":      "FAILED",
     }
     status = STATUS.get(event_name)
     if status is None:
@@ -140,6 +144,7 @@ def _build_signal_event(event_name: str, payload: Any) -> dict | None:
         "setup":           info.get("setup"),
         "timestamp":       _now_hms(),
         "reason":          info.get("reason"),
+        "message":         info.get("message"),
     }
 
 
@@ -450,6 +455,13 @@ class UIBridge:
         if event_name in ("signal.received", "signal.triggered", "risk.approved", "risk.rejected"):
             sig = _build_signal_event(event_name, payload)
             return {"type": event_name, "payload": sig} if sig else None
+
+        if event_name == "trade.error":
+            try:
+                sig = _build_signal_event(event_name, payload)
+                return {"type": "trade.error", "payload": sig} if sig else None
+            except Exception:
+                return None
 
         return None
 

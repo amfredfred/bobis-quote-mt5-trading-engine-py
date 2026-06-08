@@ -255,8 +255,47 @@ class ExecutionEngine:
         except Exception as exc:
             with self._pending_lock:
                 self._release(signal.resolved_symbol, signal.id)
-            logger.exception("ExecutionEngine: order execution failed")
-            self._bus.emit(Events.TRADE_ERROR, {"signal": signal, "reason": str(exc)})
+
+            exc_str = str(exc)
+            is_autotrading_disabled = (
+                "10027" in exc_str
+                or "autotrading disabled" in exc_str.lower()
+            )
+
+            if is_autotrading_disabled:
+                logger.error(
+                    "Signal rejected — AutoTrading is DISABLED in MT5 terminal."
+                    " Enable AutoTrading (Algo Trading button) to allow order execution.",
+                    extra={
+                        "signal_id": signal.id,
+                        "symbol": signal.resolved_symbol,
+                        "direction": signal.direction.value,
+                        "reason": "AUTOTRADING_DISABLED",
+                        "retcode": 10027,
+                    },
+                )
+                self._bus.emit(
+                    Events.TRADE_ERROR,
+                    {
+                        "signal": signal,
+                        "reason": "AUTOTRADING_DISABLED",
+                        "message": (
+                            "Signal rejected: AutoTrading is disabled in the MT5 terminal. "
+                            "Click the 'Algo Trading' button in MT5 to enable it."
+                        ),
+                    },
+                )
+            else:
+                logger.exception("ExecutionEngine: order execution failed")
+                self._bus.emit(
+                    Events.TRADE_ERROR,
+                    {
+                        "signal": signal,
+                        "reason": "ORDER_FAILED",
+                        "message": f"Order execution failed: {exc}",
+                    },
+                )
+
             metrics.increment("orders.rejected")
             return None
 

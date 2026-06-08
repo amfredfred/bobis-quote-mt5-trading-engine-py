@@ -43,14 +43,33 @@ def _headless_main() -> None:
 
     logger = logging.getLogger("main")
 
-    # First positional arg that isn't a flag
-    config_path = next(
-        (a for a in sys.argv[1:] if not a.startswith("-")), "config.yaml"
+    # Explicit config path from CLI args takes priority.  If none is supplied,
+    # delegate to ConfigManager which applies the same priority rules the GUI
+    # uses: ProgramData → next to exe → walk-up → _MEIPASS → CWD.
+    _explicit_cfg = next(
+        (a for a in sys.argv[1:] if not a.startswith("-")), None
     )
+    if _explicit_cfg:
+        config_path: str = _explicit_cfg
+    else:
+        from src.gui.config_manager import ConfigManager as _CM
+        config_path = str(_CM().path)
 
     cfg = AppConfig.from_yaml(config_path)
     setup_logging(cfg.log_level, cfg.engine_timezone)
     _time.configure(cfg.engine_timezone)
+
+    # File logging: resolve log dir relative to config file so it is always
+    # adjacent to config.yaml — works correctly whether run from dev CWD or
+    # from an installed location where NSSM's AppDirectory differs from CWD.
+    from src.infra.logger import add_file_handler
+    _cfg_resolved = Path(config_path).resolve()
+    _logs_dir = _cfg_resolved.parent / "logs"
+    try:
+        add_file_handler(_logs_dir, cfg.engine_timezone)
+    except Exception as _fh_exc:
+        # Non-fatal: stdout logging still works; NSSM captures it too.
+        logger.warning("Could not enable file logging to %s: %s", _logs_dir, _fh_exc)
 
     logger.info(
         "Execution Engine initialising (headless)",

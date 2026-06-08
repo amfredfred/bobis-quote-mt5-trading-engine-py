@@ -155,6 +155,30 @@ def setup_logging(level: str = "INFO", tz: ZoneInfo | None = None) -> None:
     logging.getLogger("websockets").setLevel(logging.WARNING)
 
 
+def add_file_handler(log_dir: "str | Path", tz: "ZoneInfo | None" = None) -> None:
+    """
+    Add a plain-text file handler writing to <log_dir>/engine.log.
+
+    Safe to call after setup_logging().  Idempotent — if a FileHandler for
+    the same path already exists it is not added again.
+    """
+    from pathlib import Path as _Path
+
+    log_path = _Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+    target = str((log_path / "engine.log").resolve())
+
+    root = logging.getLogger()
+    # Avoid duplicate handlers on restart / re-init
+    for h in root.handlers:
+        if isinstance(h, logging.FileHandler) and h.baseFilename == target:
+            return
+
+    fh = logging.FileHandler(target, encoding="utf-8")
+    fh.setFormatter(_PrettyFormatter(use_colour=False, tz=tz))
+    root.addHandler(fh)
+
+
 
 
 
