@@ -25,7 +25,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 # Default web dashboard URL — override via config.yaml: dashboard.url
-DEFAULT_DASHBOARD_URL = "https://app.apexquanttrader.com"
+DEFAULT_DASHBOARD_URL = "https://app.somicast.com"
 
 # ProgramData path (production install location)
 _APPNAME    = "Apex Quant Trader"

@@ -69,17 +69,33 @@ def load_logo_image(
 def set_window_icon(window: "ctk.CTk") -> None:  # type: ignore[name-defined]
     """
     Set the title-bar and taskbar icon for *window*.
-    Safe to call on platforms that don't support iconphoto.
+
+    Strategy (Windows):
+      1. wm_iconbitmap with icon.ico  — sets title-bar + taskbar reliably
+      2. iconphoto with icon.png      — fallback / also updates alt-tab thumbnail
+
+    Safe to call on non-Windows (iconbitmap is skipped, iconphoto still runs).
     """
-    path = asset_path("icon.png")
-    if path is None:
+    # ── 1. ICO path (preferred on Windows) ────────────────────────────────────
+    ico_path = asset_path("icon.ico")
+    if ico_path and sys.platform == "win32":
+        try:
+            window.iconbitmap(str(ico_path))
+        except Exception:
+            pass
+
+    # ── 2. PNG via iconphoto (cross-platform, also updates alt-tab) ───────────
+    png_path = asset_path("icon.png")
+    if png_path is None:
         return
     try:
         from PIL import Image, ImageTk
-        img   = Image.open(path).convert("RGBA")
-        photo = ImageTk.PhotoImage(img.resize((32, 32)))
-        # Keep a reference so Python doesn't GC the image
-        window._icon_photo = photo  # type: ignore[attr-defined]
-        window.iconphoto(True, photo)
+        img   = Image.open(png_path).convert("RGBA")
+        # Provide both 32×32 and 64×64 for high-DPI displays
+        photo32 = ImageTk.PhotoImage(img.resize((32, 32)))
+        photo64 = ImageTk.PhotoImage(img.resize((64, 64)))
+        # Keep references so Python doesn't GC the images
+        window._icon_photos = (photo32, photo64)  # type: ignore[attr-defined]
+        window.iconphoto(True, photo64, photo32)
     except Exception:
         pass

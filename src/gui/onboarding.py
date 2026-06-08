@@ -740,7 +740,7 @@ class _StepActivation(_WizardStep):
         ctk.CTkEntry(
             url_row, textvariable=self._var_url, width=400,
             font=ctk.CTkFont(family="Consolas", size=11),
-            placeholder_text="wss://gateway.apexquanttrader.com",
+            placeholder_text="wss://gateway.somicast.com",
         ).pack(side="left")
 
         self._banner = ActionBanner(f)

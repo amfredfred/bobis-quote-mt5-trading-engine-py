@@ -485,7 +485,7 @@ if ($installSvc) {
 }
 
 # Open dashboard in browser
-$dashboardUrl = "https://app.apexquanttrader.io"
+$dashboardUrl = "https://app.somicast.com"
 
 Write-Host ""
 Write-Host "  Opening dashboard: $dashboardUrl" -ForegroundColor Cyan

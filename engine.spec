@@ -115,8 +115,9 @@ datas = [
     ("version.txt", "."),
     # Default config — placed next to the exe so the GUI finds it on first launch
     ("config.yaml",  "."),
-    # GUI icon — loaded by src/gui/assets.py for sidebar logo + window icon
+    # GUI icons — loaded by src/gui/assets.py for sidebar logo + window icon
     ("src/gui/assets/icon.png", "src/gui/assets"),
+    ("src/gui/assets/icon.ico", "src/gui/assets"),
 ]
 
 # Include the full tzdata IANA timezone database

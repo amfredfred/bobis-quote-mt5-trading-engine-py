@@ -15,7 +15,7 @@
 
 #define MyAppName      "Apex Quant Trader"
 #define MyAppPublisher "Apex Quant Trader"
-#define MyAppURL       "https://apexquanttrader.io"
+#define MyAppURL       "https://app.somicast.com"
 #define MyAppExeName   "apex-quant-trader-agent\apex-quant-trader-agent.exe"
 #define MyServiceName  "apex-quant-trader-agent"
 #define MyAppVersion   Trim(FileRead(AddBackslash(SourcePath) + "..\version.txt"))
