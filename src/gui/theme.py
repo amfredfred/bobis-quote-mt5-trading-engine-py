@@ -94,13 +94,18 @@ def section_rule(parent: tk.Widget, text: str) -> ctk.CTkFrame:
     return frame
 
 
-def page_header(parent: tk.Widget, title: str) -> ctk.CTkFrame:
+def page_header(
+    parent: tk.Widget,
+    title: str,
+    subtitle: str = "",
+) -> ctk.CTkFrame:
     """
-    Standard page top bar:  title on the left, content area starts below.
-    Returns the header frame (call pack/grid on the parent, the header
-    is already pack()ed).
+    Standard page top bar:  title (+ optional subtitle) on the left.
+    The frame is already pack()ed into parent; returns it for optional
+    further configuration.
     """
-    hdr = ctk.CTkFrame(parent, height=52, fg_color=SURFACE_RAISED, corner_radius=0)
+    height = 62 if subtitle else 52
+    hdr = ctk.CTkFrame(parent, height=height, fg_color=SURFACE_RAISED, corner_radius=0)
     hdr.pack(fill="x")
     hdr.pack_propagate(False)
 
@@ -108,12 +113,26 @@ def page_header(parent: tk.Widget, title: str) -> ctk.CTkFrame:
     ctk.CTkFrame(hdr, width=3, fg_color=GREEN, corner_radius=0).pack(
         side="left", fill="y",
     )
+
+    title_col = ctk.CTkFrame(hdr, fg_color="transparent")
+    title_col.pack(side="left", padx=(14, 0))
+
     ctk.CTkLabel(
-        hdr,
+        title_col,
         text=title,
         font=ctk.CTkFont(size=15, weight="bold"),
         text_color=TEXT,
-    ).pack(side="left", padx=(14, 0))
+        anchor="w",
+    ).pack(anchor="w")
+
+    if subtitle:
+        ctk.CTkLabel(
+            title_col,
+            text=subtitle,
+            font=ctk.CTkFont(size=11),
+            text_color=MUTED,
+            anchor="w",
+        ).pack(anchor="w")
 
     return hdr
 

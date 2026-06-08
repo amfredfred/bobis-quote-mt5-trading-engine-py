@@ -187,7 +187,7 @@ class RiskPage(ctk.CTkScrollableFrame):
     # ── Load / Save ───────────────────────────────────────────────────────────
 
     def _load(self) -> None:
-        cfg = self.app.load_config()
+        cfg  = self.app.config.load(force=True)
         risk = cfg.get("risk", {})
 
         _FIELD_MAP = {
@@ -212,7 +212,7 @@ class RiskPage(ctk.CTkScrollableFrame):
             "risk.rolling_window_size":         ("rolling_window_size",         int),
             "risk.rolling_drawdown_pct":        ("rolling_drawdown_pct",        float),
         }
-        errors: list[str] = []
+        errors:  list[str]        = []
         updates: dict[str, object] = {}
 
         for key, (field, typ) in _WRITE_MAP.items():
@@ -232,19 +232,15 @@ class RiskPage(ctk.CTkScrollableFrame):
             )
             return
 
-        try:
-            cfg = self.app.load_config()
-            cfg.setdefault("risk", {}).update(updates)
-            self.app.save_config(cfg)
-        except Exception as exc:
-            self._lbl_status.configure(
-                text=f"⚠  Save failed: {exc}", text_color=RED,
-            )
+        err = self.app.config.update("risk", updates)
+        if err:
+            self._lbl_status.configure(text=f"⚠  {err}", text_color=RED)
             return
 
         self._lbl_status.configure(
             text="✓  Saved — restarting engine…", text_color=GREEN,
         )
+        self.app.app_state.mark_setup_complete(self.app.config.is_setup_complete())
         threading.Thread(target=self._delayed_restart, daemon=True).start()
 
     def _delayed_restart(self) -> None:

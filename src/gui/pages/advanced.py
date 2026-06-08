@@ -169,7 +169,7 @@ class AdvancedPage(ctk.CTkScrollableFrame):
     # ── Load / Save ───────────────────────────────────────────────────────────
 
     def _load(self) -> None:
-        cfg = self.app.load_config()
+        cfg = self.app.config.load(force=True)
 
         _MAP = {
             "gateway.ws_url":              ("gateway",   "ws_url"),
@@ -203,11 +203,7 @@ class AdvancedPage(ctk.CTkScrollableFrame):
             "execution.order_retry_count": ("execution", "order_retry_count",   int),
         }
         errors: list[str] = []
-
-        try:
-            cfg = self.app.load_config()
-        except Exception:
-            cfg = {}
+        cfg = self.app.config.load()
 
         for key, (section, field, typ) in _WRITE_MAP.items():
             if key not in self._vars:
@@ -231,17 +227,15 @@ class AdvancedPage(ctk.CTkScrollableFrame):
             )
             return
 
-        try:
-            self.app.save_config(cfg)
-        except Exception as exc:
-            self._lbl_status.configure(
-                text=f"⚠  Write failed: {exc}", text_color=RED,
-            )
+        err = self.app.config.save(cfg)
+        if err:
+            self._lbl_status.configure(text=f"⚠  {err}", text_color=RED)
             return
 
         self._lbl_status.configure(
             text="✓  Saved — restarting engine…", text_color=GREEN,
         )
+        self.app.app_state.mark_setup_complete(self.app.config.is_setup_complete())
         threading.Thread(target=self._delayed_restart, daemon=True).start()
 
     def _delayed_restart(self) -> None:
@@ -250,8 +244,14 @@ class AdvancedPage(ctk.CTkScrollableFrame):
         self.app.restart_with_new_config()
 
     def _reinstall(self) -> None:
-        self._lbl_svc_result.configure(text="Installing…", text_color=YELLOW)
-        self.app.svc.install(self.app.config_path)
+        self._lbl_svc_result.configure(text="Reinstalling…", text_color=YELLOW)
+        self.app.installer.on_result = lambda ok, msg: self.after(
+            0,
+            lambda: self._lbl_svc_result.configure(
+                text=msg[:80], text_color=GREEN if ok else RED,
+            ),
+        )
+        self.app.installer.reinstall_async(str(self.app.config.path))
 
     def on_engine_status(self, status: str, detail: str | None) -> None:
         from src.gui.service_controller import ServiceStatus
