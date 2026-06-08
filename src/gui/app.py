@@ -1,50 +1,90 @@
 """
-src/gui/app.py — Apex Quant Trader desktop control panel.
+src/gui/app.py — Apex Quant Trader Engine Manager
 
-Architecture (correct):
-  • The ENGINE runs as a Windows service (apex-quant-trader-agent) 24/7.
-    It connects to the cloud gateway so the online dashboard always works,
-    regardless of whether this GUI is open or closed.
+Sidebar-based desktop control panel.
 
-  • THIS APP is a service controller + live monitor:
-      - ServiceController  — start / stop / restart via sc.exe
-      - WSClient           — connects to UIBridge (ws://localhost:8080)
-                             for live trades, metrics and logs
-      - Poll loop          — drains WS queue every 100 ms → updates CTk widgets
+Layout
+──────
+  Left sidebar (fixed 190 px)
+    ⚡ Apex Trader
+    v{version}
+    ──────────────
+    ⬡  Overview         ← home / live trading view
+    ⚡  Engine           ← process control
+    ⬡  Terminal         ← MT5 selection + credentials
+    ⚖  Risk             ← user risk settings
+    📋  Logs             ← log viewer
+    ⚙  Advanced         ← technical / developer settings
+    ──────────────
+    ●  Engine: {status}
 
-  Closing this window does NOT stop the engine service.
+  Right content area
+    Page frames — shown/hidden by nav
+
+Architecture
+────────────
+  ServiceController  owns engine lifecycle (Windows service via sc.exe)
+  WSClient           connects to UIBridge (ws://localhost:{port})
+  Pages              receive events via on_*() methods; call app.svc / app.ws
 """
 from __future__ import annotations
 
-import os
 import queue as _queue
 import sys
 import threading
+import time
 from pathlib import Path
+from typing import Any
 
 import customtkinter as ctk
+import yaml
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-_GREEN  = "#00d4aa"
-_RED    = "#ff4757"
-_YELLOW = "#ffa502"
-_MUTED  = "#888888"
+# ── Palette ───────────────────────────────────────────────────────────────────
 
+_GREEN   = "#00d4aa"
+_RED     = "#ff4757"
+_YELLOW  = "#ffa502"
+_MUTED   = "#6b6b8a"
+_SIDEBAR = "#0c0c1a"
+_NAV_ACT = "#1a2040"
+_NAV_HOV = "#141830"
+_TEXT    = "#e0e0e0"
+
+_NAV_PAGES = ["Overview", "Engine", "Terminal", "Risk", "Logs", "Advanced"]
+_NAV_ICONS = {
+    "Overview":  "⬡",
+    "Engine":    "⚡",
+    "Terminal":  "⬡",
+    "Risk":      "⚖",
+    "Logs":      "📋",
+    "Advanced":  "⚙",
+}
+
+
+# ── Main application window ───────────────────────────────────────────────────
 
 class ApexTraderGUI(ctk.CTk):
     """
-    Apex Quant Trader desktop control panel.
-
-    Opens config.yaml from config_path (auto-resolved if omitted).
+    Root window.  Owns the service controller, WebSocket client, and
+    all page frames.  Pages call back through:
+        self.app.svc.*             — service control
+        self.app.ws.send(...)      — send commands to engine
+        self.app.load_config()     — read config.yaml
+        self.app.save_config(cfg)  — write config.yaml
+        self.app.navigate(page)    — switch sidebar page
+        self.app._last_heartbeat   — float timestamp of last WS message
     """
 
     def __init__(self, config_path: str = "config.yaml") -> None:
         super().__init__()
 
-        self.config_path = config_path
-        self._msg_queue: _queue.Queue[dict] = _queue.Queue()
+        self.config_path       = config_path
+        self._msg_queue:        _queue.Queue[dict] = _queue.Queue()
+        self._last_heartbeat:   float = 0.0
+        self._prev_svc_status:  str   = ""
 
         from src.gui.service_controller import ServiceController
         from src.gui.ws_client import WSClient
@@ -60,177 +100,166 @@ class ApexTraderGUI(ctk.CTk):
             on_disconnect=lambda: self._msg_queue.put({"type": "_ws_disconnected"}),
         )
 
-        self._build_window()
-        self._build_header()
-        self._build_error_banner()
-        self._build_tabs()
+        self._build_layout()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._poll)
 
-        # Connect to UIBridge (engine may already be running as service)
         self.ws.start()
-
-        # Refresh service status indicator on startup
         self.after(300, self._refresh_service_status)
 
         self.lift()
         self.focus_force()
 
-    # ── Window ────────────────────────────────────────────────────────────────
+    # ── Window & layout ───────────────────────────────────────────────────────
 
-    def _build_window(self) -> None:
+    def _build_layout(self) -> None:
         self.title("Apex Quant Trader")
-        self.geometry("1140x720")
-        self.minsize(920, 600)
-        self.grid_rowconfigure(0, weight=0)
-        self.grid_rowconfigure(1, weight=0)
-        self.grid_rowconfigure(2, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        self.geometry("1180x740")
+        self.minsize(980, 620)
 
-    # ── Header ────────────────────────────────────────────────────────────────
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
 
-    def _build_header(self) -> None:
-        hdr = ctk.CTkFrame(self, height=56, corner_radius=0, fg_color="#141428")
-        hdr.grid(row=0, column=0, sticky="ew")
-        hdr.grid_propagate(False)
+        # Sidebar
+        self._sidebar = ctk.CTkFrame(
+            self, width=190, corner_radius=0, fg_color=_SIDEBAR,
+        )
+        self._sidebar.grid(row=0, column=0, sticky="nsew")
+        self._sidebar.grid_propagate(False)
 
+        # Content area
+        self._content = ctk.CTkFrame(self, corner_radius=0, fg_color="#0f0f1e")
+        self._content.grid(row=0, column=1, sticky="nsew")
+        self._content.grid_rowconfigure(0, weight=1)
+        self._content.grid_columnconfigure(0, weight=1)
+
+        self._build_sidebar()
+        self._build_pages()
+        self._show_page("Overview")
+
+    def _build_sidebar(self) -> None:
+        # Logo block
+        logo = ctk.CTkFrame(self._sidebar, fg_color="transparent", height=62)
+        logo.pack(fill="x")
+        logo.pack_propagate(False)
         ctk.CTkLabel(
-            hdr, text="⚡  Apex Trader",
-            font=ctk.CTkFont(size=17, weight="bold"),
-        ).pack(side="left", padx=16)
+            logo,
+            text="⚡  Apex Trader",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=_GREEN,
+        ).place(relx=0.5, rely=0.58, anchor="center")
 
+        # Version
         version = _read_version()
         ctk.CTkLabel(
-            hdr, text=f"v{version}",
-            font=ctk.CTkFont(size=11), text_color=_MUTED,
-        ).pack(side="left", padx=(0, 16))
+            self._sidebar,
+            text=f"v{version}",
+            font=ctk.CTkFont(size=10),
+            text_color=_MUTED,
+        ).pack(pady=(0, 6))
 
-        # Service control buttons
-        btn_frame = ctk.CTkFrame(hdr, fg_color="transparent")
-        btn_frame.pack(side="right", padx=12)
+        _divider(self._sidebar)
 
-        ctk.CTkButton(
-            btn_frame, text="Restart", width=82, height=32,
-            command=self._restart_service,
-            fg_color="#2d4a6e", hover_color="#3d5a7e",
-        ).pack(side="right", padx=3)
-
-        self._btn_stop = ctk.CTkButton(
-            btn_frame, text="Stop", width=70, height=32,
-            command=self._stop_service,
-            fg_color="#6e2d2d", hover_color="#8e3d3d",
-        )
-        self._btn_stop.pack(side="right", padx=3)
-
-        self._btn_start = ctk.CTkButton(
-            btn_frame, text="Start", width=70, height=32,
-            command=self._start_service,
-            fg_color="#1a5c2a", hover_color="#22732e",
-        )
-        self._btn_start.pack(side="right", padx=3)
-
-        # Status indicators
-        status_frame = ctk.CTkFrame(hdr, fg_color="transparent")
-        status_frame.pack(side="right", padx=20)
-
-        self._lbl_svc     = _StatusDot(status_frame, "Service", "gray")
-        self._lbl_mt5     = _StatusDot(status_frame, "MT5",     "gray")
-        self._lbl_gateway = _StatusDot(status_frame, "Gateway", "gray")
-
-    # ── Error banner ──────────────────────────────────────────────────────────
-
-    def _build_error_banner(self) -> None:
-        self._error_banner = ctk.CTkFrame(
-            self, fg_color="#3a1010", corner_radius=0, height=38,
-        )
-        self._error_banner.grid_propagate(False)
-
-        ctk.CTkLabel(
-            self._error_banner, text="⚠",
-            font=ctk.CTkFont(size=14), text_color=_RED,
-        ).pack(side="left", padx=(12, 4))
-
-        self._error_lbl = ctk.CTkLabel(
-            self._error_banner, text="",
-            font=ctk.CTkFont(size=12), text_color="#ffaaaa", anchor="w",
-        )
-        self._error_lbl.pack(side="left", fill="x", expand=True)
-
-        ctk.CTkButton(
-            self._error_banner, text="Open Settings →", width=130, height=26,
-            command=lambda: self._tabs.set("Settings"),
-            fg_color="#6e1a1a", hover_color="#8e2a2a",
-        ).pack(side="right", padx=8)
-
-        ctk.CTkButton(
-            self._error_banner, text="Restart", width=70, height=26,
-            command=self._restart_service,
-            fg_color="#2d4a6e", hover_color="#3d5a7e",
-        ).pack(side="right", padx=4)
-
-        self._btn_install = ctk.CTkButton(
-            self._error_banner, text="Install Service", width=110, height=26,
-            command=self._install_service,
-            fg_color="#5a3a00", hover_color="#7a5000",
-        )
-        # shown/hidden dynamically — not packed here
-
-    def _show_error_banner(self, msg: str, show_install: bool = False) -> None:
-        self._error_lbl.configure(text=msg)
-        if show_install:
-            self._btn_install.pack(side="right", padx=4)
-        else:
-            self._btn_install.pack_forget()
-        self._error_banner.grid(row=1, column=0, sticky="ew")
-
-    def _hide_error_banner(self) -> None:
-        self._error_banner.grid_remove()
-
-    # ── Tabs ──────────────────────────────────────────────────────────────────
-
-    def _build_tabs(self) -> None:
-        self._tabs = ctk.CTkTabview(self, corner_radius=8)
-        self._tabs.grid(row=2, column=0, sticky="nsew", padx=8, pady=(4, 8))
-
-        self._tabs.add("Dashboard")
-        self._tabs.add("Settings")
-        self._tabs.add("Logs")
-
-        from src.gui.tabs.dashboard import DashboardTab
-        from src.gui.tabs.settings  import SettingsTab
-        from src.gui.tabs.logs      import LogsTab
-
-        self._tab_dashboard = DashboardTab(self._tabs.tab("Dashboard"), self)
-        self._tab_settings  = SettingsTab(self._tabs.tab("Settings"),   self)
-        self._tab_logs      = LogsTab(self._tabs.tab("Logs"),           self)
-
-    # ── Service control ───────────────────────────────────────────────────────
-
-    def _install_service(self) -> None:
-        self._show_error_banner("Installing service… please wait.", show_install=False)
-        self.svc.install(self.config_path)
-
-    def _start_service(self) -> None:
-        if not self.svc.is_installed():
-            self._show_error_banner(
-                "Service not installed — click Install Service to register it.",
-                show_install=True,
+        # Nav buttons
+        self._nav_btns: dict[str, ctk.CTkButton] = {}
+        for page in _NAV_PAGES:
+            icon = _NAV_ICONS.get(page, "")
+            btn = ctk.CTkButton(
+                self._sidebar,
+                text=f"  {icon}  {page}",
+                anchor="w",
+                height=38, corner_radius=8,
+                fg_color="transparent",
+                hover_color=_NAV_HOV,
+                text_color=_TEXT,
+                font=ctk.CTkFont(size=13),
+                command=lambda p=page: self._show_page(p),
             )
-            return
-        self.svc.start()
+            btn.pack(fill="x", padx=8, pady=2)
+            self._nav_btns[page] = btn
 
-    def _stop_service(self) -> None:
-        self.svc.stop()
+        # Spacer pushes status to bottom
+        ctk.CTkFrame(self._sidebar, fg_color="transparent").pack(
+            fill="both", expand=True,
+        )
 
-    def _restart_service(self) -> None:
-        self.svc.restart()
+        # Engine status at bottom of sidebar
+        _divider(self._sidebar)
+        self._sidebar_engine_status = ctk.CTkLabel(
+            self._sidebar,
+            text="●  Engine: --",
+            font=ctk.CTkFont(size=11),
+            text_color=_MUTED,
+        )
+        self._sidebar_engine_status.pack(pady=(4, 14))
+
+    def _build_pages(self) -> None:
+        from src.gui.pages.overview  import OverviewPage
+        from src.gui.pages.engine    import EnginePage
+        from src.gui.pages.terminal  import TerminalPage
+        from src.gui.pages.risk      import RiskPage
+        from src.gui.pages.logs      import LogsPage
+        from src.gui.pages.advanced  import AdvancedPage
+
+        self._pages: dict[str, ctk.CTkFrame] = {
+            "Overview":  OverviewPage(self._content, self),
+            "Engine":    EnginePage(self._content, self),
+            "Terminal":  TerminalPage(self._content, self),
+            "Risk":      RiskPage(self._content, self),
+            "Logs":      LogsPage(self._content, self),
+            "Advanced":  AdvancedPage(self._content, self),
+        }
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+
+    def _show_page(self, name: str) -> None:
+        for pname, page in self._pages.items():
+            if pname == name:
+                page.grid(row=0, column=0, sticky="nsew")
+            else:
+                page.grid_remove()
+
+        for bname, btn in self._nav_btns.items():
+            active = bname == name
+            btn.configure(
+                fg_color=_NAV_ACT if active else "transparent",
+                text_color=_GREEN if active else _TEXT,
+            )
+
+    def navigate(self, page: str) -> None:
+        """Called by pages to navigate programmatically."""
+        self._show_page(page)
+
+    # ── Config helpers ────────────────────────────────────────────────────────
+
+    def load_config(self) -> dict:
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as fh:
+                return yaml.safe_load(fh) or {}
+        except Exception:
+            return {}
+
+    def save_config(self, cfg: dict) -> None:
+        with open(self.config_path, "w", encoding="utf-8") as fh:
+            yaml.dump(
+                cfg, fh,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+            )
 
     def restart_with_new_config(self) -> None:
-        """Called by SettingsTab after saving config.yaml."""
-        self._restart_service()
+        """Called by settings pages after saving config.yaml."""
+        self.svc.restart()
 
-    # ── Service status callback (called from ServiceController thread) ────────
+    # ── WS command helper ─────────────────────────────────────────────────────
+
+    def send_command(self, cmd_type: str, payload: dict | None = None) -> None:
+        self.ws.send(cmd_type, payload or {})
+
+    # ── Service status ────────────────────────────────────────────────────────
 
     def _on_svc_status_change(self, status: str, detail: str | None) -> None:
         self.after(0, lambda: self._apply_svc_status(status, detail))
@@ -238,15 +267,15 @@ class ApexTraderGUI(ctk.CTk):
     def _apply_svc_status(self, status: str, detail: str | None) -> None:
         from src.gui.service_controller import ServiceStatus
 
-        colours = {
-            ServiceStatus.NOT_INSTALLED: "gray",
+        _colours = {
+            ServiceStatus.NOT_INSTALLED: _MUTED,
             ServiceStatus.STOPPED:       _RED,
             ServiceStatus.STARTING:      _YELLOW,
             ServiceStatus.RUNNING:       _GREEN,
             ServiceStatus.STOPPING:      _YELLOW,
             ServiceStatus.UNKNOWN:       _MUTED,
         }
-        labels = {
+        _labels = {
             ServiceStatus.NOT_INSTALLED: "Not Installed",
             ServiceStatus.STOPPED:       "Stopped",
             ServiceStatus.STARTING:      "Starting…",
@@ -254,27 +283,36 @@ class ApexTraderGUI(ctk.CTk):
             ServiceStatus.STOPPING:      "Stopping…",
             ServiceStatus.UNKNOWN:       "Unknown",
         }
-        self._lbl_svc.set(labels.get(status, status), colours.get(status, "gray"))
+        label = _labels.get(status, status)
+        color = _colours.get(status, _MUTED)
 
-        if status == ServiceStatus.NOT_INSTALLED:
-            self._show_error_banner(
-                "Engine service not installed — click Install Service to register it.",
-                show_install=True,
-            )
-        elif status == ServiceStatus.STOPPED and detail:
-            self._show_error_banner(f"Service stopped: {detail}")
-        elif status == ServiceStatus.RUNNING:
-            self._hide_error_banner()
+        self._sidebar_engine_status.configure(
+            text=f"●  Engine: {label}", text_color=color,
+        )
+
+        # Crash detection: RUNNING → STOPPED without an explicit stop
+        if (
+            self._prev_svc_status == ServiceStatus.RUNNING
+            and status == ServiceStatus.STOPPED
+            and not detail
+        ):
+            detail = "Engine stopped unexpectedly. Click Start to restart it."
+
+        self._prev_svc_status = status
+
+        # Broadcast to all pages
+        _broadcast(self._pages, "on_engine_status", status, detail)
 
     def _refresh_service_status(self) -> None:
         """Poll service status every 5 s."""
-        def _check() -> None:
+        def _check():
             status = self.svc.query()
             self.after(0, lambda: self._apply_svc_status(status, None))
+
         threading.Thread(target=_check, daemon=True).start()
         self.after(5000, self._refresh_service_status)
 
-    # ── Poll loop ─────────────────────────────────────────────────────────────
+    # ── WebSocket message dispatch ────────────────────────────────────────────
 
     def _poll(self) -> None:
         try:
@@ -290,59 +328,39 @@ class ApexTraderGUI(ctk.CTk):
         payload = msg.get("payload", {})
 
         if t == "_ws_connected":
-            self._lbl_gateway.set("Live", _GREEN)
-            self._hide_error_banner()
+            self._last_heartbeat = time.time()
+            _broadcast(self._pages, "on_ws_connected")
 
         elif t == "_ws_disconnected":
-            self._lbl_gateway.set("Offline", _MUTED)
-            self._lbl_mt5.set("--", _MUTED)
+            _broadcast(self._pages, "on_ws_disconnected")
 
         elif t == "STATE_SNAPSHOT":
-            self._tab_dashboard.on_snapshot(payload)
-            engine_info = payload.get("engine", {})
-            mt5_ok      = payload.get("connected", False)
-            gw_ok       = engine_info.get("connected_signal_engine", False)
-            self._lbl_mt5.set(
-                "Connected" if mt5_ok else "Connecting…",
-                _GREEN if mt5_ok else _YELLOW,
-            )
-            self._lbl_gateway.set(
-                "Active" if gw_ok else "Connecting…",
-                _GREEN if gw_ok else _YELLOW,
-            )
-            if mt5_ok:
-                self._hide_error_banner()
+            self._last_heartbeat = time.time()
+            _broadcast(self._pages, "on_snapshot", payload)
 
         elif t == "METRICS_UPDATE":
-            self._tab_dashboard.on_metrics(payload)
+            self._last_heartbeat = time.time()
+            _broadcast(self._pages, "on_metrics", payload)
 
         elif t == "mt5.error":
-            # Engine couldn't connect to MT5 — show in banner, keep retrying
-            msg = payload.get("message", "MT5 connection failed")
-            # Strip the internal exception type prefix for readability
-            if ":" in msg:
-                msg = msg.split(":", 1)[-1].strip()
-            self._lbl_mt5.set("Error", _RED)
-            self._show_error_banner(f"MT5: {msg}")
+            msg_text = payload.get("message", "MT5 connection failed")
+            _broadcast(self._pages, "on_mt5_error", msg_text)
 
         elif t in (
             "trade.opened", "trade.tp1_hit",
             "trade.tp2_hit", "trade.sl_hit", "trade.closed",
         ):
-            self._tab_dashboard.on_trade_event(t, payload)
+            _broadcast(self._pages, "on_trade_event", t, payload)
 
-        elif t in ("signal.received", "signal.triggered", "risk.approved", "risk.rejected"):
-            self._tab_dashboard.on_signal_event(t, payload)
-
-    # ── WS command helper ─────────────────────────────────────────────────────
-
-    def send_command(self, cmd_type: str, payload: dict | None = None) -> None:
-        self.ws.send(cmd_type, payload or {})
+        elif t in (
+            "signal.received", "signal.triggered",
+            "risk.approved",   "risk.rejected",
+        ):
+            _broadcast(self._pages, "on_signal_event", t, payload)
 
     # ── Close ─────────────────────────────────────────────────────────────────
 
     def _on_close(self) -> None:
-        """Close the control panel — the engine service keeps running."""
         self.ws.stop()
         self.destroy()
 
@@ -350,7 +368,6 @@ class ApexTraderGUI(ctk.CTk):
 
     def _read_monitoring_port(self) -> int:
         try:
-            import yaml
             with open(self.config_path, "r", encoding="utf-8") as fh:
                 cfg = yaml.safe_load(fh) or {}
             return int(cfg.get("engine", {}).get("monitoring_port", 8080))
@@ -358,30 +375,34 @@ class ApexTraderGUI(ctk.CTk):
             return 8080
 
 
-# ── Status dot widget ─────────────────────────────────────────────────────────
+# ── Module-level helpers ──────────────────────────────────────────────────────
 
-class _StatusDot(ctk.CTkLabel):
-    def __init__(self, parent: ctk.CTkBaseClass, name: str, color: str) -> None:
-        super().__init__(
-            parent,
-            text=f"●  {name}: --",
-            font=ctk.CTkFont(size=12),
-            text_color=color,
-        )
-        self.pack(side="left", padx=10)
-        self._name = name
+def _broadcast(
+    pages: dict[str, ctk.CTkFrame],
+    method: str,
+    *args: Any,
+) -> None:
+    """Call method(*args) on every page that implements it, swallowing errors."""
+    for page in pages.values():
+        cb = getattr(page, method, None)
+        if callable(cb):
+            try:
+                cb(*args)
+            except Exception:
+                pass
 
-    def set(self, status: str, color: str) -> None:
-        self.configure(text=f"●  {self._name}: {status}", text_color=color)
 
+def _divider(parent: ctk.CTkFrame) -> None:
+    ctk.CTkFrame(parent, height=1, fg_color="#2a2a4a").pack(
+        fill="x", padx=12, pady=6,
+    )
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _read_version() -> str:
     for candidate in (
         Path("version.txt"),
         Path(sys.executable).parent / "version.txt",
-        Path(__file__).parent.parent.parent / "version.txt",
+        Path(__file__).resolve().parent.parent.parent / "version.txt",
     ):
         try:
             return candidate.read_text(encoding="utf-8").strip()
@@ -394,23 +415,19 @@ def resolve_config_path(argv: list[str]) -> str:
     """
     Locate config.yaml in priority order:
 
-    1. Explicit CLI arg
-    2. Next to the exe (installed / user-editable copy)
-    3. Walk up 3 levels from the exe dir — covers dev layout where exe sits
-       in dist/apex-quant-trader-agent/ and config is in execution-engine/
-    4. PyInstaller _internal/ bundle (sys._MEIPASS) — shipped default
+    1. Explicit CLI argument ending in .yaml
+    2. Next to the exe (user-editable installed copy)
+    3. Walk up 3 levels from the exe — covers dev/dist layouts
+    4. sys._MEIPASS (PyInstaller _internal/ bundle directory)
     5. CWD
-    6. Walk up from __file__ — non-packaged dev / editable venv install
-    7. Fallback "config.yaml" — caller shows the error
+    6. Walk up from __file__ (editable venv install)
+    7. Fallback "config.yaml"
     """
-    # 1 — explicit arg
     for arg in argv[1:]:
         if not arg.startswith("-") and arg.endswith(".yaml"):
             return arg
 
     exe_dir = Path(sys.executable).parent
-
-    # 2 & 3 — next to exe then up to 3 parent dirs
     for depth in range(4):
         candidate = exe_dir
         for _ in range(depth):
@@ -419,23 +436,19 @@ def resolve_config_path(argv: list[str]) -> str:
         if cfg.exists():
             return str(cfg)
 
-    # 4 — PyInstaller bundle directory (onedir _internal/)
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         bundled = Path(meipass) / "config.yaml"
         if bundled.exists():
             return str(bundled)
 
-    # 5 — CWD
     cwd_cfg = Path.cwd() / "config.yaml"
     if cwd_cfg.exists():
         return str(cwd_cfg)
 
-    # 6 — walk up from this source file (venv / editable-install)
     for parent in Path(__file__).resolve().parents:
         cfg = parent / "config.yaml"
         if cfg.exists():
             return str(cfg)
 
-    # 7 — fallback
     return "config.yaml"

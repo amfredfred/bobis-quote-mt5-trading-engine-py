@@ -51,6 +51,7 @@ class ServiceController:
             result = subprocess.run(
                 ["sc", "query", self.service_name],
                 capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             out = result.stdout.upper()
             if "DOES NOT EXIST" in out or result.returncode == 1060:
@@ -100,6 +101,7 @@ class ServiceController:
             r = subprocess.run(
                 ["sc", *args],
                 capture_output=True, text=True, timeout=timeout,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             return r.returncode, r.stdout + r.stderr
         except subprocess.TimeoutExpired:
@@ -109,6 +111,9 @@ class ServiceController:
 
     def _do_start(self) -> None:
         self._notify(ServiceStatus.STARTING)
+        # Re-enable auto-start so NSSM resumes its restart policy when the
+        # engine is intentionally running (stop sets this to demand).
+        self._sc("config", self.service_name, "start=", "auto", timeout=10)
         code, out = self._sc("start", self.service_name, timeout=20)
         if code == 0 or "RUNNING" in out.upper():
             self._notify(ServiceStatus.RUNNING)
@@ -119,6 +124,10 @@ class ServiceController:
 
     def _do_stop(self) -> None:
         self._notify(ServiceStatus.STOPPING)
+        # Disable auto-restart BEFORE sending the stop signal so NSSM does not
+        # immediately bring the service back up (NSSM ignores a plain sc stop
+        # and treats it as a crash unless the start type is set to demand first).
+        self._sc("config", self.service_name, "start=", "demand", timeout=10)
         code, out = self._sc("stop", self.service_name, timeout=20)
         if code == 0 or "STOPPED" in out.upper():
             self._notify(ServiceStatus.STOPPED)
@@ -171,6 +180,7 @@ class ServiceController:
                     "-Action", "install",
                 ],
                 capture_output=True, text=True, timeout=120,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if r.returncode == 0:
                 self._notify(ServiceStatus.STOPPED, "Installed — click Start")

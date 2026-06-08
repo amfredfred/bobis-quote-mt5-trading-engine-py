@@ -139,7 +139,7 @@ function _install {
     & $NssmExe install $ServiceName $AppExe
 
     & $NssmExe set $ServiceName AppDirectory      $EngineDir
-    & $NssmExe set $ServiceName AppParameters     ""
+    & $NssmExe set $ServiceName AppParameters     "--headless"
 
     # Environment - prevent user-site packages from leaking into service env
     & $NssmExe set $ServiceName AppEnvironmentExtra `
