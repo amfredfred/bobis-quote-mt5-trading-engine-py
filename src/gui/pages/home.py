@@ -78,7 +78,7 @@ class HomePage(ctk.CTkFrame):
     # ── Engine status card ────────────────────────────────────────────────────
 
     def _build_engine_card(self, parent: tk.Widget) -> None:
-        section_rule(parent, "ENGINE STATUS").pack(fill="x", pady=(0, 8))
+        section_rule(parent, "AQ AGENT STATUS").pack(fill="x", pady=(0, 8))
 
         card = ctk.CTkFrame(
             parent, corner_radius=8,
@@ -207,11 +207,11 @@ class HomePage(ctk.CTkFrame):
             ),
             (
                 "service",
-                "Engine service installed",
-                "Background service registered"
-                    if svc else "Service must be installed",
+                "AQ Agent installed",
+                "AQ Agent registered"
+                    if svc else "AQ Agent must be installed",
                 svc,
-                "Install Engine", "Engine",
+                "Install AQ Agent", "Engine",
             ),
         ]
         self._readiness_panel.refresh(issues, all_items)

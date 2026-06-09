@@ -39,7 +39,7 @@ class EnginePage(ctk.CTkFrame):
     # ── Build ─────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        page_header(self, "Engine", "Service control and status")
+        page_header(self, "AQ Agent", "Task control and status")
 
         content = ctk.CTkScrollableFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=24, pady=16)
@@ -93,7 +93,7 @@ class EnginePage(ctk.CTkFrame):
         btn_inner.pack(padx=20, pady=16)
 
         self._btn_start = ctk.CTkButton(
-            btn_inner, text="▶  Start Engine", width=160, height=44,
+            btn_inner, text="▶  Start AQ Agent", width=160, height=44,
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=SUCCESS_BG, hover_color=SUCCESS_BORDER,
             border_width=1, border_color=SUCCESS_BORDER,
@@ -103,7 +103,7 @@ class EnginePage(ctk.CTkFrame):
         self._btn_start.grid(row=0, column=0, padx=8, pady=4)
 
         self._btn_stop = ctk.CTkButton(
-            btn_inner, text="■  Stop Engine", width=160, height=44,
+            btn_inner, text="■  Stop AQ Agent", width=160, height=44,
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=DANGER_BG, hover_color=DANGER_BORDER,
             border_width=1, border_color=DANGER_BORDER,
@@ -113,7 +113,7 @@ class EnginePage(ctk.CTkFrame):
         self._btn_stop.grid(row=0, column=1, padx=8, pady=4)
 
         self._btn_restart = ctk.CTkButton(
-            btn_inner, text="↺  Restart Engine", width=160, height=44,
+            btn_inner, text="↺  Restart AQ Agent", width=160, height=44,
             font=ctk.CTkFont(size=13),
             fg_color=INFO_BG, hover_color=INFO_BORDER,
             border_width=1, border_color=INFO_BORDER,
@@ -145,8 +145,8 @@ class EnginePage(ctk.CTkFrame):
 
         ctk.CTkLabel(
             inst_inner,
-            text="The engine runs as a Windows background service using NSSM. "
-                 "Install it once and it will start automatically with your computer.",
+            text="AQ Agent runs as a Windows Task Scheduler task. "
+                 "Install it once and it will start automatically when you log in.",
             font=ctk.CTkFont(size=12), text_color=MUTED,
             wraplength=560, justify="left",
         ).pack(anchor="w", pady=(0, 12))
@@ -192,9 +192,9 @@ class EnginePage(ctk.CTkFrame):
         tech_inner.pack(padx=20, pady=14, fill="x")
 
         port = self.app.config.get("engine", "monitoring_port") or 8080
-        info_row(tech_inner, "Service name",    "apex-quant-trader-agent")
-        info_row(tech_inner, "Service manager", "NSSM")
-        info_row(tech_inner, "Control method",  "Windows Service (sc.exe)")
+        info_row(tech_inner, "Task name",       "AQ Agent")
+        info_row(tech_inner, "Task folder",     "\\Apex Quantel\\")
+        info_row(tech_inner, "Control method",  "Task Scheduler (schtasks)")
         info_row(tech_inner, "UIBridge",        f"ws://localhost:{port}")
         info_row(tech_inner, "Config file",     str(self.app.config.path))
 
@@ -250,7 +250,7 @@ class EnginePage(ctk.CTkFrame):
         label = _labels.get(status, status)
         color = _colors.get(status, MUTED)
 
-        self._lbl_status_dot.configure(text=f"●  Engine {label}", text_color=color)
+        self._lbl_status_dot.configure(text=f"●  AQ Agent {label}", text_color=color)
         self._accent_bar.configure(fg_color=color)
 
         is_running = status == ServiceStatus.RUNNING
@@ -264,7 +264,7 @@ class EnginePage(ctk.CTkFrame):
         # NOT_INSTALLED → show install banner once
         if status == ServiceStatus.NOT_INSTALLED:
             self._install_banner.show(
-                "Engine service is not installed. Click Install Service below.", "warn",
+                "AQ Agent is not installed. Click Install Service below.", "warn",
             )
         elif detail:
             self._error_banner.show(f"⚠  {detail}", "danger")
@@ -295,18 +295,18 @@ class EnginePage(ctk.CTkFrame):
         from src.gui.service_controller import ServiceStatus
         if self.app.svc.query() == ServiceStatus.NOT_INSTALLED:
             self._action_banner.show(
-                "Engine service is not installed. Use Install Service below.", "warn",
+                "AQ Agent is not installed. Use Install Service below.", "warn",
             )
             return
-        self._action_banner.show("Starting engine…", "warn")
+        self._action_banner.show("Starting AQ Agent…", "warn")
         threading.Thread(target=self.app.svc.start, daemon=True).start()
 
     def _stop(self) -> None:
-        self._action_banner.show("Stopping engine…", "warn")
+        self._action_banner.show("Stopping AQ Agent…", "warn")
         threading.Thread(target=self.app.svc.stop, daemon=True).start()
 
     def _restart(self) -> None:
-        self._action_banner.show("Restarting engine…", "warn")
+        self._action_banner.show("Restarting AQ Agent…", "warn")
         threading.Thread(target=self.app.svc.restart, daemon=True).start()
 
     # ── Installer actions ─────────────────────────────────────────────────────

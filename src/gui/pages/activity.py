@@ -123,7 +123,7 @@ class ActivityPage(ctk.CTkFrame):
 
         self._no_events_lbl = ctk.CTkLabel(
             self._events_frame,
-            text="No events yet — engine events will appear here once running.",
+            text="No events yet — AQ Agent events will appear here once running.",
             font=ctk.CTkFont(size=12), text_color=MUTED,
         )
         self._no_events_lbl.pack(pady=32)

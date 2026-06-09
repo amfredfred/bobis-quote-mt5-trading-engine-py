@@ -1,9 +1,8 @@
 """
-src/gui/service_controller.py — Windows service control for the engine.
+src/gui/service_controller.py — Task Scheduler control for the AQ Agent.
 
-Uses sc.exe (built-in) to query, start, stop and restart the
-apex-quant-trader-agent service.  Falls back to in-process engine if the
-service is not installed (development / first-run mode).
+Uses schtasks.exe (built-in on all Windows versions) to query, start,
+stop, and restart the scheduled task registered by install_service.ps1.
 """
 from __future__ import annotations
 
@@ -14,10 +13,11 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
-SERVICE_NAME = "apex-quant-trader-agent"
+TASK_NAME = "AQ Agent"
+TASK_PATH = r"\Apex Quantel\AQ Agent"   # full path used by schtasks
 
 
-# ── Status dataclass ──────────────────────────────────────────────────────────
+# ── Status ────────────────────────────────────────────────────────────────────
 
 class ServiceStatus:
     NOT_INSTALLED = "not_installed"
@@ -32,15 +32,18 @@ class ServiceStatus:
 
 class ServiceController:
     """
-    Thin wrapper around sc.exe for start / stop / status.
+    Thin wrapper around schtasks.exe for start / stop / status.
 
-    All blocking calls are run in daemon threads so the GUI stays responsive.
-    on_status_change(status: str, detail: str | None) is called from those
-    threads — use app.after() in the callback to push updates to CTk.
+    Replaces the old sc.exe / NSSM service approach. The engine now runs as
+    a Task Scheduler task (registered by install_service.ps1) so it executes
+    in the user's interactive session and can attach to MT5.
+
+    All blocking calls run in daemon threads so the GUI stays responsive.
+    on_status_change(status, detail) is called from those threads — use
+    app.after() in the callback to push updates back to the GUI thread.
     """
 
-    def __init__(self, service_name: str = SERVICE_NAME) -> None:
-        self.service_name = service_name
+    def __init__(self) -> None:
         self.on_status_change: Callable[[str, str | None], None] | None = None
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -49,24 +52,26 @@ class ServiceController:
         """Return current ServiceStatus.* value (synchronous, fast)."""
         try:
             result = subprocess.run(
-                ["sc", "query", self.service_name],
-                capture_output=True, text=True, timeout=5,
+                ["schtasks", "/Query", "/TN", TASK_PATH, "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=8,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            out = result.stdout.upper()
-            if "DOES NOT EXIST" in out or result.returncode == 1060:
+            if result.returncode != 0:
                 return ServiceStatus.NOT_INSTALLED
-            if "RUNNING" in out:
-                return ServiceStatus.RUNNING
-            if "STOPPED" in out:
-                return ServiceStatus.STOPPED
-            if "START_PENDING" in out:
-                return ServiceStatus.STARTING
-            if "STOP_PENDING" in out:
-                return ServiceStatus.STOPPING
+
+            # CSV row: "TaskName","Next Run Time","Status"
+            line = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+            parts = [p.strip('"') for p in line.split('","')]
+            status_str = parts[2].upper() if len(parts) >= 3 else ""
+
+            if "RUNNING"  in status_str: return ServiceStatus.RUNNING
+            if "READY"    in status_str: return ServiceStatus.STOPPED
+            if "DISABLED" in status_str: return ServiceStatus.STOPPED
+            if "QUEUED"   in status_str: return ServiceStatus.STARTING
             return ServiceStatus.UNKNOWN
+
         except Exception as exc:
-            logger.debug("sc query error: %s", exc)
+            logger.debug("schtasks query error: %s", exc)
             return ServiceStatus.UNKNOWN
 
     def is_installed(self) -> bool:
@@ -82,12 +87,11 @@ class ServiceController:
         threading.Thread(target=self._do_restart, daemon=True).start()
 
     def install(self, config_path: str) -> None:
-        """Run install_service.ps1 to register the NSSM service."""
         threading.Thread(
             target=self._do_install, args=(config_path,), daemon=True
         ).start()
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # ── Internals ─────────────────────────────────────────────────────────────
 
     def _notify(self, status: str, detail: str | None = None) -> None:
         if self.on_status_change:
@@ -96,10 +100,10 @@ class ServiceController:
             except Exception:
                 pass
 
-    def _sc(self, *args: str, timeout: int = 30) -> tuple[int, str]:
+    def _schtasks(self, *args: str, timeout: int = 30) -> tuple[int, str]:
         try:
             r = subprocess.run(
-                ["sc", *args],
+                ["schtasks", *args],
                 capture_output=True, text=True, timeout=timeout,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
@@ -111,30 +115,27 @@ class ServiceController:
 
     def _do_start(self) -> None:
         self._notify(ServiceStatus.STARTING)
-        # Re-enable auto-start so NSSM resumes its restart policy when the
-        # engine is intentionally running (stop sets this to demand).
-        self._sc("config", self.service_name, "start=", "auto", timeout=10)
-        code, out = self._sc("start", self.service_name, timeout=20)
-        if code == 0 or "RUNNING" in out.upper():
+        # Re-enable the task in case it was disabled by a previous stop
+        self._schtasks("/Change", "/TN", TASK_PATH, "/ENABLE", timeout=10)
+        code, out = self._schtasks("/Run", "/TN", TASK_PATH, timeout=15)
+        if code == 0:
             self._notify(ServiceStatus.RUNNING)
         else:
-            detail = out.strip().splitlines()[-1] if out.strip() else "unknown error"
+            detail = out.strip().splitlines()[-1][:120] if out.strip() else "unknown error"
             self._notify(ServiceStatus.STOPPED, detail)
-            logger.warning("Service start failed: %s", out)
+            logger.warning("Task start failed: %s", out)
 
     def _do_stop(self) -> None:
         self._notify(ServiceStatus.STOPPING)
-        # Disable auto-restart BEFORE sending the stop signal so NSSM does not
-        # immediately bring the service back up (NSSM ignores a plain sc stop
-        # and treats it as a crash unless the start type is set to demand first).
-        self._sc("config", self.service_name, "start=", "demand", timeout=10)
-        code, out = self._sc("stop", self.service_name, timeout=20)
-        if code == 0 or "STOPPED" in out.upper():
+        # Disable the task so it does not auto-restart after being ended
+        self._schtasks("/Change", "/TN", TASK_PATH, "/DISABLE", timeout=10)
+        code, out = self._schtasks("/End", "/TN", TASK_PATH, timeout=15)
+        if code == 0:
             self._notify(ServiceStatus.STOPPED)
         else:
-            detail = out.strip().splitlines()[-1] if out.strip() else "unknown error"
+            detail = out.strip().splitlines()[-1][:120] if out.strip() else "unknown error"
             self._notify(ServiceStatus.UNKNOWN, detail)
-            logger.warning("Service stop failed: %s", out)
+            logger.warning("Task stop failed: %s", out)
 
     def _do_restart(self) -> None:
         self._do_stop()
@@ -144,10 +145,8 @@ class ServiceController:
     def _do_install(self, config_path: str) -> None:
         import sys
         from pathlib import Path
-        self._notify(ServiceStatus.UNKNOWN, "Installing service…")
+        self._notify(ServiceStatus.UNKNOWN, "Installing…")
 
-        # Search for install_service.ps1 by walking up from the exe.
-        # Covers both packaged layout (exe in dist/xxx/) and dev layout.
         script: Path | None = None
         exe_dir = Path(sys.executable).resolve().parent
         for depth in range(6):
@@ -159,7 +158,6 @@ class ServiceController:
                 script = ps1
                 break
         if script is None:
-            # Last resort: CWD
             cwd_ps1 = Path("install_service.ps1")
             if cwd_ps1.exists():
                 script = cwd_ps1
@@ -167,7 +165,7 @@ class ServiceController:
         if script is None:
             self._notify(
                 ServiceStatus.NOT_INSTALLED,
-                "install_service.ps1 not found — run it manually as Administrator",
+                "install_service.ps1 not found — run it manually.",
             )
             return
 
@@ -176,8 +174,7 @@ class ServiceController:
             r = subprocess.run(
                 [
                     "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                    "-File", str(script),
-                    "-Action", "install",
+                    "-File", str(script), "-Action", "install",
                 ],
                 capture_output=True, text=True, timeout=120,
                 creationflags=subprocess.CREATE_NO_WINDOW,

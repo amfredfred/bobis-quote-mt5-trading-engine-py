@@ -124,8 +124,8 @@ class AdvancedPage(ctk.CTkScrollableFrame):
 
         svc_desc = ctk.CTkLabel(
             svc_inner,
-            text="Reinstall the service if the engine executable has changed\n"
-                 "or if the service is not starting correctly.",
+            text="Reinstall if the AQ Agent executable has changed\n"
+                 "or if the task is not starting correctly.",
             font=ctk.CTkFont(size=12), text_color=MUTED,
             justify="left",
         )
@@ -233,7 +233,7 @@ class AdvancedPage(ctk.CTkScrollableFrame):
             return
 
         self._lbl_status.configure(
-            text="✓  Saved — restarting engine…", text_color=GREEN,
+            text="✓  Saved — restarting AQ Agent…", text_color=GREEN,
         )
         self.app.app_state.mark_setup_complete(self.app.config.is_setup_complete())
         threading.Thread(target=self._delayed_restart, daemon=True).start()

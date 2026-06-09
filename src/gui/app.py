@@ -58,6 +58,10 @@ _NAV_ICONS = {
     "Settings":  "⚙",
     "Advanced":  "🔧",
 }
+# Display labels shown in the sidebar (internal page keys stay unchanged)
+_NAV_LABELS = {
+    "Engine": "AQ Agent",
+}
 
 
 # ── Main application window ───────────────────────────────────────────────────
@@ -121,7 +125,7 @@ class ApexTraderGUI(ctk.CTk):
     # ── Window construction ───────────────────────────────────────────────────
 
     def _build_layout(self) -> None:
-        self.title("Apex Quantel")
+        self.title("AQ Agent")
 
         # Size — cap at screen dimensions so the window is never larger than
         # the monitor, then center it explicitly so it's never off-screen.
@@ -227,10 +231,11 @@ class ApexTraderGUI(ctk.CTk):
         # Nav buttons
         self._nav_btns: dict[str, ctk.CTkButton] = {}
         for page in _NAV_PAGES:
-            icon = _NAV_ICONS.get(page, "")
+            icon  = _NAV_ICONS.get(page, "")
+            label = _NAV_LABELS.get(page, page)
             btn = ctk.CTkButton(
                 self._sidebar,
-                text=f"  {icon}  {page}",
+                text=f"  {icon}  {label}",
                 anchor="w",
                 height=38, corner_radius=6,
                 fg_color="transparent",

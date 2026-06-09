@@ -98,7 +98,7 @@ class TerminalPage(ctk.CTkScrollableFrame):
 
         ctk.CTkButton(
             content,
-            text="💾  Save & Restart Engine",
+            text="💾  Save & Restart AQ Agent",
             height=44, width=260,
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=SUCCESS_BG, hover_color=SUCCESS_BORDER,
@@ -320,7 +320,7 @@ class TerminalPage(ctk.CTkScrollableFrame):
             return
 
         self._lbl_save_status.configure(
-            text="✓  Saved — restarting engine…", text_color=GREEN,
+            text="✓  Saved — restarting AQ Agent…", text_color=GREEN,
         )
         threading.Thread(target=self._delayed_restart, daemon=True).start()
 

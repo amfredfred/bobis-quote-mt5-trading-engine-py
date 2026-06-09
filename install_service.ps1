@@ -1,16 +1,20 @@
-﻿# install_service.ps1 - Run as Administrator
+# install_service.ps1
 #
-# Installs, removes, or updates the Apex Quantel Windows service via NSSM.
+# Registers AQ Agent as a Windows Task Scheduler task that runs under your
+# user account at logon. This replaces the old NSSM service approach.
+#
+# WHY TASK SCHEDULER INSTEAD OF A SERVICE:
+#   Windows services run in Session 0 (no desktop). The MT5 Python API
+#   cannot attach to a terminal running in the user's session from Session 0,
+#   so the service would launch an invisible MT5 that can never log in.
+#   A scheduled task runs as the logged-in user in their own session —
+#   MT5 is fully visible and the agent connects normally.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1 uninstall
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1 update
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1 -VenvName .venv
-#
-# Resolution order for the engine executable:
-#   1. dist\apex-quant-trader-agent\apex-quant-trader-agent.exe  (packaged build - preferred)
-#   2. <VenvName>\Scripts\execution-engine.exe        (dev venv install - fallback)
 
 param(
     [ValidateSet("install", "uninstall", "update")]
@@ -21,74 +25,53 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ServiceName   = "apex-quant-trader-agent"
-$DisplayName   = "Apex Quantel"
-$Description   = "Event-driven trade execution engine for MetaTrader 5 (Apex Quantel)"
-$EngineDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
-$NssmExe       = Join-Path $EngineDir "nssm\nssm-2.24\win64\nssm.exe"
-$LogDir        = Join-Path $EngineDir "logs"
+$TaskName    = "AQ Agent"
+$TaskFolder  = "\Apex Quantel\"
+$Description = "Apex Quantel AQ Agent - automated trade execution engine for MetaTrader 5"
+$EngineDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# ---------------------------------------------------------------------------
-# Resolve executable path
-# ---------------------------------------------------------------------------
+# ── Resolve executable ────────────────────────────────────────────────────────
 $PackagedExe = Join-Path $EngineDir "dist\apex-quant-trader-agent\apex-quant-trader-agent.exe"
 $VenvExe     = Join-Path $EngineDir "$VenvName\Scripts\execution-engine.exe"
 
 $AppExe = $null
 if (Test-Path -LiteralPath $PackagedExe) {
     $AppExe = $PackagedExe
-    Write-Host "  Mode: packaged build ($PackagedExe)" -ForegroundColor DarkGray
+    Write-Host "  Mode: packaged build" -ForegroundColor DarkGray
 } elseif (Test-Path -LiteralPath $VenvExe) {
     $AppExe = $VenvExe
-    Write-Host "  Mode: venv install ($VenvExe) [dev fallback]" -ForegroundColor DarkYellow
+    Write-Host "  Mode: venv install (dev)" -ForegroundColor DarkYellow
 }
 
-# ---------------------------------------------------------------------------
-# NSSM - auto-download if missing
-# ---------------------------------------------------------------------------
-function Ensure-Nssm {
-    if (Test-Path -LiteralPath $NssmExe) { return }
-
-    $zip = Join-Path $EngineDir "nssm.zip"
-    if (-not (Test-Path -LiteralPath $zip)) {
-        Write-Host "Downloading NSSM 2.24..."
-        Invoke-WebRequest `
-            -Uri "https://nssm.cc/release/nssm-2.24.zip" `
-            -OutFile $zip `
-            -UseBasicParsing
-    }
-
-    Expand-Archive $zip -DestinationPath (Join-Path $EngineDir "nssm") -Force
-
-    if (-not (Test-Path -LiteralPath $NssmExe)) {
-        Write-Error "NSSM executable not found after extraction: $NssmExe"
-        exit 1
+# ── Helpers ───────────────────────────────────────────────────────────────────
+function Stop-Task {
+    $t = Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder -ErrorAction SilentlyContinue
+    if ($t -and $t.State -eq "Running") {
+        Write-Host "  Stopping running task..."
+        Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder -ErrorAction SilentlyContinue
+        Start-Sleep 3
     }
 }
 
-# ---------------------------------------------------------------------------
-# Service lifecycle helpers
-# ---------------------------------------------------------------------------
-function Stop-ServiceSafe {
-    $svc = Get-Service $ServiceName -ErrorAction SilentlyContinue
-    if ($svc -and $svc.Status -eq "Running") {
-        Write-Host "  Stopping $ServiceName..."
-        & $NssmExe stop $ServiceName confirm | Out-Null
+function Remove-Task {
+    Stop-Task
+    if (Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder -ErrorAction SilentlyContinue) {
+        Write-Host "  Removing existing task..."
+        Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder -Confirm:$false
     }
-    for ($i = 0; $i -lt 20; $i++) {
-        $svc = Get-Service $ServiceName -ErrorAction SilentlyContinue
-        if (-not $svc -or $svc.Status -eq "Stopped") { return }
-        Start-Sleep 1
-    }
-    Write-Warning "Service did not stop within 20 s - continuing anyway"
 }
 
-function Remove-ServiceSafe {
-    Stop-ServiceSafe
-    if (Get-Service $ServiceName -ErrorAction SilentlyContinue) {
-        Write-Host "  Removing $ServiceName..."
-        & $NssmExe remove $ServiceName confirm 2>$null | Out-Null
-        sc.exe delete $ServiceName 2>$null | Out-Null
+function Remove-OldNssmService {
+    # Migrate: remove the old NSSM service if it is still installed
+    $OldService = "apex-quant-trader-agent"
+    $NssmExe    = Join-Path $EngineDir "nssm\nssm-2.24\win64\nssm.exe"
+    if (Get-Service $OldService -ErrorAction SilentlyContinue) {
+        Write-Host "  Removing legacy NSSM service ($OldService)..." -ForegroundColor DarkYellow
+        if (Test-Path -LiteralPath $NssmExe) {
+            try { & $NssmExe stop   $OldService confirm 2>$null | Out-Null } catch {}
+            try { & $NssmExe remove $OldService confirm 2>$null | Out-Null } catch {}
+        }
+        try { sc.exe delete $OldService 2>$null | Out-Null } catch {}
         Start-Sleep 2
     }
 }
@@ -99,7 +82,7 @@ function Cleanup-Orphans {
         $_.ProcessId -ne $PID -and
         $_.CommandLine -and
         $_.CommandLine -match $escapedDir -and
-        ($_.Name -like "Apex Quantel*" -or $_.Name -like "execution-engine*" -or $_.Name -like "python*")
+        ($_.Name -like "apex-quant*" -or $_.Name -like "execution-engine*" -or $_.Name -like "python*")
     } | ForEach-Object {
         Write-Host "  Stopping orphan PID $($_.ProcessId): $($_.Name)"
         Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
@@ -109,107 +92,96 @@ function Cleanup-Orphans {
 function Validate-Exe {
     if (-not $AppExe) {
         Write-Host ""
-        Write-Host "ERROR: No engine executable found." -ForegroundColor Red
+        Write-Host "ERROR: No executable found." -ForegroundColor Red
         Write-Host "  Expected (packaged): $PackagedExe" -ForegroundColor Red
         Write-Host "  Expected (dev venv): $VenvExe" -ForegroundColor Red
         Write-Host ""
-        Write-Host "  Build the packaged exe first:" -ForegroundColor Yellow
+        Write-Host "  Build the packaged exe:" -ForegroundColor Yellow
         Write-Host "    powershell -ExecutionPolicy Bypass -File installer\build.ps1" -ForegroundColor Yellow
-        Write-Host ""
         Write-Host "  Or install the dev venv:" -ForegroundColor Yellow
         Write-Host "    $VenvName\Scripts\pip install -e ." -ForegroundColor Yellow
-        Write-Host ""
         exit 1
     }
 }
 
+# ── Install ───────────────────────────────────────────────────────────────────
 function _install {
     Validate-Exe
-    Remove-ServiceSafe
+    Remove-OldNssmService
+    Remove-Task
     Cleanup-Orphans
 
-    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+    Write-Host ""
+    Write-Host "  Registering scheduled task..."
+    Write-Host "    Task : $TaskFolder$TaskName"
+    Write-Host "    Exe  : $AppExe"
+    Write-Host "    CWD  : $EngineDir"
+    Write-Host "    User : $env:USERDOMAIN\$env:USERNAME"
+
+    # Action: run the agent headlessly from the engine directory
+    $action = New-ScheduledTaskAction `
+        -Execute         $AppExe `
+        -Argument        "--headless" `
+        -WorkingDirectory $EngineDir
+
+    # Trigger: at logon for this user, 30-second delay so MT5 can start first
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $trigger.Delay = "PT30S"
+
+    # Settings: no execution time limit, restart up to 10x on failure
+    $settings = New-ScheduledTaskSettingsSet `
+        -MultipleInstances      IgnoreNew `
+        -ExecutionTimeLimit     ([TimeSpan]::Zero) `
+        -RestartCount           10 `
+        -RestartInterval        (New-TimeSpan -Minutes 1) `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable
+
+    # Principal: the logged-in user, highest available privilege
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId    "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType Interactive `
+        -RunLevel  Highest
+
+    Register-ScheduledTask `
+        -TaskName    $TaskName `
+        -TaskPath    $TaskFolder `
+        -Action      $action `
+        -Trigger     $trigger `
+        -Settings    $settings `
+        -Principal   $principal `
+        -Description $Description `
+        -Force | Out-Null
 
     Write-Host ""
-    Write-Host "  Installing service..."
-    Write-Host "    Name    : $ServiceName"
-    Write-Host "    Exe     : $AppExe"
-    Write-Host "    CWD     : $EngineDir"
-
-    & $NssmExe install $ServiceName $AppExe
-
-    & $NssmExe set $ServiceName AppDirectory      $EngineDir
-    & $NssmExe set $ServiceName AppParameters     "--headless"
-
-    # Environment - prevent user-site packages from leaking into service env
-    & $NssmExe set $ServiceName AppEnvironmentExtra `
-        "PYTHONNOUSERSITE=1" `
-        "PYTHONPATH=$EngineDir"
-
-    # Logging
-    & $NssmExe set $ServiceName AppStdout         (Join-Path $LogDir "stdout.log")
-    & $NssmExe set $ServiceName AppStderr         (Join-Path $LogDir "stderr.log")
-    & $NssmExe set $ServiceName AppRotateFiles    1
-    & $NssmExe set $ServiceName AppRotateBytes    10485760   # 10 MB per file
-    & $NssmExe set $ServiceName AppRotateOnline   1
-
-    # Graceful stop (give engine time to flush trades + close MT5)
-    & $NssmExe set $ServiceName AppStopMethodConsole  15000
-    & $NssmExe set $ServiceName AppStopMethodWindow   15000
-    & $NssmExe set $ServiceName AppStopMethodThreads  15000
-
-    # Restart policy - 5 s backoff, 5-minute reset window
-    & $NssmExe set $ServiceName AppThrottle       5000
-    & $NssmExe set $ServiceName AppExit           Default Restart
-
-    # Service metadata
-    & $NssmExe set $ServiceName Start             SERVICE_AUTO_START
-    & $NssmExe set $ServiceName DisplayName       $DisplayName
-    & $NssmExe set $ServiceName Description       $Description
-
-    # SC failure policy: restart after 5 s, 15 s, then stop retrying
-    sc.exe failure $ServiceName reset= 300 actions= restart/5000/restart/15000/""/0 | Out-Null
-
-    Write-Host ""
-    Write-Host "  Starting service..."
-    & $NssmExe start $ServiceName
+    Write-Host "  Starting task now..."
+    Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder
 
     Start-Sleep 3
-    & $NssmExe status $ServiceName
+    $state = (Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder).State
+    Write-Host "  Task state: $state" -ForegroundColor $(if ($state -eq "Running") { "Green" } else { "Yellow" })
 
     Write-Host ""
-    Write-Host "  Logs:"
-    Write-Host "    Get-Content '$LogDir\stderr.log' -Tail 50 -Wait"
-    Write-Host "    Get-Content '$LogDir\stdout.log' -Tail 50 -Wait"
+    Write-Host "  AQ Agent will start automatically 30 s after each login."
+    Write-Host "  Logs: $EngineDir\dist\logs\"
 }
 
+# ── Update ────────────────────────────────────────────────────────────────────
 function _update {
     Validate-Exe
-
-    Write-Host "  Updating $ServiceName executable..."
-    Stop-ServiceSafe
-
-    # NSSM already points at the correct path; just restart
-    Write-Host "  Restarting $ServiceName..."
-    & $NssmExe start $ServiceName
-
-    Start-Sleep 3
-    & $NssmExe status $ServiceName
-    Write-Host ""
-    Write-Host "  Update complete."
+    # Full re-register so the exe path is always current
+    _install
 }
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-Ensure-Nssm
-
-if ($Action -eq "uninstall") {
-    Remove-ServiceSafe
-    Cleanup-Orphans
-    Write-Host "Uninstall complete."
-} elseif ($Action -eq "update") {
-    _update
-} else {
-    _install
+# ── Entry point ───────────────────────────────────────────────────────────────
+switch ($Action) {
+    "uninstall" {
+        Remove-OldNssmService
+        Remove-Task
+        Cleanup-Orphans
+        Write-Host "Uninstall complete."
+    }
+    "update"  { _update }
+    default   { _install }
 }

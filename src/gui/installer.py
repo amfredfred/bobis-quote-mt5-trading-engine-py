@@ -84,16 +84,16 @@ class InstallerService:
         if script is None:
             self._notify(
                 False,
-                "The engine installer script (install_service.ps1) was not found "
+                "The AQ Agent installer script (install_service.ps1) was not found "
                 "in this installation. Rebuild the installer package or reinstall "
-                "Apex Quantel.",
+                "AQ Agent.",
             )
             return
 
         logger.info("Running install_service.ps1: %s", script)
         ok, msg = self._run_ps1(script, "install")
         if ok:
-            self._notify(True, "Engine service installed successfully. Click Start to begin.")
+            self._notify(True, "AQ Agent installed successfully. Click Start to begin.")
         else:
             self._notify(False, f"Installation failed: {msg}")
 
@@ -105,7 +105,7 @@ class InstallerService:
             self._notify(ok, msg)
             return
         ok, msg = self._run_ps1(script, "uninstall")
-        self._notify(ok, "Engine service removed." if ok else f"Uninstall failed: {msg}")
+        self._notify(ok, "AQ Agent removed." if ok else f"Uninstall failed: {msg}")
 
     def _do_reinstall(self, config_path: str) -> None:
         script = self.find_install_script()
@@ -117,7 +117,7 @@ class InstallerService:
             return
         ok, msg = self._run_ps1(script, "update")
         if ok:
-            self._notify(True, "Engine service updated. Restarting…")
+            self._notify(True, "AQ Agent updated. Restarting…")
         else:
             self._notify(False, f"Reinstall failed: {msg}")
 
@@ -159,12 +159,13 @@ class InstallerService:
 
     def _sc_uninstall(self) -> Result:
         try:
+            from src.gui.service_controller import TASK_PATH
             subprocess.run(
-                ["sc", "delete", "apex-quant-trader-agent"],
+                ["schtasks", "/Delete", "/TN", TASK_PATH, "/F"],
                 capture_output=True, timeout=15,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            return True, "Service removed."
+            return True, "Task removed."
         except Exception as exc:
             return False, str(exc)
 

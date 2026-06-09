@@ -310,13 +310,13 @@ class _StepWelcome(_WizardStep):
         ).pack(pady=(4, 20))
 
         for icon, heading, body in [
-            ("🔄", "Background engine",
-             "Apex runs a background service that connects to MetaTrader 5, "
+            ("🔄", "AQ Agent",
+             "AQ Agent runs as a background task that connects to MetaTrader 5, "
              "receives trading signals, and executes trades automatically — "
              "even when this control panel is closed."),
             ("🖥️", "This control panel",
-             "This app lets you configure, install, start, and monitor the "
-             "background engine. You do not need to keep it open while trading."),
+             "This app lets you configure, install, start, and monitor AQ Agent. "
+             "You do not need to keep it open while trading."),
             ("📋", "First-time setup",
              "This wizard will guide you through selecting your MetaTrader "
              "terminal, entering your license key, and installing the "
@@ -794,7 +794,7 @@ class _StepRisk(_WizardStep):
 
         ctk.CTkLabel(
             f,
-            text="Set how much of your account the engine is allowed to risk each day. "
+            text="Set how much of your account AQ Agent is allowed to risk each day. "
                  "These limits can be changed at any time on the Risk page.",
             font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
             wraplength=700, justify="left",
@@ -911,7 +911,7 @@ class _StepRisk(_WizardStep):
 # ── Step 6 — Install Engine ───────────────────────────────────────────────────
 
 class _StepInstall(_WizardStep):
-    title     = "Install Background Engine"
+    title     = "Install AQ Agent"
     skippable = False
 
     def __init__(
@@ -929,7 +929,7 @@ class _StepInstall(_WizardStep):
 
         ctk.CTkLabel(
             f,
-            text="Apex runs as a Windows background service so it can trade "
+            text="AQ Agent runs as a Windows background service so it can trade "
                  "even when this control panel is closed.",
             font=ctk.CTkFont(size=13), text_color=TEXT_SOFT,
             wraplength=700, justify="left",
@@ -952,7 +952,7 @@ class _StepInstall(_WizardStep):
         self._status_detail.pack(anchor="w", pady=(4, 0))
 
         self._btn_install = PrimaryButton(
-            f, text="Install Background Engine", tone="good", width=240,
+            f, text="Install AQ Agent", tone="good", width=240,
             command=self._install,
         )
         self._btn_install.pack(anchor="w", pady=(0, 8))
@@ -978,20 +978,20 @@ class _StepInstall(_WizardStep):
         installed = status != ServiceStatus.NOT_INSTALLED
         if installed:
             self._status_lbl.configure(
-                text="✓  Engine service is installed", text_color=GREEN,
+                text="✓  AQ Agent is installed", text_color=GREEN,
             )
             self._status_detail.configure(
-                text="The background engine service is registered and ready.",
+                text="AQ Agent is registered and ready.",
             )
             self._btn_install.configure(text="Reinstall", state="normal")
         else:
             self._status_lbl.configure(
-                text="Engine service is not installed yet", text_color=YELLOW,
+                text="AQ Agent is not installed yet", text_color=YELLOW,
             )
             self._status_detail.configure(
-                text="Click Install below to register the engine as a Windows service.",
+                text="Click Install below to register AQ Agent as a scheduled task.",
             )
-            self._btn_install.configure(text="Install Background Engine", state="normal")
+            self._btn_install.configure(text="Install AQ Agent", state="normal")
 
     def _install(self) -> None:
         self._btn_install.configure(state="disabled", text="Installing…")
@@ -1055,7 +1055,7 @@ class _StepFinish(_WizardStep):
             ("MT5 account",       f"{mt5.get('login', '—')} @ {mt5.get('server', '—')}"),
             ("License key",       "Saved  ✓" if gw.get("activation_key") else "Not set"),
             ("Daily loss limit",  f"{risk.get('max_daily_loss_percent', '—')}%"),
-            ("Engine service",    "Installed  ✓" if svc_installed else "Not installed"),
+            ("AQ Agent",          "Installed  ✓" if svc_installed else "Not installed"),
         ]
         card = SectionCard(self._content)
         card.pack(fill="x", pady=(0, 12))

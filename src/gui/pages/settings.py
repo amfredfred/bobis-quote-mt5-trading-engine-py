@@ -79,13 +79,13 @@ class SettingsPage(ctk.CTkScrollableFrame):
             ).pack(side="right")
 
         _switch_row(
-            "Start engine automatically",
-            "Start the Apex trading engine when Windows logs in.",
+            "Start AQ Agent automatically",
+            "Start AQ Agent when Windows logs in.",
             self._var_autostart,
         )
         _switch_row(
             "Minimise on open",
-            "Start this control panel minimised (engine still runs in background).",
+            "Start this control panel minimised (AQ Agent still runs in background).",
             self._var_minimise,
         )
 

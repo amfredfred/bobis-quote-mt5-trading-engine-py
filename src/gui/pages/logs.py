@@ -9,8 +9,7 @@ the WebSocket (future: if the UIBridge ever streams log events).
 
 Log file location (in priority order):
   1. {storage_path}/engine.log
-  2. {storage_path}/apex-quant-trader-agent.log  (NSSM stdout)
-  3. Any *.log file found in storage_path
+  2. Any *.log file found in storage_path
 """
 from __future__ import annotations
 
@@ -133,7 +132,6 @@ class LogsPage(ctk.CTkFrame):
 
         candidates = [
             storage / "engine.log",
-            storage / "apex-quant-trader-agent.log",
         ]
         # Any *.log file in storage dir
         if storage.is_dir():

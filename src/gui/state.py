@@ -89,15 +89,15 @@ class EngineLifecycle(str, Enum):
     @property
     def label(self) -> str:
         return {
-            "checking":              "Checking engine status…",
+            "checking":              "Checking AQ Agent status…",
             "not_configured":        "Setup required",
-            "service_not_installed": "Engine service is not installed",
-            "installed_stopped":     "Engine is installed but stopped",
-            "starting":              "Engine starting…",
-            "running_connected":     "Engine connected",
-            "running_no_heartbeat":  "Engine process is running but not responding yet",
-            "stopping":              "Engine stopping…",
-            "failed":                "Engine failed",
+            "service_not_installed": "AQ Agent is not installed",
+            "installed_stopped":     "AQ Agent is installed but stopped",
+            "starting":              "AQ Agent starting…",
+            "running_connected":     "AQ Agent connected",
+            "running_no_heartbeat":  "AQ Agent process is running but not responding yet",
+            "stopping":              "AQ Agent stopping…",
+            "failed":                "AQ Agent failed",
             "unknown":               "Status unknown",
         }.get(self.value, self.value)
 
@@ -105,26 +105,26 @@ class EngineLifecycle(str, Enum):
     def description(self) -> str:
         return {
             "checking":
-                "Apex is checking whether the background engine is installed and running.",
+                "Checking whether AQ Agent is installed and running.",
             "not_configured":
-                "Complete setup before starting the engine.",
+                "Complete setup before starting AQ Agent.",
             "service_not_installed":
-                "Install the background engine before Apex can trade automatically.",
+                "Install AQ Agent before Apex can trade automatically.",
             "installed_stopped":
-                "Start the engine to connect MetaTrader and the signal gateway.",
+                "Start AQ Agent to connect MetaTrader and the signal gateway.",
             "starting":
-                "The engine is starting up. This usually takes a few seconds.",
+                "AQ Agent is starting up. This usually takes a few seconds.",
             "running_connected":
-                "The background engine is running and responding.",
+                "AQ Agent is running and responding.",
             "running_no_heartbeat":
-                "Apex started the background process, but the GUI has not received "
+                "AQ Agent process started, but the GUI has not received "
                 "a heartbeat yet. It may still be initialising.",
             "stopping":
-                "The engine is shutting down.",
+                "AQ Agent is shutting down.",
             "failed":
-                "The engine stopped unexpectedly. Check the Activity page for details.",
+                "AQ Agent stopped unexpectedly. Check the Activity page for details.",
             "unknown":
-                "Engine status could not be determined.",
+                "AQ Agent status could not be determined.",
         }.get(self.value, "")
 
     # ── Derived booleans used by buttons ──────────────────────────────────────
@@ -330,7 +330,7 @@ class AppState:
 
         # Crash detection
         if old_was_running and now_stopped and engine_error is None:
-            engine_error = "Engine stopped unexpectedly."
+            engine_error = "AQ Agent stopped unexpectedly."
 
         # Apply StableValue debounce — a single "unknown/bad" poll is ignored,
         # only a sustained change (2+ consecutive identical values) is accepted.
@@ -519,9 +519,9 @@ class AppState:
         if not self._service_installed:
             issues.append(ReadinessIssue(
                 key="service_not_installed",
-                title="Background engine not installed",
-                detail="Install the Apex engine service before trading can start.",
-                action_label="Install Engine",
+                title="AQ Agent not installed",
+                detail="Install AQ Agent before trading can start.",
+                action_label="Install AQ Agent",
                 action_page="Engine",
             ))
         return issues

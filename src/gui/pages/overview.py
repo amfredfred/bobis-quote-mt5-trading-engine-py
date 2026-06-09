@@ -80,7 +80,7 @@ class OverviewPage(ctk.CTkFrame):
         status_row = ctk.CTkFrame(hdr, fg_color="transparent")
         status_row.pack(side="right", padx=16)
 
-        self._dot_engine  = _StatusDot(status_row, "Engine",  MUTED)
+        self._dot_engine  = _StatusDot(status_row, "AQ Agent",  MUTED)
         self._dot_mt5     = _StatusDot(status_row, "MT5",     MUTED)
         self._dot_gateway = _StatusDot(status_row, "Gateway", MUTED)
 
@@ -99,7 +99,7 @@ class OverviewPage(ctk.CTkFrame):
         ).pack()
 
         self._stopped_title = ctk.CTkLabel(
-            outer, text="Engine Stopped",
+            outer, text="AQ Agent Stopped",
             font=ctk.CTkFont(size=22, weight="bold"),
             text_color=RED,
         )
@@ -107,7 +107,7 @@ class OverviewPage(ctk.CTkFrame):
 
         self._stopped_msg = ctk.CTkLabel(
             outer,
-            text="The trading engine is not running.\nStart it to begin automated trading.",
+            text="AQ Agent is not running.\nStart it to begin automated trading.",
             font=ctk.CTkFont(size=13),
             text_color=MUTED,
             justify="center",
@@ -117,7 +117,7 @@ class OverviewPage(ctk.CTkFrame):
         # Primary CTA — Start Engine
         self._btn_start = ctk.CTkButton(
             outer,
-            text="▶   Start Engine",
+            text="▶   Start AQ Agent",
             width=210, height=48,
             font=ctk.CTkFont(size=15, weight="bold"),
             fg_color=SUCCESS_BG, hover_color=SUCCESS_BORDER,
@@ -199,7 +199,7 @@ class OverviewPage(ctk.CTkFrame):
         act_row.pack(fill="x", padx=16, pady=(6, 4))
 
         ctk.CTkButton(
-            act_row, text="■  Stop Engine", width=130, height=32,
+            act_row, text="■  Stop AQ Agent", width=140, height=32,
             fg_color=DANGER_BG, hover_color="#5a1e2a",
             border_width=1, border_color="#38141e",
             text_color=RED,
@@ -356,13 +356,13 @@ class OverviewPage(ctk.CTkFrame):
         color = _colours.get(status, MUTED)
 
         self._dot_engine.set(label, color)
-        self._mini_card_set("Engine", label, color)
+        self._mini_card_set("AQ Agent", label, color)
 
         if status == ServiceStatus.NOT_INSTALLED:
             self._show_stopped_view()
-            self._stopped_title.configure(text="Service Not Installed", text_color=YELLOW)
+            self._stopped_title.configure(text="Not Installed", text_color=YELLOW)
             self._stopped_msg.configure(
-                text="The engine service has not been installed yet.\n"
+                text="AQ Agent has not been installed yet.\n"
                      "Click below to install it automatically.",
             )
             self._btn_start.pack_forget()
@@ -371,9 +371,9 @@ class OverviewPage(ctk.CTkFrame):
 
         elif status == ServiceStatus.STOPPED and not self._ws_connected:
             self._show_stopped_view()
-            self._stopped_title.configure(text="Engine Stopped", text_color=RED)
+            self._stopped_title.configure(text="AQ Agent Stopped", text_color=RED)
             self._stopped_msg.configure(
-                text="The trading engine is not running.\n"
+                text="AQ Agent is not running.\n"
                      "Start it to begin automated trading.",
             )
             self._btn_install.pack_forget()
@@ -385,8 +385,8 @@ class OverviewPage(ctk.CTkFrame):
         elif status == ServiceStatus.STARTING:
             if not self._ws_connected:
                 self._show_stopped_view()
-            self._stopped_title.configure(text="Engine Starting…", text_color=YELLOW)
-            self._stopped_msg.configure(text="Waiting for the engine to come online…")
+            self._stopped_title.configure(text="AQ Agent Starting…", text_color=YELLOW)
+            self._stopped_msg.configure(text="Waiting for AQ Agent to come online…")
             self._btn_install.pack_forget()
             self._btn_start.pack(pady=6)
             self._stopped_detail.configure(text="")
@@ -475,13 +475,13 @@ class OverviewPage(ctk.CTkFrame):
         if self.app.svc.query() == ServiceStatus.NOT_INSTALLED:
             self._install_service()
             return
-        self._stopped_title.configure(text="Engine Starting…", text_color=YELLOW)
-        self._stopped_msg.configure(text="Waiting for the engine to come online…")
+        self._stopped_title.configure(text="AQ Agent Starting…", text_color=YELLOW)
+        self._stopped_msg.configure(text="Waiting for AQ Agent to come online…")
         self._stopped_detail.configure(text="")
         self.app.svc.start()
 
     def _install_service(self) -> None:
-        self._stopped_msg.configure(text="Installing service… please wait.")
+        self._stopped_msg.configure(text="Installing AQ Agent… please wait.")
         self._stopped_detail.configure(text="")
         self.app.svc.install(self.app.config_path)
 

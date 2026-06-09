@@ -140,15 +140,18 @@ def setup_logging(level: str = "INFO", tz: ZoneInfo | None = None) -> None:
     import os
 
     force_plain = os.environ.get("LOG_COLOUR", "").lower() == "false"
-    use_colour = (not force_plain) and sys.stdout.isatty()
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_PrettyFormatter(use_colour=use_colour, tz=tz))
+    use_colour = (not force_plain) and bool(sys.stdout and sys.stdout.isatty())
 
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     root.handlers.clear()
-    root.addHandler(handler)
+
+    # Only add a stream handler if stdout exists (no console when run via
+    # Task Scheduler or other windowless launchers)
+    if sys.stdout is not None:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(_PrettyFormatter(use_colour=use_colour, tz=tz))
+        root.addHandler(handler)
 
     # Silence noisy third-party loggers
     logging.getLogger("websocket").setLevel(logging.WARNING)

@@ -64,8 +64,8 @@ class RiskPage(ctk.CTkScrollableFrame):
             label="Daily Loss Limit",
             key="risk.max_daily_loss_percent",
             unit="%",
-            tip="Maximum percentage of your account balance the engine may lose per day.\n"
-                "Example: 3 means the engine stops trading after a 3% drawdown.",
+            tip="Maximum percentage of your account balance AQ Agent may lose per day.\n"
+                "Example: 3 means AQ Agent stops trading after a 3% drawdown.",
             vars_dict=self._vars,
             on_change=self._update_formula,
         )
@@ -125,7 +125,7 @@ class RiskPage(ctk.CTkScrollableFrame):
             label="Equity Drawdown Limit",
             key="risk.max_equity_drawdown_percent",
             unit="%",
-            tip="Engine pauses all trading if live equity drops by this percentage\n"
+            tip="AQ Agent pauses all trading if live equity drops by this percentage\n"
                 "from the account's starting equity for the day.",
             vars_dict=self._vars,
         )
@@ -136,7 +136,7 @@ class RiskPage(ctk.CTkScrollableFrame):
             key="risk.rolling_window_size",
             unit="trades",
             tip="Number of recent trades used to calculate rolling performance.\n"
-                "Engine pauses if drawdown within this window exceeds the limit below.",
+                "AQ Agent pauses if drawdown within this window exceeds the limit below.",
             vars_dict=self._vars,
         )
 
@@ -238,7 +238,7 @@ class RiskPage(ctk.CTkScrollableFrame):
             return
 
         self._lbl_status.configure(
-            text="✓  Saved — restarting engine…", text_color=GREEN,
+            text="✓  Saved — restarting AQ Agent…", text_color=GREEN,
         )
         self.app.app_state.mark_setup_complete(self.app.config.is_setup_complete())
         threading.Thread(target=self._delayed_restart, daemon=True).start()

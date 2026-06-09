@@ -1,23 +1,20 @@
-﻿; ApexQuantel.iss — Inno Setup installer
+; ApexQuantel.iss — Inno Setup installer for AQ Agent
 ;
 ; What this installer does:
-;   1. Copies the packaged engine files to Program Files
-;   2. Creates a desktop shortcut and Start Menu group
-;   3. Optionally launches the app when finished
+;   1. Copies the packaged AQ Agent files to Program Files
+;   2. Creates a Start Menu group and optional desktop shortcut
+;   3. Launches the control panel when finished (user then clicks Install AQ Agent)
 ;
 ; All first-run configuration (license key, MT5 details, risk settings)
 ; is handled by the app's built-in onboarding wizard on first launch.
 ;
 ; Build (from execution-engine\ dir):
-;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ApexQuantel.iss
-;   — or via the build pipeline:
 ;   powershell -ExecutionPolicy Bypass -File installer\build.ps1
 
-#define MyAppName      "Apex Quantel"
+#define MyAppName      "AQ Agent"
 #define MyAppPublisher "Apex Quantel"
 #define MyAppURL       "https://app.somicast.com"
 #define MyAppExeName   "apex-quant-trader-agent\apex-quant-trader-agent.exe"
-#define MyServiceName  "apex-quant-trader-agent"
 ; MyAppVersion is passed from build.ps1 via /DMyAppVersion=x.y.z
 ; Fallback so the .iss can still be opened directly in the Inno Setup IDE
 #ifndef MyAppVersion
@@ -35,11 +32,11 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/support
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\Apex Quantel
+DefaultDirName={autopf}\Apex Quantel\AQ Agent
 DefaultGroupName=Apex Quantel
 AllowNoIcons=yes
 OutputDir=Output
-OutputBaseFilename=ApexQuantelSetup
+OutputBaseFilename=AQAgentSetup
 SetupIconFile=assets\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -83,13 +80,8 @@ Source: "..\dist\apex-quant-trader-agent\*"; \
 ; Version stamp
 Source: "..\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 
-; Service manager script (used by the app's control panel)
+; Task Scheduler installer script (used by the app's Install AQ Agent button)
 Source: "..\install_service.ps1"; DestDir: "{app}"; Flags: ignoreversion
-
-; NSSM — bundled so no internet download needed at service-install time
-Source: "..\nssm\nssm-2.24\win64\nssm.exe"; \
-    DestDir: "{app}\nssm\nssm-2.24\win64"; \
-    Flags: ignoreversion skipifsourcedoesntexist
 
 ; Utility scripts
 Source: "..\scripts\update.ps1";         DestDir: "{app}\scripts"; \
@@ -101,7 +93,7 @@ Source: "..\scripts\support-bundle.ps1"; DestDir: "{app}\scripts"; \
 [Icons]
 ; ============================================================================
 ; Start Menu
-Name: "{group}\Apex Quantel"; \
+Name: "{group}\AQ Agent"; \
     Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; \
     IconFilename: "{app}\{#MyAppExeName}"
@@ -109,7 +101,7 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; \
     Filename: "{uninstallexe}"
 
 ; Desktop shortcut (optional)
-Name: "{commondesktop}\Apex Quantel"; \
+Name: "{commondesktop}\AQ Agent"; \
     Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; \
     IconFilename: "{app}\{#MyAppExeName}"; \
@@ -118,21 +110,20 @@ Name: "{commondesktop}\Apex Quantel"; \
 ; ============================================================================
 [Run]
 ; ============================================================================
-; Offer to launch the app from the Finish page (ticked by default).
-; shellexec lets Windows honour the requireAdministrator manifest and show
-; the UAC prompt — without it CreateProcess returns error 740.
+; Offer to launch the control panel from the Finish page (ticked by default).
+; shellexec lets Windows honour the requireAdministrator manifest.
 Filename: "{app}\{#MyAppExeName}"; \
-    Description: "Launch {#MyAppName}"; \
+    Description: "Launch AQ Agent"; \
     Flags: postinstall nowait skipifsilent shellexec; \
     WorkingDir: "{app}"
 
 ; ============================================================================
 [UninstallRun]
 ; ============================================================================
-; Stop and remove the Windows service (if installed) on uninstall
+; Remove the scheduled task on uninstall
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\install_service.ps1"" uninstall"; \
-    RunOnceId: "RemoveService"; \
+    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\install_service.ps1"" -Action uninstall"; \
+    RunOnceId: "RemoveTask"; \
     Flags: runhidden
 
 ; ============================================================================

@@ -12,7 +12,7 @@ $EngineDir    = Split-Path -Parent $InstallerDir
 
 Write-Host ""
 Write-Host "========================================"  -ForegroundColor Cyan
-Write-Host "  Apex Quantel - Build Pipeline"     -ForegroundColor Cyan
+Write-Host "  AQ Agent - Build Pipeline"         -ForegroundColor Cyan
 Write-Host "========================================"  -ForegroundColor Cyan
 Write-Host "  Engine dir : $EngineDir"
 Write-Host ""
@@ -132,19 +132,19 @@ if ($SkipInstaller) {
             exit 1
         }
 
-        $outExe = Join-Path $EngineDir "installer\Output\ApexQuantelSetup.exe"
+        $outExe = Join-Path $EngineDir "installer\Output\AQAgentSetup.exe"
         if (Test-Path $outExe) {
             $bytes  = (Get-Item $outExe).Length
             $sizeMB = [math]::Round($bytes / 1048576, 1)
-            Write-Host "      Done  : installer\Output\ApexQuantelSetup.exe - $sizeMB MB" -ForegroundColor Green
+            Write-Host "      Done  : installer\Output\AQAgentSetup.exe - $sizeMB MB" -ForegroundColor Green
         } else {
-            Write-Host "      Done  : installer\Output\ApexQuantelSetup.exe" -ForegroundColor Green
+            Write-Host "      Done  : installer\Output\AQAgentSetup.exe" -ForegroundColor Green
         }
     }
 }
 
 Write-Host ""
-Write-Host "=============================="  -ForegroundColor Cyan
-Write-Host "  Build complete  v$EngineVersion"  -ForegroundColor Cyan
-Write-Host "=============================="  -ForegroundColor Cyan
+Write-Host "=============================="        -ForegroundColor Cyan
+Write-Host "  AQ Agent v$EngineVersion — built"  -ForegroundColor Cyan
+Write-Host "=============================="        -ForegroundColor Cyan
 Write-Host ""
