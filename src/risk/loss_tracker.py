@@ -163,7 +163,8 @@ class LossTracker:
             if self._start_of_day_equity <= 0:
                 return 0.0
             daily_budget = self._start_of_day_equity * (self._limit / 100.0)
-            return daily_budget / (max_losing_streak + 1)
+            risk_slots = max(1, int(max_losing_streak))
+            return daily_budget / risk_slots
 
     def stats(self) -> dict:
         with self._lock:

@@ -98,7 +98,7 @@ class TradePlanner:
 
         # ── Streak-based risk amount ───────────────────────────────────────
         # daily_budget = start_of_day_equity × (MAX_DAILY_LOSS_PERCENT / 100)
-        # risk_per_trade = daily_budget / (MAX_LOSING_STREAK + 1)
+        # risk_per_trade = daily_budget / MAX_LOSING_STREAK
         risk_amount = self._loss_tracker.daily_risk_amount(
             self._risk.max_losing_streak
         )

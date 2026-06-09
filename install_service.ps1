@@ -31,13 +31,19 @@ $Description = "Apex Quantel AQ Agent - automated trade execution engine for Met
 $EngineDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # ── Resolve executable ────────────────────────────────────────────────────────
-$PackagedExe = Join-Path $EngineDir "dist\apex-quant-trader-agent\apex-quant-trader-agent.exe"
-$VenvExe     = Join-Path $EngineDir "$VenvName\Scripts\execution-engine.exe"
+# Installed via Inno Setup: files land directly under the install dir (no dist\ prefix)
+$InstalledExe = Join-Path $EngineDir "apex-quant-trader-agent\apex-quant-trader-agent.exe"
+# Dev / manual build: PyInstaller output is under dist\
+$PackagedExe  = Join-Path $EngineDir "dist\apex-quant-trader-agent\apex-quant-trader-agent.exe"
+$VenvExe      = Join-Path $EngineDir "$VenvName\Scripts\execution-engine.exe"
 
 $AppExe = $null
-if (Test-Path -LiteralPath $PackagedExe) {
+if (Test-Path -LiteralPath $InstalledExe) {
+    $AppExe = $InstalledExe
+    Write-Host "  Mode: installed (Program Files)" -ForegroundColor DarkGray
+} elseif (Test-Path -LiteralPath $PackagedExe) {
     $AppExe = $PackagedExe
-    Write-Host "  Mode: packaged build" -ForegroundColor DarkGray
+    Write-Host "  Mode: packaged build (dev)" -ForegroundColor DarkGray
 } elseif (Test-Path -LiteralPath $VenvExe) {
     $AppExe = $VenvExe
     Write-Host "  Mode: venv install (dev)" -ForegroundColor DarkYellow

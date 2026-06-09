@@ -308,8 +308,10 @@ class HomePage(ctk.CTkFrame):
             ).pack(anchor="w")
             return
         for g in guards:
-            name      = g.get("name", "Unknown guard")
-            triggered = g.get("triggered", False)
+            name     = g.get("name", "Unknown guard")
+            status   = str(g.get("status", "ACTIVE")).upper()
+            triggered = status == "PAUSED"
+            disabled  = status == "DISABLED"
             row = ctk.CTkFrame(
                 self._guards_wrap,
                 fg_color=DANGER_BG if triggered else SURFACE_RAISED,
@@ -320,11 +322,19 @@ class HomePage(ctk.CTkFrame):
             row.pack(fill="x", pady=3)
             inner = ctk.CTkFrame(row, fg_color="transparent")
             inner.pack(padx=12, pady=8, fill="x")
-            dot   = "🔴" if triggered else "🟢"
+            if triggered:
+                dot        = "🔴"
+                text_color = RED
+            elif disabled:
+                dot        = "⚪"
+                text_color = MUTED
+            else:
+                dot        = "🟢"
+                text_color = GREEN
             ctk.CTkLabel(
                 inner, text=f"{dot}  {name}",
                 font=ctk.CTkFont(size=12, weight="bold"),
-                text_color=RED if triggered else GREEN, anchor="w",
+                text_color=text_color, anchor="w",
             ).pack(anchor="w")
 
     # ── Pub/sub ───────────────────────────────────────────────────────────────

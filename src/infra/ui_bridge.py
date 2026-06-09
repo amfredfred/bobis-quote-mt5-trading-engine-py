@@ -652,8 +652,8 @@ class UIBridge:
             else round(-daily_loss_amount, 2)
         )
         daily_budget_left = max(daily_budget - daily_loss_amount, 0.0) if daily_budget else 0.0
-        risk_slots = config.risk.max_losing_streak
-        risk_per_trade = round(daily_budget / risk_slots, 2) if daily_budget and risk_slots else 0.0
+        risk_slots = max(1, int(config.risk.max_losing_streak or 1))
+        risk_per_trade = round(daily_budget / risk_slots, 2) if daily_budget else 0.0
 
         result = {
             "raw_counters":       counters,

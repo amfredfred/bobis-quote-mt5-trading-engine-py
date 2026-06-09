@@ -78,8 +78,10 @@ class SignalConsumer:
         self._signal_hmac_secret: Optional[bytes] = (
             signal_hmac_secret.encode() if signal_hmac_secret else None
         )
-        # 2.10 — Bounded seen-IDs set for deduplication (thread-safe via GIL + OrderedDict)
-        self._seen_ids: OrderedDict[str, None] = OrderedDict()
+        # 2.10 — Bounded seen-IDs set for deduplication keyed by (event, signal_id)
+        # Using a tuple key prevents lifecycle events (pending → triggered) with the
+        # same signal_id from being incorrectly dropped as duplicates.
+        self._seen_ids: OrderedDict[tuple[str, str], None] = OrderedDict()
         # 2.11 — Reliable event outbox
         self._db: Optional["Database"] = db
         # 1.16 — Device credential: loaded from local DB, presented in engine.hello
@@ -708,12 +710,13 @@ class SignalConsumer:
                 metrics.increment("signal.signature_invalid")
                 return
 
-        # ── 2.10 — Duplicate signal ID deduplication ───────────────────────
+        # ── 2.10 — Duplicate (event, signal_id) deduplication ─────────────
         signal_id = payload.get("id") or payload.get("signal_id") or ""
         if signal_id:
-            if signal_id in self._seen_ids:
+            dedupe_key = (event, signal_id)
+            if dedupe_key in self._seen_ids:
                 logger.debug(
-                    "SignalConsumer: duplicate signal_id dropped",
+                    "SignalConsumer: duplicate event/signal_id dropped",
                     extra={"signal_id": signal_id, "event": event},
                 )
                 metrics.increment("signal.duplicate_dropped")
@@ -721,7 +724,7 @@ class SignalConsumer:
             # Bounded eviction — remove oldest entry if at capacity
             if len(self._seen_ids) >= self._SEEN_IDS_MAX:
                 self._seen_ids.popitem(last=False)
-            self._seen_ids[signal_id] = None
+            self._seen_ids[dedupe_key] = None
 
         try:
             signal = InboundSignal.from_dict(payload)

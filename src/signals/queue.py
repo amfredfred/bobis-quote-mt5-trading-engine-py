@@ -146,11 +146,6 @@ class SignalQueue:
             if self._stopped.is_set():
                 break
 
-            # Clear symbol reservation before executing so new signals for
-            # this symbol can queue while execution is in progress
-            with self._symbols_lock:
-                self._queued_symbols.discard(signal.resolved_symbol)
-
             try:
                 self._on_signal(signal)
             except Exception:
@@ -159,4 +154,9 @@ class SignalQueue:
                     extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
                 )
             finally:
+                # Release symbol reservation only after execution completes so a
+                # second signal for the same symbol cannot enter the queue while
+                # the first one is still being executed.
+                with self._symbols_lock:
+                    self._queued_symbols.discard(signal.resolved_symbol)
                 self._queue.task_done()

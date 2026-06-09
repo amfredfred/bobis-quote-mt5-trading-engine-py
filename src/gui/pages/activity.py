@@ -366,8 +366,8 @@ def _summarise(event_type: str, payload: dict) -> str:
         return ""
     if event_type == "trade.opened":
         sym  = payload.get("symbol", "")
-        side = payload.get("side", "")
-        lots = payload.get("lots", "")
+        side = payload.get("direction") or payload.get("side", "")
+        lots = payload.get("volume") or payload.get("lots", "")
         return f"{sym}  {side}  {lots} lots" if sym else ""
     if event_type in ("trade.sl_hit", "trade.tp1_hit", "trade.tp2_hit"):
         sym = payload.get("symbol", payload.get("trade_id", ""))
@@ -384,7 +384,7 @@ def _summarise(event_type: str, payload: dict) -> str:
         return payload.get("message", "")[:80]
     if event_type in ("signal.received", "signal.triggered"):
         sym  = payload.get("symbol", "")
-        side = payload.get("side", "")
+        side = payload.get("direction") or payload.get("side", "")
         return f"{sym} {side}".strip()
     if event_type == "risk.rejected":
         sym    = payload.get("symbol", "")

@@ -114,9 +114,9 @@ def no_hedging_rule(ctx: RuleContext) -> RuleResult:
 
 def max_open_trades_rule(ctx: RuleContext) -> RuleResult:
     # max_open_trades is derived — not a separate config value.
-    # With MAX_LOSING_STREAK=N, you can open at most N+1 trades simultaneously.
-    # This guarantees: max_exposure = (N+1) × risk_per_trade = daily_budget exactly.
-    max_open = ctx.config.max_losing_streak + 1
+    # With MAX_LOSING_STREAK=N, you can open at most N trades simultaneously.
+    # This guarantees: max_exposure = N × risk_per_trade = daily_budget exactly.
+    max_open = max(1, int(ctx.config.max_losing_streak))
     if ctx.effective_open >= max_open:
         return RuleResult(
             approved=False,
@@ -170,12 +170,12 @@ def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
         added to what has already been lost today, would exceed the 95%
         safety threshold.
 
-        per_trade_risk_pct = MAX_DAILY_LOSS_PERCENT / (MAX_LOSING_STREAK + 1)
+        per_trade_risk_pct = MAX_DAILY_LOSS_PERCENT / MAX_LOSING_STREAK
 
         This is the same formula used by LossTracker.daily_risk_amount() —
         one source of truth for how the budget is divided.
 
-        Example (MAX_DAILY_LOSS_PERCENT=5, MAX_LOSING_STREAK=4):
+        Example (MAX_DAILY_LOSS_PERCENT=5, MAX_LOSING_STREAK=5):
             per_trade_risk_pct = 5 / 5 = 1%
             safety_threshold   = 4.75%
             daily_loss_pct=3.8% → 3.8 + 1.0 = 4.8 > 4.75 → REJECTED
@@ -195,7 +195,8 @@ def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
         )
 
     # Layer 2 — budget projection using streak-derived per-trade risk
-    per_trade_risk_pct = budget / (ctx.config.max_losing_streak + 1)
+    risk_slots = max(1, int(ctx.config.max_losing_streak))
+    per_trade_risk_pct = budget / risk_slots
     projected = ctx.daily_loss_pct + per_trade_risk_pct
     if projected > safety_threshold:
         return RuleResult(

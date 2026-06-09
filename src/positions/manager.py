@@ -114,7 +114,8 @@ class PositionManager:
 
                 is_buy = pos.side == PositionSide.BUY
                 close_price = tick.bid if is_buy else tick.ask
-                order_type = Mt5OrderType.SELL if is_buy else Mt5OrderType.BUY
+                # Pass the original position side — close_position() flips it internally
+                order_type = Mt5OrderType.BUY if is_buy else Mt5OrderType.SELL
 
                 self._mt5_orders.close_position(
                     ticket=pos.ticket,
