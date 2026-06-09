@@ -1,5 +1,5 @@
-"""
-src/gui/app.py — Apex Quant Trader Engine Manager (production build)
+﻿"""
+src/gui/app.py — Apex Quantel Engine Manager (production build)
 
 Flow
 ────
@@ -121,7 +121,7 @@ class ApexTraderGUI(ctk.CTk):
     # ── Window construction ───────────────────────────────────────────────────
 
     def _build_layout(self) -> None:
-        self.title("Apex Quant Trader")
+        self.title("Apex Quantel")
 
         # Size — cap at screen dimensions so the window is never larger than
         # the monitor, then center it explicitly so it's never off-screen.
@@ -203,7 +203,7 @@ class ApexTraderGUI(ctk.CTk):
         logo_img = load_logo_image(size=(28, 28))
         if logo_img:
             ctk.CTkLabel(
-                logo, image=logo_img, text="  Apex Quant Trader",
+                logo, image=logo_img, text="  Apex Quantel",
                 compound="left",
                 font=ctk.CTkFont(size=14, weight="bold"),
                 text_color=GREEN,
@@ -211,7 +211,7 @@ class ApexTraderGUI(ctk.CTk):
         else:
             ctk.CTkLabel(
                 logo,
-                text="⚡  Apex Quant Trader",
+                text="⚡  Apex Quantel",
                 font=ctk.CTkFont(size=15, weight="bold"),
                 text_color=GREEN,
             ).place(relx=0.5, rely=0.62, anchor="center")
@@ -463,7 +463,7 @@ def resolve_config_path(argv: list[str]) -> str:
     """
     Locate config.yaml in priority order:
     1. Explicit CLI argument ending in .yaml
-    2. %ProgramData% / Apex Quant Trader / config.yaml
+    2. %ProgramData% / Apex Quantel / config.yaml
     3. Next to the exe / walk up 3 levels
     4. sys._MEIPASS
     5. CWD

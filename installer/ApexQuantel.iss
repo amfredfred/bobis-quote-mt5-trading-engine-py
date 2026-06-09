@@ -1,4 +1,4 @@
-; ApexQuantTrader.iss — Inno Setup installer
+﻿; ApexQuantel.iss — Inno Setup installer
 ;
 ; What this installer does:
 ;   1. Copies the packaged engine files to Program Files
@@ -9,12 +9,12 @@
 ; is handled by the app's built-in onboarding wizard on first launch.
 ;
 ; Build (from execution-engine\ dir):
-;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ApexQuantTrader.iss
+;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ApexQuantel.iss
 ;   — or via the build pipeline:
 ;   powershell -ExecutionPolicy Bypass -File installer\build.ps1
 
-#define MyAppName      "Apex Quant Trader"
-#define MyAppPublisher "Apex Quant Trader"
+#define MyAppName      "Apex Quantel"
+#define MyAppPublisher "Apex Quantel"
 #define MyAppURL       "https://app.somicast.com"
 #define MyAppExeName   "apex-quant-trader-agent\apex-quant-trader-agent.exe"
 #define MyServiceName  "apex-quant-trader-agent"
@@ -35,11 +35,11 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/support
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\Apex Quant Trader
-DefaultGroupName=Apex Quant Trader
+DefaultDirName={autopf}\Apex Quantel
+DefaultGroupName=Apex Quantel
 AllowNoIcons=yes
 OutputDir=Output
-OutputBaseFilename=ApexQuantTraderSetup
+OutputBaseFilename=ApexQuantelSetup
 SetupIconFile=assets\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -101,7 +101,7 @@ Source: "..\scripts\support-bundle.ps1"; DestDir: "{app}\scripts"; \
 [Icons]
 ; ============================================================================
 ; Start Menu
-Name: "{group}\Apex Quant Trader"; \
+Name: "{group}\Apex Quantel"; \
     Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; \
     IconFilename: "{app}\{#MyAppExeName}"
@@ -109,7 +109,7 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; \
     Filename: "{uninstallexe}"
 
 ; Desktop shortcut (optional)
-Name: "{commondesktop}\Apex Quant Trader"; \
+Name: "{commondesktop}\Apex Quantel"; \
     Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; \
     IconFilename: "{app}\{#MyAppExeName}"; \

@@ -1,4 +1,4 @@
-[build-system]
+﻿[build-system]
 requires      = ["hatchling"]
 build-backend = "hatchling.build"
 
@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 [project]
 name        = "apex-quant-trader-agent"
 version     = "0.1.0"
-description = "Apex Quant Trader — trade execution agent for MetaTrader 5"
+description = "Apex Quantel — trade execution agent for MetaTrader 5"
 readme      = { text = "", content-type = "text/plain" }
 license     = { text = "Proprietary" }
 requires-python = ">=3.12"
@@ -45,8 +45,8 @@ dev = [
 apex-quant-trader-agent = "src.__main__:main"
 
 [project.urls]
-Repository = "https://github.com/apexquanttrader/apex-quant-trader"
-Issues     = "https://github.com/apexquanttrader/apex-quant-trader/issues"
+Repository = "https://github.com/apexquantel/apex-quant-trader"
+Issues     = "https://github.com/apexquantel/apex-quant-trader/issues"
 
 # ── Hatch (build) ──────────────────────────────────────────────────────────────
 

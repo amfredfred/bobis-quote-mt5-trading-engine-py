@@ -1,4 +1,4 @@
-# scripts\support-bundle.ps1 — Apex Quant Trader diagnostic bundle collector
+﻿# scripts\support-bundle.ps1 — Apex Quantel diagnostic bundle collector
 #
 # Collects logs, redacted config, service status, and system info into a
 # zip archive that can be sent to support without exposing secrets.
@@ -7,7 +7,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\support-bundle.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\support-bundle.ps1 -OutDir C:\Temp
 #
-# Output: Apex Quant Trader-Support-<date>.zip (in -OutDir, default: Desktop)
+# Output: Apex Quantel-Support-<date>.zip (in -OutDir, default: Desktop)
 
 param(
     [string]$OutDir = [Environment]::GetFolderPath("Desktop"),
@@ -20,7 +20,7 @@ $ScriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EngineDir    = Split-Path -Parent $ScriptDir
 $ServiceName  = "apex-quant-trader-agent"
 $Timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
-$BundleName   = "Apex Quant Trader-Support-$Timestamp"
+$BundleName   = "Apex Quantel-Support-$Timestamp"
 $StagingDir   = Join-Path $env:TEMP $BundleName
 $ZipOut       = Join-Path $OutDir "$BundleName.zip"
 
@@ -86,7 +86,7 @@ New-Item -ItemType Directory -Force -Path $OutDir      | Out-Null
 
 Write-Host ""
 Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host "  Apex Quant Trader — Support Bundle"        -ForegroundColor Cyan
+Write-Host "  Apex Quantel — Support Bundle"        -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "  Engine dir : $EngineDir"
 Write-Host "  Staging    : $StagingDir"
@@ -241,7 +241,7 @@ if (Test-Path $dbFile) {
 # ---------------------------------------------------------------------------
 $manifest = Join-Path $StagingDir "MANIFEST.txt"
 @"
-Apex Quant Trader Support Bundle
+Apex Quantel Support Bundle
 Generated : $Timestamp
 Machine   : $env:COMPUTERNAME
 User      : $env:USERNAME
@@ -276,5 +276,5 @@ Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "  Bundle ready: $ZipOut"              -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Send this file to support@apexquanttrader.io"
+Write-Host "  Send this file to support@apexquantel.io"
 Write-Host ""

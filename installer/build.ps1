@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$SkipPackage,
     [switch]$SkipInstaller,
     [switch]$Clean
@@ -12,7 +12,7 @@ $EngineDir    = Split-Path -Parent $InstallerDir
 
 Write-Host ""
 Write-Host "========================================"  -ForegroundColor Cyan
-Write-Host "  Apex Quant Trader - Build Pipeline"     -ForegroundColor Cyan
+Write-Host "  Apex Quantel - Build Pipeline"     -ForegroundColor Cyan
 Write-Host "========================================"  -ForegroundColor Cyan
 Write-Host "  Engine dir : $EngineDir"
 Write-Host ""
@@ -125,20 +125,20 @@ if ($SkipInstaller) {
     } else {
         Write-Host "      Using : $iscc" -ForegroundColor DarkGray
 
-        $issFile = Join-Path $EngineDir "installer\ApexQuantTrader.iss"
+        $issFile = Join-Path $EngineDir "installer\ApexQuantel.iss"
         & $iscc "/DMyAppVersion=$EngineVersion" $issFile
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  ERROR: ISCC exited with code $LASTEXITCODE" -ForegroundColor Red
             exit 1
         }
 
-        $outExe = Join-Path $EngineDir "installer\Output\ApexQuantTraderSetup.exe"
+        $outExe = Join-Path $EngineDir "installer\Output\ApexQuantelSetup.exe"
         if (Test-Path $outExe) {
             $bytes  = (Get-Item $outExe).Length
             $sizeMB = [math]::Round($bytes / 1048576, 1)
-            Write-Host "      Done  : installer\Output\ApexQuantTraderSetup.exe - $sizeMB MB" -ForegroundColor Green
+            Write-Host "      Done  : installer\Output\ApexQuantelSetup.exe - $sizeMB MB" -ForegroundColor Green
         } else {
-            Write-Host "      Done  : installer\Output\ApexQuantTraderSetup.exe" -ForegroundColor Green
+            Write-Host "      Done  : installer\Output\ApexQuantelSetup.exe" -ForegroundColor Green
         }
     }
 }

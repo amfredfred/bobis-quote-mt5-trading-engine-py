@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/onboarding.py — First-run setup wizard.
 
 The wizard is presented as a centered card (not full-screen).
@@ -278,7 +278,7 @@ class _WizardStep(ctk.CTkScrollableFrame):
 # ── Step 1 — Welcome ──────────────────────────────────────────────────────────
 
 class _StepWelcome(_WizardStep):
-    title     = "Welcome to Apex Quant Trader"
+    title     = "Welcome to Apex Quantel"
     skippable = False
 
     def _build(self) -> None:
@@ -300,7 +300,7 @@ class _StepWelcome(_WizardStep):
                          font=ctk.CTkFont(size=52), text_color=GREEN).pack(pady=(0, 8))
 
         ctk.CTkLabel(
-            outer, text="Apex Quant Trader",
+            outer, text="Apex Quantel",
             font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT,
         ).pack()
 
@@ -670,7 +670,7 @@ class _StepActivation(_WizardStep):
 
         ctk.CTkLabel(
             inner,
-            text="You need an active license key to use Apex Quant Trader.",
+            text="You need an active license key to use Apex Quantel.",
             font=ctk.CTkFont(size=13, weight="bold"), text_color=INFO, anchor="w",
         ).pack(anchor="w")
         ctk.CTkLabel(

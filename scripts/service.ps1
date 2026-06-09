@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-    Manage the Apex Quant Trader Windows service.
+    Manage the Apex Quantel Windows service.
 
 .PARAMETER Command
     status | logs | logs-err | restart | start | stop | edit | remove | help
@@ -22,7 +22,7 @@ switch ($Command.ToLower()) {
 
     "status" {
         $status = & $NssmExe status $ServiceName 2>&1
-        Write-Host "`n=== Apex Quant Trader Service ===" -ForegroundColor Cyan
+        Write-Host "`n=== Apex Quantel Service ===" -ForegroundColor Cyan
         Write-Host "Status : $status"
         if (Test-Path $LogDir) {
             foreach ($f in "stdout.log","stderr.log") {

@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/config_manager.py — Safe, validated config loading and saving.
 
 Responsibilities
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_DASHBOARD_URL = "https://app.somicast.com"
 
 # ProgramData path (production install location)
-_APPNAME    = "Apex Quant Trader"
+_APPNAME    = "Apex Quantel"
 _PROGDATA   = Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / _APPNAME
 _PROGDATA_CFG = _PROGDATA / "config.yaml"
 
@@ -196,7 +196,7 @@ class ConfigManager:
         return cfg
 
     def ensure_programdata_dirs(self) -> None:
-        """Create %ProgramData%/Apex Quant Trader/{logs,data} if missing."""
+        """Create %ProgramData%/Apex Quantel/{logs,data} if missing."""
         try:
             for subdir in ("logs", "data"):
                 (_PROGDATA / subdir).mkdir(parents=True, exist_ok=True)
@@ -209,7 +209,7 @@ class ConfigManager:
     def _locate_config() -> Path:
         """
         Priority order:
-        1. %ProgramData%\\Apex Quant Trader\\config.yaml  (production install)
+        1. %ProgramData%\\Apex Quantel\\config.yaml  (production install)
         2. Next to the EXE  (packaged, portable install)
         3. Walk up 4 levels from EXE  (dev dist layout)
         4. sys._MEIPASS  (PyInstaller bundle)

@@ -1,5 +1,5 @@
-"""
-Apex Quant Trader — agent entry point.
+﻿"""
+Apex Quantel — agent entry point.
 
 Modes:
     GUI (default)      python -m src
@@ -60,17 +60,17 @@ def _headless_main() -> None:
     _time.configure(cfg.engine_timezone)
 
     # File logging:
-    #   - Packaged (PyInstaller): logs go to %ProgramData%\Apex Quant Trader\logs\
+    #   - Packaged (PyInstaller): logs go to %ProgramData%\Apex Quantel\logs\
     #     This is the standard Windows location for app data and is always
     #     writable by the service account. Program Files is often read-only.
-    #     e.g. C:\ProgramData\Apex Quant Trader\logs\engine.log
+    #     e.g. C:\ProgramData\Apex Quantel\logs\engine.log
     #   - Dev / source run: logs go adjacent to config.yaml as before.
     from src.infra.logger import add_file_handler
     if getattr(sys, "frozen", False):
         import os as _os
         _logs_dir = (
             Path(_os.environ.get("PROGRAMDATA", "C:/ProgramData"))
-            / "Apex Quant Trader"
+            / "Apex Quantel"
             / "logs"
         )
     else:
@@ -163,7 +163,7 @@ def _gui_main() -> None:
     if sys.platform == "win32":
         import ctypes
 
-        _MUTEX_NAME = "Global\\ApexQuantTrader_GUI_v1"
+        _MUTEX_NAME = "Global\\ApexQuantel_GUI_v1"
         _ERROR_ALREADY_EXISTS = 183
 
         kernel32 = ctypes.windll.kernel32
@@ -171,7 +171,7 @@ def _gui_main() -> None:
         if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
             # Another instance is running — bring its window to the foreground.
             user32 = ctypes.windll.user32
-            hwnd = user32.FindWindowW(None, "Apex Quant Trader")
+            hwnd = user32.FindWindowW(None, "Apex Quantel")
             if hwnd:
                 # Restore if minimised, then force to front.
                 SW_RESTORE = 9

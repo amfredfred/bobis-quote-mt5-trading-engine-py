@@ -1,5 +1,5 @@
-"""
-src/gui/state.py — Central application state for the Apex Quant Trader GUI.
+﻿"""
+src/gui/state.py — Central application state for the Apex Quantel GUI.
 
 Single source of truth.  Pages subscribe to named events; mutations call
 the setter helpers so observers are always notified.

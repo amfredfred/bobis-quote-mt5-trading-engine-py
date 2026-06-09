@@ -1,1 +1,1 @@
-# src/gui — desktop dashboard for Apex Quant Trader
+﻿# src/gui — desktop dashboard for Apex Quantel

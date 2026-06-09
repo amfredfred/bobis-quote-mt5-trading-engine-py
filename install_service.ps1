@@ -1,6 +1,6 @@
 ﻿# install_service.ps1 - Run as Administrator
 #
-# Installs, removes, or updates the Apex Quant Trader Windows service via NSSM.
+# Installs, removes, or updates the Apex Quantel Windows service via NSSM.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File install_service.ps1
@@ -22,8 +22,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ServiceName   = "apex-quant-trader-agent"
-$DisplayName   = "Apex Quant Trader"
-$Description   = "Event-driven trade execution engine for MetaTrader 5 (Apex Quant Trader)"
+$DisplayName   = "Apex Quantel"
+$Description   = "Event-driven trade execution engine for MetaTrader 5 (Apex Quantel)"
 $EngineDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $NssmExe       = Join-Path $EngineDir "nssm\nssm-2.24\win64\nssm.exe"
 $LogDir        = Join-Path $EngineDir "logs"
@@ -99,7 +99,7 @@ function Cleanup-Orphans {
         $_.ProcessId -ne $PID -and
         $_.CommandLine -and
         $_.CommandLine -match $escapedDir -and
-        ($_.Name -like "Apex Quant Trader*" -or $_.Name -like "execution-engine*" -or $_.Name -like "python*")
+        ($_.Name -like "Apex Quantel*" -or $_.Name -like "execution-engine*" -or $_.Name -like "python*")
     } | ForEach-Object {
         Write-Host "  Stopping orphan PID $($_.ProcessId): $($_.Name)"
         Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue

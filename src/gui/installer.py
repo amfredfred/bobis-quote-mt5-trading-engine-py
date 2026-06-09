@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/installer.py — High-level service install / uninstall helpers.
 
 Wraps service_controller and install_service.ps1 with user-friendly
@@ -22,7 +22,7 @@ Result = Tuple[bool, str]   # (success, human-readable message)
 
 class InstallerService:
     """
-    Manages Windows service registration for the Apex Quant Trader engine.
+    Manages Windows service registration for the Apex Quantel engine.
 
     All blocking operations run in daemon threads.
     on_result(ok, message) is called when the operation completes.
@@ -86,7 +86,7 @@ class InstallerService:
                 False,
                 "The engine installer script (install_service.ps1) was not found "
                 "in this installation. Rebuild the installer package or reinstall "
-                "Apex Quant Trader.",
+                "Apex Quantel.",
             )
             return
 

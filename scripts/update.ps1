@@ -1,4 +1,4 @@
-# scripts\update.ps1 — Apex Quant Trader auto-updater
+﻿# scripts\update.ps1 — Apex Quantel auto-updater
 #
 # Checks the gateway for a newer engine version, downloads it, verifies the
 # SHA-256 checksum, and performs a hot-swap of the dist\ directory.
@@ -32,7 +32,7 @@ $EngineDir  = Split-Path -Parent $ScriptDir  # scripts\ → engine root
 $VersionFile  = Join-Path $EngineDir "version.txt"
 $DistDir      = Join-Path $EngineDir "apex-quant-trader-agent"   # {app}\apex-quant-trader-agent
 $ServiceName  = "apex-quant-trader-agent"
-$TempDir      = Join-Path $env:TEMP "apexquanttrader-update"
+$TempDir      = Join-Path $env:TEMP "apexquantel-update"
 $BackupDir    = Join-Path $EngineDir "apex-quant-trader-agent.bak"
 
 # ── Read gateway URL from config.yaml ────────────────────────────────────
@@ -50,7 +50,7 @@ function Get-GatewayBase {
 $GatewayBase = Get-GatewayBase
 if (-not $GatewayBase) {
     Write-Warning "Could not determine gateway URL from config.yaml — using default"
-    $GatewayBase = "https://gateway.apexquanttrader.io"
+    $GatewayBase = "https://gateway.apexquantel.io"
 }
 
 $VersionEndpoint = "$GatewayBase/engine-version"
@@ -116,7 +116,7 @@ function Start-ServiceSafe {
 # ---------------------------------------------------------------------------
 $LocalVersion = Get-LocalVersion
 Write-Host ""
-Write-Host "=== Apex Quant Trader Updater ===" -ForegroundColor Cyan
+Write-Host "=== Apex Quantel Updater ===" -ForegroundColor Cyan
 Write-Host "  Local version  : $LocalVersion"
 Write-Host "  Version check  : $VersionEndpoint"
 Write-Host ""

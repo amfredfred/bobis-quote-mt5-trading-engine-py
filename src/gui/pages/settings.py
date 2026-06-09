@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/pages/settings.py — General application settings
 
 Sections:
@@ -212,7 +212,7 @@ class SettingsPage(ctk.CTkScrollableFrame):
 
         t = InfoTable(about_card.body)
         version = self._read_version()
-        t.add_row("Apex Quant Trader", version)
+        t.add_row("Apex Quantel", version)
         t.add_row("Python",            sys.version.split()[0])
         t.add_row("Config path",       str(self.app.config.path))
         t.pack(fill="x")

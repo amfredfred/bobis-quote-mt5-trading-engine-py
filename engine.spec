@@ -1,4 +1,4 @@
-# engine.spec — PyInstaller build spec for the Apex Quant Trader execution engine.
+﻿# engine.spec — PyInstaller build spec for the Apex Quantel execution engine.
 #
 # Build command (from execution-engine/ dir):
 #   pyinstaller engine.spec --clean --noconfirm
