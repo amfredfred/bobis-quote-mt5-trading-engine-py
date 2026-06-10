@@ -31,6 +31,8 @@ risk:
   sl_ratio_threshold: 0.35
   symbol_sl_ratio_threshold:
     XAUUSD: 0.35
+    US100: 0.20
+    US500: 0.20
   no_hedging: true
   # Intraday capital-protection guards (0 = disabled)
   max_equity_drawdown_percent: 2.0
