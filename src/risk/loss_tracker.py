@@ -73,17 +73,39 @@ class LossTracker:
             today = _today(self._tz)
             now = _now_ms()
 
-            # New trading day → reset everything
-            if (self._tracked_day != today) and start_equity > 0:
+            # New trading day — always reset guards, latch equity when valid.
+            # _tracked_day advances regardless of start_equity so the guard
+            # reset happens exactly once per day even if broker data is
+            # temporarily unavailable at the day boundary.
+            if self._tracked_day != today:
                 self._tracked_day = today
-                self._start_of_day_equity = start_equity
-                self._equity_peak = start_equity  # Anchor peak to start of day
                 self._equity_drawdown_pct = 0.0
                 self._equity_window.clear()
                 self._paused_until = 0
                 self._pause_reason = ""
+                if start_equity > 0:
+                    self._start_of_day_equity = start_equity
+                    self._equity_peak = start_equity
+                    logger.info(
+                        "New trading day %s — start equity latched at %.2f",
+                        today.isoformat(),
+                        start_equity,
+                    )
+                else:
+                    self._start_of_day_equity = 0.0
+                    self._equity_peak = 0.0
+                    logger.warning(
+                        "New trading day %s — start equity unavailable, will retry",
+                        today.isoformat(),
+                    )
+
+            # Deferred equity latch: fires on the first valid poll after a
+            # day boundary where start_equity was initially unavailable.
+            elif self._start_of_day_equity <= 0 and start_equity > 0:
+                self._start_of_day_equity = start_equity
+                self._equity_peak = start_equity
                 logger.info(
-                    "New trading day %s — start equity latched at %.2f",
+                    "Start-of-day equity latched (deferred) for %s — %.2f",
                     today.isoformat(),
                     start_equity,
                 )
@@ -107,7 +129,6 @@ class LossTracker:
 
         with self._lock:
             now = _now_ms()
-            today = _today(self._tz)
 
             # Update equity peak (anchored to start-of-day)
             if self._equity_peak == 0 or equity > self._equity_peak:
