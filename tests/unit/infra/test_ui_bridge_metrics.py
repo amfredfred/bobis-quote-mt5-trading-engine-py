@@ -124,6 +124,30 @@ def test_metrics_hydrate_final_outcomes_from_persisted_trades() -> None:
     assert metrics["win_rate"] == 33.3
 
 
+def test_event_queue_drops_oldest_when_full() -> None:
+    """BUG-14: the bridge event queue is bounded; overflow drops oldest, not newest."""
+    import asyncio
+
+    from src.infra.ui_bridge import _EVENT_QUEUE_MAX
+
+    bridge = _bridge()
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        bridge._queue = asyncio.Queue(maxsize=3)
+
+        for i in range(5):
+            bridge._enqueue_event((f"event-{i}", None))
+
+        assert bridge._queue.qsize() == 3
+        items = [bridge._queue.get_nowait()[0] for _ in range(3)]
+        assert items == ["event-2", "event-3", "event-4"]
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+    assert _EVENT_QUEUE_MAX == 500
+
+
 def test_metrics_show_positive_daily_pnl_from_equity_delta() -> None:
     metrics = _bridge()._build_metrics_from(
         lt={

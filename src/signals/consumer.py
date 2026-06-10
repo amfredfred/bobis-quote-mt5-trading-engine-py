@@ -384,17 +384,9 @@ class SignalConsumer:
         if broker_ticket:
             report["broker_ticket"] = broker_ticket
         # 2.11 — Persist to outbox before enqueuing so the event survives a WS disconnect
-        outbox_id: Optional[int] = None
-        if self._db is not None:
-            try:
-                outbox_id = self._db.outbox_enqueue(
-                    "execution.lifecycle", json.dumps(report, separators=(",", ":"))
-                )
-            except Exception:
-                logger.exception(
-                    "Outbox write failed; event will be sent in-band only",
-                    extra={"stage": stage, "signal_id": signal_id},
-                )
+        outbox_id = self._persist_to_outbox(
+            "execution.lifecycle", report, stage=stage, signal_id=signal_id
+        )
 
         try:
             self._lifecycle_queue.put_nowait(("execution.lifecycle", report, outbox_id))
@@ -404,6 +396,37 @@ class SignalConsumer:
                 extra={"stage": stage, "signal_id": signal_id},
             )
 
+    def _persist_to_outbox(
+        self,
+        event: str,
+        report: dict,
+        *,
+        stage: str,
+        signal_id: str,
+        attempts: int = 3,
+    ) -> Optional[int]:
+        """
+        BUG-09 — Write an event to the outbox with bounded retries so a transient
+        SQLite failure (lock contention, brief I/O error) cannot leave the event
+        in-memory only. Returns the row ID, or None if every attempt failed.
+        """
+        if self._db is None:
+            return None
+        payload = json.dumps(report, separators=(",", ":"))
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._db.outbox_enqueue(event, payload)
+            except Exception:
+                if attempt == attempts:
+                    logger.exception(
+                        "Outbox write failed after %d attempts; event is in-memory only",
+                        attempts,
+                        extra={"stage": stage, "signal_id": signal_id},
+                    )
+                else:
+                    self._stopped.wait(timeout=0.05 * attempt)
+        return None
+
     def _send_lifecycle_reports(self) -> None:
         while not self._stopped.is_set():
             if not self._activated.wait(timeout=1.0):
@@ -412,22 +435,38 @@ class SignalConsumer:
                 event, report, outbox_id = self._lifecycle_queue.get(timeout=1.0)
             except queue.Empty:
                 continue
-            sent = self._send(event, report)
-            if sent:
-                # 2.11 — Mark delivered in the outbox so it is not replayed on reconnect
-                if outbox_id is not None and self._db is not None:
-                    try:
-                        self._db.outbox_mark_sent(outbox_id)
-                    except Exception:
-                        logger.exception(
-                            "Outbox mark-sent failed", extra={"outbox_id": outbox_id}
-                        )
-            else:
-                logger.warning(
-                    "Execution lifecycle report could not be sent",
-                    extra={"stage": report["stage"], "signal_id": report["signal_id"]},
-                )
+            self._deliver_lifecycle_report(event, report, outbox_id)
             self._lifecycle_queue.task_done()
+
+    def _deliver_lifecycle_report(
+        self, event: str, report: dict, outbox_id: Optional[int]
+    ) -> bool:
+        sent = self._send(event, report) is not None
+        if sent:
+            # 2.11 — Mark delivered in the outbox so it is not replayed on reconnect
+            if outbox_id is not None and self._db is not None:
+                try:
+                    self._db.outbox_mark_sent(outbox_id)
+                except Exception:
+                    logger.exception(
+                        "Outbox mark-sent failed", extra={"outbox_id": outbox_id}
+                    )
+        else:
+            logger.warning(
+                "Execution lifecycle report could not be sent",
+                extra={"stage": report["stage"], "signal_id": report["signal_id"]},
+            )
+            # BUG-09 — Last-chance persist: if the event never reached the
+            # outbox, retry the write now so the reconnect replay can recover
+            # it even though the in-band send just failed.
+            if outbox_id is None:
+                self._persist_to_outbox(
+                    event,
+                    report,
+                    stage=str(report.get("stage", "")),
+                    signal_id=str(report.get("signal_id", "")),
+                )
+        return sent
 
     @staticmethod
     def _reason(value: object) -> str:

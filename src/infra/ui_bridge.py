@@ -39,6 +39,11 @@ logger = logging.getLogger(__name__)
 _started_at = time.time()
 _METRICS_PUSH_INTERVAL_SEC = 1.5
 _ACCOUNT_CACHE_TTL_SEC = 1.5
+# BUG-14 — Backpressure limits: the event queue drops oldest entries when full,
+# and a client that cannot accept a frame within the timeout is evicted so one
+# stalled GUI connection cannot back up broadcasts for everyone else.
+_EVENT_QUEUE_MAX = 500
+_CLIENT_SEND_TIMEOUT_SEC = 5.0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -233,10 +238,25 @@ class UIBridge:
         if self._loop and self._queue:
             try:
                 self._loop.call_soon_threadsafe(
-                    self._queue.put_nowait, (event_name, payload)
+                    self._enqueue_event, (event_name, payload)
                 )
             except Exception:
                 pass
+
+    def _enqueue_event(self, item: tuple) -> None:
+        """Runs on the bridge loop thread. BUG-14: drop-oldest when full."""
+        q = self._queue
+        if q is None:
+            return
+        while True:
+            try:
+                q.put_nowait(item)
+                return
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
 
     def push_event(self, event_type: str, payload: Any) -> None:
         """Send an arbitrary typed message to all connected GUI clients.
@@ -246,16 +266,8 @@ class UIBridge:
         """
         if self._loop and self._clients:
             frame = json.dumps({"type": event_type, "payload": payload}, default=str)
-
-            async def _send_all() -> None:
-                for client in list(self._clients):
-                    try:
-                        await client.send(frame)
-                    except Exception:
-                        self._clients.discard(client)
-
             try:
-                asyncio.run_coroutine_threadsafe(_send_all(), self._loop)
+                asyncio.run_coroutine_threadsafe(self._broadcast_raw(frame), self._loop)
             except Exception:
                 pass
 
@@ -265,7 +277,7 @@ class UIBridge:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop       = loop
-        self._queue      = asyncio.Queue()
+        self._queue      = asyncio.Queue(maxsize=_EVENT_QUEUE_MAX)
         self._stop_event = asyncio.Event()
         try:
             loop.run_until_complete(self._serve())
@@ -306,12 +318,7 @@ class UIBridge:
                     continue
                 msg = self._serialize_event(event_name, payload)
                 if msg and self._clients:
-                    frame = json.dumps(msg, default=str)
-                    for client in list(self._clients):
-                        try:
-                            await client.send(frame)
-                        except Exception:
-                            self._clients.discard(client)
+                    await self._broadcast_raw(json.dumps(msg, default=str))
 
         async def metrics_pusher() -> None:
             while not self._stop_event.is_set():  # type: ignore[union-attr]
@@ -323,11 +330,7 @@ class UIBridge:
                         {"type": "METRICS_UPDATE", "payload": self._build_metrics()},
                         default=str,
                     )
-                    for client in list(self._clients):
-                        try:
-                            await client.send(frame)
-                        except Exception:
-                            self._clients.discard(client)
+                    await self._broadcast_raw(frame)
                 except Exception:
                     pass
 
@@ -418,12 +421,7 @@ class UIBridge:
             logger.error("UIBridge: close_trade failed for %s: %s", trade_id, exc)
 
     async def _broadcast(self, msg: dict) -> None:
-        frame = json.dumps(msg, default=str)
-        for client in list(self._clients):
-            try:
-                await client.send(frame)
-            except Exception:
-                self._clients.discard(client)
+        await self._broadcast_raw(json.dumps(msg, default=str))
 
     # ── Event serialization ───────────────────────────────────────────────
 
@@ -466,9 +464,13 @@ class UIBridge:
         return None
 
     async def _broadcast_raw(self, frame: str) -> None:
+        # BUG-14 — wait_for bounds each send so one stalled client cannot
+        # block the broadcaster/metrics pusher; timed-out clients are evicted.
         for client in list(self._clients):
             try:
-                await client.send(frame)
+                await asyncio.wait_for(
+                    client.send(frame), timeout=_CLIENT_SEND_TIMEOUT_SEC
+                )
             except Exception:
                 self._clients.discard(client)
 
