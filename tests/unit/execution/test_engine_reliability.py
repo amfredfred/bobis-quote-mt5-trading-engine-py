@@ -155,7 +155,7 @@ class _Risk:
 
     def evaluate(self, *args, **kwargs):
         self.calls += 1
-        return SimpleNamespace(approved=True, reason=None)
+        return SimpleNamespace(approved=True, reason=None, data={}, risk_multiplier=1.0)
 
 
 class _Orders:

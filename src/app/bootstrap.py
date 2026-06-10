@@ -136,6 +136,9 @@ def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
 
     # Hydrate position store from live MT5 positions
     container.position_manager.hydrate_from_broker()
+    container.cluster_tracker.hydrate_open_trades(
+        container.position_store.get_open_trades()
+    )
 
     # Prime daily loss tracker
     try:
@@ -203,6 +206,11 @@ def _wire_events(container: AppContainer) -> None:
         container.signal_queue.put(adapted)
 
     container.event_bus.on(Events.SIGNAL_TRIGGERED, on_signal_triggered)
+
+    def on_trade_closed(trade) -> None:
+        container.cluster_tracker.mark_trade_closed(trade)
+
+    container.event_bus.on(Events.TRADE_CLOSED, on_trade_closed)
 
     def on_any_event(event: str, _payload) -> None:
         metrics.increment(f"events.{event}")

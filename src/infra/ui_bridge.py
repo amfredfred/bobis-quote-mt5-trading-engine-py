@@ -486,14 +486,15 @@ class UIBridge:
         connected_mt5 = bool(account) or c.mt5_client.is_connected()
 
         return {
-            "connected":  connected_mt5,
-            "engine":     self._build_engine_info(lt),
-            "config":     self._build_config_snapshot(config),
-            "trades":     [_serialize_trade(t) for t in trades],
-            "riskGuards": self._build_risk_guards(lt, config),
-            "metrics":    self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
-            "signals":    list(self._signal_buf),
-            "logs":       list(self._log_buf)[-50:],
+            "connected":   connected_mt5,
+            "engine":      self._build_engine_info(lt),
+            "config":      self._build_config_snapshot(config),
+            "trades":      [_serialize_trade(t) for t in trades],
+            "riskGuards":  self._build_risk_guards(lt, config),
+            "clusterRisk": c.cluster_tracker.stats(),
+            "metrics":     self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
+            "signals":     list(self._signal_buf),
+            "logs":        list(self._log_buf)[-50:],
         }
 
     def build_remote_snapshot(self) -> dict:
@@ -521,6 +522,21 @@ class UIBridge:
                 "max_equity_drawdown_percent": config.risk.max_equity_drawdown_percent,
                 "rolling_window_size": config.risk.rolling_window_size,
                 "rolling_drawdown_pct": config.risk.rolling_drawdown_pct,
+                "cluster_risk": {
+                    "enabled": config.risk.cluster_risk.enabled,
+                    "groups": [
+                        {
+                            "name": g.name,
+                            "symbols": list(g.symbols),
+                            "max_same_day_loss_r": g.max_same_day_loss_r,
+                            "max_concurrent_positions": g.max_concurrent_positions,
+                            "max_same_day_losses": g.max_same_day_losses,
+                            "after_first_loss_risk_multiplier": g.after_first_loss_risk_multiplier,
+                            "min_trade_risk_multiplier": g.min_trade_risk_multiplier,
+                        }
+                        for g in config.risk.cluster_risk.groups
+                    ],
+                },
             },
             "execution": {
                 "tp1_trigger_pct": config.execution.tp1_trigger_pct,
@@ -596,11 +612,25 @@ class UIBridge:
         paused      = lt.get("paused", False)
         reason      = (lt.get("pause_reason") or "").lower()
         rolling_on  = config.risk.rolling_window_size > 0 and config.risk.rolling_drawdown_pct > 0
+        cluster_on  = config.risk.cluster_risk.enabled
 
         def _s(key: str) -> str:
             if paused and key in reason:
                 return "PAUSED"
             return "ACTIVE"
+
+        cluster_stats = self._container.cluster_tracker.stats()
+        cluster_used = 0.0
+        cluster_threshold = 0.0
+        if cluster_on and config.risk.cluster_risk.groups:
+            first_group = config.risk.cluster_risk.groups[0]
+            cluster_threshold = first_group.max_same_day_loss_r
+            group_state = cluster_stats.get(first_group.name, {})
+            cluster_used = (
+                group_state.get("realized_loss_r", 0.0)
+                + group_state.get("open_r", 0.0)
+                + group_state.get("pending_r", 0.0)
+            )
 
         return [
             {"id": "guard1", "name": "DAILY LOSS",      "description": "Pause until midnight on breach",
@@ -610,6 +640,9 @@ class UIBridge:
             {"id": "guard3", "name": "ROLLING WINDOW",  "description": f"Rolling {config.risk.rolling_window_size}-trade drawdown",
              "status": "DISABLED" if not rolling_on else _s("rolling drawdown"),
              "current_value": round(eq_dd, 4), "threshold": config.risk.rolling_drawdown_pct, "unit": "%"},
+            {"id": "guard4", "name": "CLUSTER RISK",    "description": "Shared risk bucket for correlated symbols",
+             "status": "DISABLED" if not cluster_on else "ACTIVE",
+             "current_value": round(cluster_used, 4), "threshold": cluster_threshold, "unit": "R"},
         ]
 
     def _build_metrics(self) -> dict:

@@ -63,6 +63,7 @@ class TradePlanner:
         signal: InboundSignal,
         account_info: AccountInfo,
         symbol_info: SymbolInfo,
+        risk_multiplier: float = 1.0,
     ) -> TradePlan:
         side = (
             OrderSide.BUY
@@ -99,9 +100,10 @@ class TradePlanner:
         # ── Streak-based risk amount ───────────────────────────────────────
         # daily_budget = start_of_day_equity × (MAX_DAILY_LOSS_PERCENT / 100)
         # risk_per_trade = daily_budget / MAX_LOSING_STREAK
-        risk_amount = self._loss_tracker.daily_risk_amount(
+        base_risk_amount = self._loss_tracker.daily_risk_amount(
             self._risk.max_losing_streak
         )
+        risk_amount = base_risk_amount * max(0.0, min(1.0, risk_multiplier))
 
         # ── Lot size calculation ───────────────────────────────────────────
         calc = calculate_lot_size(
@@ -204,6 +206,9 @@ class TradePlanner:
                 "tp1_percentage": tp1_percentage,
                 "tf_pair": f"{signal.htf_interval}:{signal.ltf_interval}",
                 "tp1_lots": tp1_lots,
+                "base_risk_amount": round(base_risk_amount, 2),
+                "risk_multiplier": round(risk_multiplier, 4),
+                "effective_risk_amount": round(risk_amount, 2),
                 "signal_tp1": signal.tp1,
                 "static_tp1": round(static_tp1, 5),
                 "tp1_overridden": signal.tp1 != static_tp1,

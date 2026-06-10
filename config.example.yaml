@@ -36,6 +36,31 @@ risk:
   max_equity_drawdown_percent: 2.0
   rolling_window_size: 2
   rolling_drawdown_pct: 2.0
+  # Cluster risk guard — caps total intraday risk across correlated symbols.
+  # Groups share a daily loss budget; once a loss occurs, subsequent trades
+  # in the same group use a reduced risk multiplier until the budget runs out.
+  cluster_risk:
+    enabled: false
+    groups:
+      - name: indices
+        symbols: [US100, US500, US30]
+        # Total R this cluster may lose in a single day before blocking new trades.
+        max_same_day_loss_r: 1.5
+        # No more than this many pending+open trades at once across the group.
+        max_concurrent_positions: 2
+        # Block all new entries once this many losses have been taken today.
+        max_same_day_losses: 2
+        # Risk fraction applied to every trade after the first loss (e.g. 0.5 = half size).
+        after_first_loss_risk_multiplier: 0.5
+        # If the remaining budget is below this fraction, block rather than trade tiny.
+        min_trade_risk_multiplier: 0.25
+      - name: metals
+        symbols: [XAUUSD, XAGUSD]
+        max_same_day_loss_r: 1.5
+        max_concurrent_positions: 2
+        max_same_day_losses: 2
+        after_first_loss_risk_multiplier: 0.5
+        min_trade_risk_multiplier: 0.25
 
 execution:
   # TP1 fires when price reaches this % of entryâ†’TP2 range

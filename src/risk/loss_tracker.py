@@ -129,6 +129,7 @@ class LossTracker:
 
         with self._lock:
             now = _now_ms()
+            today = _today(self._tz)
 
             # Update equity peak (anchored to start-of-day)
             if self._equity_peak == 0 or equity > self._equity_peak:

@@ -81,6 +81,77 @@ def _interval_to_minutes(interval: str) -> int:
 
 
 @dataclass(frozen=True)
+class ClusterGroupConfig:
+    name: str
+    symbols: tuple[str, ...]
+    max_same_day_loss_r: float = 1.5
+    max_concurrent_positions: int = 2
+    max_same_day_losses: int = 2
+    after_first_loss_risk_multiplier: float = 0.5
+    min_trade_risk_multiplier: float = 0.25
+
+    def __post_init__(self) -> None:
+        if self.max_same_day_loss_r <= 0:
+            raise ValueError("max_same_day_loss_r must be > 0")
+        if self.max_concurrent_positions < 1:
+            raise ValueError("max_concurrent_positions must be >= 1")
+        if self.max_same_day_losses < 1:
+            raise ValueError("max_same_day_losses must be >= 1")
+        if not (0 < self.after_first_loss_risk_multiplier <= 1):
+            raise ValueError("after_first_loss_risk_multiplier must be > 0 and <= 1")
+        if not (0 < self.min_trade_risk_multiplier <= 1):
+            raise ValueError("min_trade_risk_multiplier must be > 0 and <= 1")
+
+
+@dataclass(frozen=True)
+class ClusterRiskConfig:
+    enabled: bool = False
+    groups: tuple[ClusterGroupConfig, ...] = ()
+
+
+def _parse_cluster_risk(raw: Any) -> "ClusterRiskConfig":
+    if not raw:
+        return ClusterRiskConfig(enabled=False)
+    if not isinstance(raw, dict):
+        raise ValueError("risk.cluster_risk must be a mapping.")
+
+    groups_raw = raw.get("groups", [])
+    if groups_raw is None:
+        groups_raw = []
+    if not isinstance(groups_raw, list):
+        raise ValueError("risk.cluster_risk.groups must be a list.")
+
+    groups: list[ClusterGroupConfig] = []
+    for item in groups_raw:
+        if not isinstance(item, dict):
+            raise ValueError("Each risk.cluster_risk.groups item must be a mapping.")
+
+        symbols_raw = item.get("symbols", [])
+        if isinstance(symbols_raw, str):
+            symbols_raw = [s.strip() for s in symbols_raw.split(",") if s.strip()]
+        if not symbols_raw:
+            raise ValueError("Cluster group must include at least one symbol.")
+
+        group = ClusterGroupConfig(
+            name=str(item["name"]),
+            symbols=tuple(normalise_symbol(str(s)) for s in symbols_raw),
+            max_same_day_loss_r=float(item.get("max_same_day_loss_r", 1.5)),
+            max_concurrent_positions=int(item.get("max_concurrent_positions", 2)),
+            max_same_day_losses=int(item.get("max_same_day_losses", 2)),
+            after_first_loss_risk_multiplier=float(
+                item.get("after_first_loss_risk_multiplier", 0.5)
+            ),
+            min_trade_risk_multiplier=float(item.get("min_trade_risk_multiplier", 0.25)),
+        )
+        groups.append(group)
+
+    return ClusterRiskConfig(
+        enabled=bool(raw.get("enabled", False)),
+        groups=tuple(groups),
+    )
+
+
+@dataclass(frozen=True)
 class RiskConfig:
     max_losing_streak: int
     max_daily_loss_percent: float
@@ -94,6 +165,7 @@ class RiskConfig:
     max_equity_drawdown_percent: float = 2.0
     rolling_window_size: int = 0
     rolling_drawdown_pct: float = 0.0
+    cluster_risk: ClusterRiskConfig = field(default_factory=ClusterRiskConfig)
 
     def __post_init__(self) -> None:
         if self.max_losing_streak < 1:
@@ -283,6 +355,7 @@ class AppConfig:
                 max_equity_drawdown_percent=float(risk.get("max_equity_drawdown_percent", 2.0)),
                 rolling_window_size=int(risk.get("rolling_window_size", 0)),
                 rolling_drawdown_pct=float(risk.get("rolling_drawdown_pct", 0.0)),
+                cluster_risk=_parse_cluster_risk(risk.get("cluster_risk")),
             ),
             execution=ExecutionConfig(
                 tp1_trigger_pct=float(exe["tp1_trigger_pct"]),

@@ -8,7 +8,7 @@ guard rules have access to trade-count circuit-breaker state.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, TYPE_CHECKING
 
 from src.domain.signal_interface import InboundSignal
@@ -20,6 +20,7 @@ from .rules import ALL_RULES, RuleContext, RuleResult, RiskRule
 
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
+    from src.risk.cluster_tracker import ClusterRiskTracker
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,11 @@ logger = logging.getLogger(__name__)
 class RiskDecision:
     approved: bool
     reason: Optional[str] = None
+    data: dict = field(default_factory=dict)
+
+    @property
+    def risk_multiplier(self) -> float:
+        return float(self.data.get("risk_multiplier", 1.0))
 
 
 class RiskEngine:
@@ -37,10 +43,12 @@ class RiskEngine:
         config: RiskConfig,
         rules: Optional[List[RiskRule]] = None,
         loss_tracker: Optional["LossTracker"] = None,
+        cluster_tracker: Optional["ClusterRiskTracker"] = None,
     ) -> None:
         self._config = config
         self._rules = rules if rules is not None else ALL_RULES
         self._loss_tracker = loss_tracker
+        self._cluster_tracker = cluster_tracker
 
     def set_loss_tracker(self, tracker: "LossTracker") -> None:
         """Wire in LossTracker after construction (container convenience)."""
@@ -68,7 +76,10 @@ class RiskEngine:
             effective_symbol=effective_symbol,
             symbol_info=symbol_info,  # type: ignore[arg-type]
             loss_tracker=self._loss_tracker,
+            cluster_tracker=self._cluster_tracker,
         )
+
+        decision_data: dict = {}
 
         for rule in self._rules:
             result: RuleResult = rule(ctx)
@@ -108,6 +119,8 @@ class RiskEngine:
                 metrics.increment("risk.rejected")
                 return RiskDecision(approved=False, reason=result.reason)
 
+            decision_data.update(result.data)
+
         logger.info(
             "Risk approved",
             extra={
@@ -115,7 +128,9 @@ class RiskEngine:
                 "symbol": signal.resolved_symbol,
                 "direction": signal.direction.value,
                 "rr": signal.risk_reward_ratio,
+                "risk_multiplier": decision_data.get("risk_multiplier", 1.0),
+                "cluster_name": decision_data.get("cluster_name"),
             },
         )
         metrics.increment("risk.approved")
-        return RiskDecision(approved=True)
+        return RiskDecision(approved=True, data=decision_data)

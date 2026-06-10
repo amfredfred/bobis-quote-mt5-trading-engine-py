@@ -32,6 +32,7 @@ from src.utils.symbol import normalise_symbol
 
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
+    from src.risk.cluster_tracker import ClusterRiskTracker
 
 _UNKNOWN_SIGNAL_ID = "unknown"
 
@@ -46,12 +47,14 @@ class RuleContext:
     effective_symbol: int
     symbol_info: SymbolInfo
     loss_tracker: Optional["LossTracker"] = field(default=None)
+    cluster_tracker: Optional["ClusterRiskTracker"] = field(default=None)
 
 
 @dataclass(frozen=True)
 class RuleResult:
     approved: bool
     reason: str = ""
+    data: dict = field(default_factory=dict)
 
 
 RiskRule = Callable[[RuleContext], RuleResult]
@@ -77,6 +80,24 @@ def loss_guard_rule(ctx: RuleContext) -> RuleResult:
     if paused:
         return RuleResult(approved=False, reason=f"Loss guard: {reason}")
     return RuleResult(approved=True)
+
+
+def cluster_risk_rule(ctx: RuleContext) -> RuleResult:
+    if ctx.cluster_tracker is None:
+        return RuleResult(approved=True)
+
+    preview = ctx.cluster_tracker.preview(ctx.signal)
+    if not preview.approved:
+        return RuleResult(approved=False, reason=preview.reason)
+
+    return RuleResult(
+        approved=True,
+        data={
+            "cluster_name": preview.cluster_name,
+            "risk_multiplier": preview.risk_multiplier,
+            "planned_cluster_risk_r": preview.planned_risk_r,
+        },
+    )
 
 
 def no_hedging_rule(ctx: RuleContext) -> RuleResult:
@@ -371,12 +392,13 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
 # Ordered by cost: memory-only rules short-circuit before any broker I/O.
 
 ALL_RULES: List[RiskRule] = [
-    loss_guard_rule,  # memory-only: paused state check
-    no_hedging_rule,  # memory-only: open trades scan
-    max_open_trades_rule,  # memory-only: counter check
+    loss_guard_rule,      # memory-only: paused state check
+    cluster_risk_rule,    # memory-only: shared cluster budget
+    no_hedging_rule,      # memory-only: open trades scan
+    max_open_trades_rule,      # memory-only: counter check
     max_symbol_exposure_rule,  # memory-only: counter check
-    duplicate_signal_rule,  # memory-only: open trades scan
-    daily_loss_limit_rule,  # memory-only: loss budget check
-    min_rr_rule,  # broker I/O: live fill price
+    duplicate_signal_rule,     # memory-only: open trades scan
+    daily_loss_limit_rule,     # memory-only: loss budget check
+    min_rr_rule,          # broker I/O: live fill price
     spread_quality_rule,  # broker I/O: live spread
 ]

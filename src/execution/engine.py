@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
+    from src.risk.cluster_tracker import ClusterRiskTracker
 from src.domain.trade import Trade, TradeStatus
 from src.utils.time import now_ms
 
@@ -57,6 +58,7 @@ class ExecutionEngine:
         event_bus: EventBus,
         exec_config: ExecutionConfig,
         loss_tracker: "LossTracker | None" = None,
+        cluster_tracker: "ClusterRiskTracker | None" = None,
     ) -> None:
         self._risk = risk_engine
         self._planner = trade_planner
@@ -71,6 +73,7 @@ class ExecutionEngine:
         self._pending_lock = threading.Lock()
         self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
         self._loss_tracker: "LossTracker | None" = loss_tracker
+        self._cluster_tracker: "ClusterRiskTracker | None" = cluster_tracker
 
     def update_daily_loss(
         self, loss_pct: float, start_equity: float, current_equity: float = 0.0
@@ -222,6 +225,14 @@ class ExecutionEngine:
                 )
                 return None
 
+            risk_multiplier = decision.risk_multiplier
+            planned_cluster_risk_r = float(
+                decision.data.get("planned_cluster_risk_r", risk_multiplier)
+            )
+
+            if self._cluster_tracker is not None:
+                self._cluster_tracker.reserve_signal(signal, planned_cluster_risk_r)
+
             self._reserve(signal.resolved_symbol, signal.id)
 
         self._bus.emit(Events.RISK_APPROVED, {"signal": signal})
@@ -229,10 +240,12 @@ class ExecutionEngine:
 
         # ── 3. Plan trade ──────────────────────────────────────────────────
         try:
-            plan = self._planner.plan(signal, account_info, symbol_info)
+            plan = self._planner.plan(signal, account_info, symbol_info, risk_multiplier=risk_multiplier)
         except Exception:
             with self._pending_lock:
                 self._release(signal.resolved_symbol, signal.id)
+            if self._cluster_tracker is not None:
+                self._cluster_tracker.release_signal(signal)
             logger.exception("ExecutionEngine: trade planning failed")
             self._bus.emit(
                 Events.TRADE_ERROR, {"signal": signal, "reason": "planning_failed"}
@@ -255,6 +268,8 @@ class ExecutionEngine:
         except Exception as exc:
             with self._pending_lock:
                 self._release(signal.resolved_symbol, signal.id)
+            if self._cluster_tracker is not None:
+                self._cluster_tracker.release_signal(signal)
 
             exc_str = str(exc)
             is_autotrading_disabled = (
@@ -402,6 +417,8 @@ class ExecutionEngine:
             persisted = self._repo.save(trade)
             with self._pending_lock:
                 self._release(signal.resolved_symbol, signal.id)
+            if self._cluster_tracker is not None:
+                self._cluster_tracker.release_signal(signal)
             logger.exception(
                 "Trade opened but in-memory tracking failed; manual intervention required",
                 extra={
@@ -435,6 +452,10 @@ class ExecutionEngine:
                 Events.TRADE_ERROR,
                 {"signal": signal, "reason": "trade_persistence_failed_after_fill"},
             )
+
+        if self._cluster_tracker is not None:
+            self._cluster_tracker.mark_trade_opened(trade)
+
         with self._pending_lock:
             self._release(signal.resolved_symbol, signal.id)
 

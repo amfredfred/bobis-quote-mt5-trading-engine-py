@@ -22,6 +22,7 @@ from src.infra.db import Database
 from src.infra.ui_bridge import UIBridge
 from src.positions.manager import PositionManager
 from src.positions.store import PositionStore
+from src.risk.cluster_tracker import ClusterRiskTracker
 from src.risk.engine import RiskEngine
 from src.risk.loss_tracker import LossTracker
 from src.signals.consumer import SignalConsumer
@@ -47,6 +48,7 @@ class AppContainer:
     trade_repo: TradeRepository
     strategy_router: StrategyRouter
     loss_tracker: LossTracker
+    cluster_tracker: ClusterRiskTracker
     ui_bridge: "UIBridge | None" = None
 
 
@@ -74,7 +76,11 @@ def build_container(config: AppConfig) -> AppContainer:
         rolling_window_size     = config.risk.rolling_window_size,
         rolling_drawdown_pct    = config.risk.rolling_drawdown_pct,
     )
-    risk_engine = RiskEngine(config.risk, loss_tracker=loss_tracker)
+    cluster_tracker = ClusterRiskTracker(
+        config=config.risk.cluster_risk,
+        engine_tz=config.engine_timezone,
+    )
+    risk_engine = RiskEngine(config.risk, loss_tracker=loss_tracker, cluster_tracker=cluster_tracker)
     trade_planner = TradePlanner(config.risk, config.execution, loss_tracker)
     order_manager = OrderManager(mt5_orders, mt5_positions, config.execution)
 
@@ -88,6 +94,7 @@ def build_container(config: AppConfig) -> AppContainer:
         event_bus=event_bus,
         exec_config=config.execution,
         loss_tracker=loss_tracker,
+        cluster_tracker=cluster_tracker,
     )
 
     # ── Position management ───────────────────────────────────────────────
@@ -137,4 +144,5 @@ def build_container(config: AppConfig) -> AppContainer:
         position_store=position_store,
         strategy_router=strategy_router,
         loss_tracker=loss_tracker,
+        cluster_tracker=cluster_tracker,
     )
