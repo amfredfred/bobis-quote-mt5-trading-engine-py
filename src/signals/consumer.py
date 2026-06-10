@@ -226,7 +226,11 @@ class SignalConsumer:
         logger.warning("Apex Quantel Gateway disconnected")
 
     def _refresh_rooms(self) -> None:
-        refresh_interval = max(15.0, self._room_ttl_seconds / 2)
+        # Cap at 300 s so a silently-evicted room is re-joined within 5 minutes.
+        # (Gateway restart already triggers an immediate re-subscribe via the
+        # reconnect → activation.accepted path, so this only covers in-connection
+        # eviction edge cases.)
+        refresh_interval = max(15.0, min(300.0, self._room_ttl_seconds / 2))
         while not self._stopped.wait(refresh_interval):
             if self._activated.is_set():
                 self._subscribe()
@@ -550,13 +554,11 @@ class SignalConsumer:
             self._handle_license_updated(data)
             return True
 
-        return event in {
-            "protocol.accepted",
-            "activation.accepted",
-            "execution.metrics.subscribe",
-            "execution.metrics.unsubscribe",
-            "license.updated",
-        }
+        # BUG-15: All events in this set are handled by explicit `return True`
+        # branches above and can never reach this line.  The set was dead code —
+        # replaced with a plain False so unknown events are forwarded to the signal
+        # pipeline as intended.
+        return False
 
     def _replay_outbox(self) -> None:
         """
@@ -620,13 +622,15 @@ class SignalConsumer:
 
         if status in {"suspended", "revoked", "expired"}:
             logger.critical(
-                "license.updated: licence status=%s — disconnecting engine. "
-                "Re-issue the activation key to resume.",
+                "license.updated: licence status=%s — stopping engine. "
+                "Re-issue the activation key and restart to resume.",
                 status,
                 extra={"license_id": license_id},
             )
-            self._activated.clear()
-            self._ws.stop()
+            # Call self.stop() (not self._ws.stop()) so the SignalConsumer-level
+            # _stopped event is set.  Without it, _refresh_rooms / _heartbeat /
+            # _lifecycle / _metrics threads keep spinning until process exit.
+            self.stop()
             return
 
         logger.warning(
