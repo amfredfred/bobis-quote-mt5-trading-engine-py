@@ -31,6 +31,8 @@ DEFAULT_DASHBOARD_URL = "https://app.somicast.com"
 # managed by internal defaults and must never be written to user config.
 _ALLOWED_USER_PATHS: frozenset = frozenset({
     "gateway.activation_key",
+    "gateway.symbols",
+    "gateway.ws_url",
     "mt5.login",
     "mt5.password",
     "mt5.server",

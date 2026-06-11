@@ -179,9 +179,9 @@ class OnboardingWizard(ctk.CTkFrame):
     def _build_steps(self) -> None:
         self._step_frames = [
             _StepWelcome(self._content, self),
+            _StepActivation(self._content, self),   # key first — no point configuring MT5 with no license
             _StepPlatform(self._content, self),
             _StepAccount(self._content, self),
-            _StepActivation(self._content, self),
             _StepRisk(self._content, self),
             _StepInstall(self._content, self, self._installer),
             _StepFinish(self._content, self),
@@ -648,6 +648,28 @@ class _StepAccount(_WizardStep):
         return True, ""
 
 
+# ── Symbol display names (used in the pair selector) ─────────────────────────
+
+_DEFAULT_GW_WS_URL = "wss://apex-gateway.somicast.com/engine"
+
+_SYMBOL_LABELS: dict[str, str] = {
+    "XAUUSD": "Gold / US Dollar",
+    "XAGUSD": "Silver / US Dollar",
+    "EURUSD": "Euro / US Dollar",
+    "GBPUSD": "British Pound / Dollar",
+    "USDJPY": "US Dollar / Japanese Yen",
+    "USDCHF": "US Dollar / Swiss Franc",
+    "AUDUSD": "Australian Dollar / USD",
+    "USDCAD": "US Dollar / Canadian Dollar",
+    "NZDUSD": "New Zealand Dollar / USD",
+    "US100":  "Nasdaq 100",
+    "US500":  "S&P 500",
+    "US30":   "Dow Jones 30",
+    "BTCUSD": "Bitcoin / US Dollar",
+    "ETHUSD": "Ethereum / US Dollar",
+}
+
+
 # ── Step 4 — License Key ──────────────────────────────────────────────────────
 
 class _StepActivation(_WizardStep):
@@ -655,129 +677,385 @@ class _StepActivation(_WizardStep):
     skippable = False
 
     def _build(self) -> None:
+        # State: "idle" | "checking" | "verified" | "error"
+        self._state: str = "idle"
+        self._preflight: dict | None = None
+        self._sym_vars: dict[str, tk.BooleanVar] = {}
+        self._gateway_ws_url: str = ""
+
         f = ctk.CTkFrame(self, fg_color="transparent")
-        f.pack(fill="x", padx=40, pady=(20, 0))
+        f.pack(fill="both", expand=True, padx=32, pady=(16, 0))
+        self._f = f
 
-        # ── Dashboard callout ──────────────────────────────────────────────
-        callout = ctk.CTkFrame(
-            f, fg_color=INFO_BG,
-            corner_radius=8, border_width=1, border_color=INFO_BORDER,
-        )
-        callout.pack(fill="x", pady=(0, 16))
-
-        inner = ctk.CTkFrame(callout, fg_color="transparent")
-        inner.pack(padx=16, pady=12, fill="x")
-
+        # ── Hero: icon + heading ───────────────────────────────────────────
+        hero = ctk.CTkFrame(f, fg_color="transparent")
+        hero.pack(fill="x", pady=(0, 18))
         ctk.CTkLabel(
-            inner,
-            text="You need an active license key to use Apex Quantel.",
-            font=ctk.CTkFont(size=13, weight="bold"), text_color=INFO, anchor="w",
+            hero, text="🔑",
+            font=ctk.CTkFont(size=32),
         ).pack(anchor="w")
         ctk.CTkLabel(
-            inner,
-            text="Purchase or manage your license key from the Apex web dashboard.",
-            font=ctk.CTkFont(size=12), text_color=TEXT_SOFT, anchor="w",
+            hero, text="Activate your license",
+            font=ctk.CTkFont(size=20, weight="bold"), text_color=TEXT, anchor="w",
+        ).pack(anchor="w", pady=(4, 2))
+        ctk.CTkLabel(
+            hero,
+            text="Paste the key from your Apex Quantel dashboard to unlock trading signals.",
+            font=ctk.CTkFont(size=12), text_color=MUTED, anchor="w",
             wraplength=680, justify="left",
-        ).pack(anchor="w", pady=(4, 8))
-
-        PrimaryButton(
-            inner, text="Open Web Dashboard", tone="info",
-            width=200, height=34,
-            command=self.wizard.open_dashboard,
         ).pack(anchor="w")
 
-        # ── Key input ──────────────────────────────────────────────────────
+        # ── Full-width key entry ───────────────────────────────────────────
+        key_wrap = ctk.CTkFrame(
+            f, fg_color=SURFACE_RAISED, corner_radius=10,
+            border_width=1, border_color=LINE_STRONG,
+        )
+        key_wrap.pack(fill="x", pady=(0, 4))
+        key_inner = ctk.CTkFrame(key_wrap, fg_color="transparent")
+        key_inner.pack(fill="x", padx=14, pady=10)
+
         ctk.CTkLabel(
-            f,
-            text="Already have a key? Enter it below:",
-            font=ctk.CTkFont(size=12), text_color=MUTED,
-        ).pack(anchor="w", pady=(0, 8))
+            key_inner, text="LICENSE KEY",
+            font=ctk.CTkFont(size=10, weight="bold"), text_color=MUTED, anchor="w",
+        ).pack(anchor="w", pady=(0, 6))
 
-        key_card = SectionCard(f)
-        key_card.pack(fill="x", pady=(0, 8))
-
+        entry_row = ctk.CTkFrame(key_inner, fg_color="transparent")
+        entry_row.pack(fill="x")
         self._var_key = tk.StringVar()
-        labeled_field(
-            key_card.body, "License key", self._var_key,
-            masked=True, placeholder="Paste your license key here",
-            width=320,
+        self._key_entry = ctk.CTkEntry(
+            entry_row, textvariable=self._var_key, show="●",
+            font=ctk.CTkFont(family="Consolas", size=13),
+            placeholder_text="Paste your license key here",
+            height=44, corner_radius=8,
+        )
+        self._key_entry.pack(side="left", fill="x", expand=True)
+        self._btn_verify = PrimaryButton(
+            entry_row, text="Verify Key", tone="info",
+            width=120, height=44,
+            command=self._verify,
+        )
+        self._btn_verify.pack(side="left", padx=(10, 0))
+
+        # ── Dashboard link row ─────────────────────────────────────────────
+        dash_row = ctk.CTkFrame(f, fg_color="transparent")
+        dash_row.pack(fill="x", pady=(2, 0))
+        ctk.CTkLabel(
+            dash_row, text="Don't have a key?",
+            font=ctk.CTkFont(size=11), text_color=MUTED,
+        ).pack(side="left")
+        ctk.CTkButton(
+            dash_row, text="Open Web Dashboard →",
+            font=ctk.CTkFont(size=11), text_color=INFO,
+            fg_color="transparent", hover_color=LINE_STRONG,
+            height=24, width=0,
+            command=self.wizard.open_dashboard,
+        ).pack(side="left", padx=(6, 0))
+
+        # ── Inline status (spinner / result card) ──────────────────────────
+        self._lbl_checking = ctk.CTkLabel(
+            f, text="Verifying…",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
         )
 
-        # ── Connection server (advanced toggle) ────────────────────────────
+        self._result_card = ctk.CTkFrame(
+            f, corner_radius=8, border_width=1,
+            fg_color=SUCCESS_BG, border_color=SUCCESS_BORDER,
+        )
+        _rc_inner = ctk.CTkFrame(self._result_card, fg_color="transparent")
+        _rc_inner.pack(padx=14, pady=12, fill="x")
+        self._lbl_result_main = ctk.CTkLabel(
+            _rc_inner, text="",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=GREEN, anchor="w",
+        )
+        self._lbl_result_main.pack(anchor="w")
+        self._lbl_result_detail = ctk.CTkLabel(
+            _rc_inner, text="",
+            font=ctk.CTkFont(size=11), text_color=TEXT_SOFT, anchor="w",
+        )
+        self._lbl_result_detail.pack(anchor="w", pady=(3, 0))
+
+        # ── Advanced: connection server override ───────────────────────────
         self._adv_visible = False
-        ctk.CTkButton(
+        self._adv_toggle_btn = ctk.CTkButton(
             f, text="▶  Advanced (connection server)",
-            anchor="w", height=26, width=260,
+            anchor="w", height=26, width=240,
             fg_color="transparent", hover_color=LINE_STRONG,
             text_color=MUTED, font=ctk.CTkFont(size=11),
             command=self._toggle_adv,
-        ).pack(anchor="w", pady=(4, 0))
+        )
+        self._adv_toggle_btn.pack(anchor="w", pady=(6, 0))
 
         self._adv_frame = ctk.CTkFrame(
-            f, fg_color=BASE,
-            corner_radius=6, border_width=1, border_color=LINE,
+            f, fg_color=BASE, corner_radius=6,
+            border_width=1, border_color=LINE,
         )
         adv_inner = ctk.CTkFrame(self._adv_frame, fg_color="transparent")
         adv_inner.pack(padx=12, pady=10, fill="x")
-
         ctk.CTkLabel(
             adv_inner,
-            text="Connection server",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT,
-            anchor="w",
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            adv_inner,
-            text="The WebSocket server address from your account dashboard. "
-                 "Leave blank to use the pre-configured default.",
+            text="Override the gateway WebSocket URL. Leave blank to use the default.",
             font=ctk.CTkFont(size=11), text_color=MUTED,
             wraplength=600, justify="left",
-        ).pack(anchor="w", pady=(2, 8))
-
+        ).pack(anchor="w", pady=(0, 6))
         self._var_url = tk.StringVar()
-        url_row = ctk.CTkFrame(adv_inner, fg_color="transparent")
-        url_row.pack(fill="x")
         ctk.CTkEntry(
-            url_row, textvariable=self._var_url, width=400,
-            font=ctk.CTkFont(family="Consolas", size=11),
-            placeholder_text="wss://gateway.somicast.com",
-        ).pack(side="left")
+            adv_inner, textvariable=self._var_url,
+            font=ctk.CTkFont(family="Consolas", size=11), height=32,
+            placeholder_text=_DEFAULT_GW_WS_URL,
+        ).pack(fill="x")
 
+        # ── Banner (errors / warnings) ─────────────────────────────────────
         self._banner = ActionBanner(f)
         self._banner.pack(fill="x", pady=(8, 0))
         self._banner.hide()
 
+        # ── Symbol toggles (built dynamically on verify) ───────────────────
+        self._symbols_frame = ctk.CTkFrame(f, fg_color="transparent")
+
     def on_enter(self, cfg: dict, data: dict) -> None:
         gw = cfg.get("gateway", {})
-        self._var_url.set(str(gw.get("ws_url", "")))
-        self._var_key.set(str(gw.get("activation_key", "")))
+        self._gateway_ws_url = str(gw.get("ws_url") or _DEFAULT_GW_WS_URL)
+        self._var_url.set(self._gateway_ws_url if self._gateway_ws_url != _DEFAULT_GW_WS_URL else "")
+        key = str(gw.get("activation_key", ""))
+        self._var_key.set(key)
+        cached = data.get("_preflight")
+        if cached and data.get("_preflight_key") == key and key:
+            self._preflight = cached
+            self._show_verified(cached)
+        else:
+            self._set_state("idle")
 
     def _toggle_adv(self) -> None:
         self._adv_visible = not self._adv_visible
         if self._adv_visible:
-            self._adv_frame.pack(fill="x", pady=(6, 0))
+            self._adv_toggle_btn.configure(text="▼  Advanced (connection server)")
+            self._adv_frame.pack(fill="x", pady=(4, 0))
         else:
+            self._adv_toggle_btn.configure(text="▶  Advanced (connection server)")
             self._adv_frame.pack_forget()
 
-    def validate_and_save(self, config: "ConfigManager", data: dict) -> tuple:
-        key = self._var_key.get().strip()
-        url = self._var_url.get().strip()
+    # ── Verification flow ──────────────────────────────────────────────────
 
+    def _verify(self) -> None:
+        key = self._var_key.get().strip()
         if not key:
+            self._banner.show("Enter your license key first.", "warn")
+            return
+        if len(key) < 16:
             self._banner.show(
-                "License key is required. Open the web dashboard to get yours.",
-                "warn",
+                "Key looks too short — check you copied it correctly.", "warn",
+            )
+            return
+        self._banner.hide()
+        self._set_state("checking")
+
+        # URL override takes priority over whatever is in config
+        url_override = self._var_url.get().strip()
+        ws_url = url_override if url_override else self._gateway_ws_url
+
+        def _do() -> None:
+            try:
+                result = _http_preflight(ws_url, key)
+                self.after(0, lambda: self._on_preflight_ok(result))
+            except Exception as exc:
+                self.after(0, lambda e=str(exc): self._on_preflight_err(e))
+
+        import threading
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_preflight_ok(self, result: dict) -> None:
+        if not result.get("valid"):
+            status = result.get("status", "")
+            if status == "suspended":
+                msg = "This license has been suspended. Contact support to reactivate."
+            elif status == "expired":
+                msg = "This license has expired. Renew it from the web dashboard."
+            else:
+                msg = "Key not recognised — check you copied it correctly and try again."
+            self._set_state("error")
+            self._banner.show(msg, "danger")
+            return
+        self._preflight = result
+        self._show_verified(result)
+
+    def _on_preflight_err(self, error: str) -> None:
+        self._set_state("error")
+        err_lower = error.lower()
+        if "403" in error or "forbidden" in err_lower:
+            msg = (
+                "Gateway refused the request (403).\n"
+                "If you're testing locally, expand Advanced below and set the "
+                "connection server to ws://localhost:4000/engine."
+            )
+        elif "404" in error or "not found" in err_lower:
+            msg = (
+                "Gateway endpoint not found (404).\n"
+                "Check the connection server URL under Advanced below."
+            )
+        elif "timed out" in err_lower or "timeout" in err_lower:
+            msg = "Connection timed out — check your internet connection and try again."
+        else:
+            msg = (
+                f"Could not reach the gateway: {error}\n"
+                "If testing locally, expand Advanced below and set the gateway URL."
+            )
+        self._banner.show(msg, "danger")
+
+    def _show_verified(self, result: dict) -> None:
+        # Determine card colour based on device availability
+        avail = result.get("available_devices", 1)
+        if avail == 0:
+            card_bg, card_border = WARNING_BG, WARNING_BORDER
+            main_color = YELLOW
+            main_text  = "⚠  Device limit reached"
+        else:
+            card_bg, card_border = SUCCESS_BG, SUCCESS_BORDER
+            main_color = GREEN
+            main_text  = "✓  License active"
+
+        self._result_card.configure(fg_color=card_bg, border_color=card_border)
+        self._lbl_result_main.configure(text=main_text, text_color=main_color)
+
+        parts: list[str] = []
+        if result.get("expires_at"):
+            try:
+                from datetime import datetime
+                raw = result["expires_at"].replace("Z", "+00:00")
+                dt  = datetime.fromisoformat(raw)
+                parts.append(f"Expires {dt.strftime('%d %b %Y')}")
+            except Exception:
+                pass
+        used  = result.get("used_devices", 0)
+        max_d = result.get("max_devices", 0)
+        if max_d:
+            parts.append(
+                f"{used} of {max_d} device{'s' if max_d != 1 else ''} used"
+            )
+        self._lbl_result_detail.configure(
+            text="  ·  ".join(parts) if parts else "",
+        )
+
+        symbols = result.get("symbols") or ["XAUUSD"]
+        self._set_state("verified")
+        self._build_symbol_toggles(symbols)
+
+    # ── Symbol toggle panel ────────────────────────────────────────────────
+
+    def _build_symbol_toggles(self, symbols: list[str]) -> None:
+        for w in self._symbols_frame.winfo_children():
+            w.destroy()
+        self._sym_vars = {}
+
+        # Load previously saved selection so toggles reflect current config
+        try:
+            saved_syms = set(self.wizard._cfg.load().get("gateway", {}).get("symbols", []))
+        except Exception:
+            saved_syms = set()
+
+        ctk.CTkLabel(
+            self._symbols_frame,
+            text="TRADING PAIRS",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color=MUTED, anchor="w",
+        ).pack(anchor="w", pady=(16, 2))
+        ctk.CTkLabel(
+            self._symbols_frame,
+            text="Select the pairs you want to receive signals for. "
+                 "You can change this later in Settings.",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
+            wraplength=660, justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+
+        for sym in symbols:
+            default_on = (sym in saved_syms) if saved_syms else True
+            var = tk.BooleanVar(value=default_on)
+            self._sym_vars[sym] = var
+
+            row = ctk.CTkFrame(
+                self._symbols_frame,
+                fg_color=SURFACE_RAISED, corner_radius=8,
+                border_width=1, border_color=LINE,
+            )
+            row.pack(fill="x", pady=4)
+            inner = ctk.CTkFrame(row, fg_color="transparent")
+            inner.pack(padx=14, pady=10, fill="x")
+
+            col = ctk.CTkFrame(inner, fg_color="transparent")
+            col.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                col, text=sym,
+                font=ctk.CTkFont(size=13, weight="bold"), text_color=TEXT, anchor="w",
+            ).pack(anchor="w")
+            sub = _SYMBOL_LABELS.get(sym, "")
+            if sub:
+                ctk.CTkLabel(
+                    col, text=sub,
+                    font=ctk.CTkFont(size=11), text_color=MUTED, anchor="w",
+                ).pack(anchor="w", pady=(1, 0))
+
+            ctk.CTkSwitch(
+                inner, text="", variable=var,
+                onvalue=True, offvalue=False, width=46,
+            ).pack(side="right")
+
+        self._symbols_frame.pack(fill="x")
+
+    # ── State machine ──────────────────────────────────────────────────────
+
+    def _set_state(self, state: str) -> None:
+        self._state = state
+        self._lbl_checking.pack_forget()
+        self._result_card.pack_forget()
+        self._symbols_frame.pack_forget()
+
+        if state == "idle":
+            self._key_entry.configure(state="normal")
+            self._btn_verify.configure(state="normal", text="Verify Key")
+
+        elif state == "checking":
+            self._lbl_checking.pack(anchor="w", pady=(8, 0))
+            self._key_entry.configure(state="disabled")
+            self._btn_verify.configure(state="disabled", text="Checking…")
+
+        elif state == "verified":
+            self._result_card.pack(fill="x", pady=(8, 0))
+            self._key_entry.configure(state="normal")
+            self._btn_verify.configure(state="normal", text="Re-verify")
+
+        elif state == "error":
+            self._key_entry.configure(state="normal")
+            self._btn_verify.configure(state="normal", text="Verify Key")
+
+    # ── Validate & save ────────────────────────────────────────────────────
+
+    def validate_and_save(self, config: "ConfigManager", data: dict) -> tuple:
+        if self._state != "verified":
+            self._banner.show(
+                "Click Verify Key to check your license before continuing.", "warn",
             )
             return False, ""
 
-        # If no URL supplied, use config default or leave as-is
-        if not url:
-            existing = config.get("gateway", "ws_url") or ""
-            url = existing
+        if not self._sym_vars:
+            self._banner.show("No trading pairs available for this license.", "warn")
+            return False, ""
 
-        err = config.update("gateway", {"activation_key": key, "ws_url": url})
+        selected = [sym for sym, var in self._sym_vars.items() if var.get()]
+        if not selected:
+            self._banner.show("Enable at least one trading pair.", "warn")
+            return False, ""
+
+        key = self._var_key.get().strip()
+        url_override = self._var_url.get().strip()
+        updates: dict = {"activation_key": key, "symbols": selected}
+        if url_override:
+            updates["ws_url"] = url_override
+        err = config.update("gateway", updates)
         if err:
-            self._banner.show(err, "danger"); return False, err
+            self._banner.show(err, "danger")
+            return False, err
+
+        # Cache for back/forward navigation within the wizard
+        data["_preflight"]     = self._preflight
+        data["_preflight_key"] = key
         self._banner.hide()
         return True, ""
 
@@ -1050,10 +1328,13 @@ class _StepFinish(_WizardStep):
         from src.gui.service_controller import ServiceController, ServiceStatus
         svc_installed = ServiceController().query() != ServiceStatus.NOT_INSTALLED
 
+        syms_raw = gw.get("symbols", [])
+        syms_str = ", ".join(syms_raw) if syms_raw else "—"
         items = [
             ("Trading platform",  mt5.get("path", "—").split("\\")[-2] if mt5.get("path") else "—"),
             ("MT5 account",       f"{mt5.get('login', '—')} @ {mt5.get('server', '—')}"),
-            ("License key",       "Saved  ✓" if gw.get("activation_key") else "Not set"),
+            ("License key",       "Verified  ✓" if gw.get("activation_key") else "Not set"),
+            ("Trading pairs",     syms_str),
             ("Daily loss limit",  f"{risk.get('max_daily_loss_percent', '—')}%"),
             ("AQ Agent",          "Installed  ✓" if svc_installed else "Not installed"),
         ]
@@ -1066,3 +1347,48 @@ class _StepFinish(_WizardStep):
                 font=ctk.CTkFont(size=12), text_color=MUTED).pack(side="left")
             ctk.CTkLabel(row, text=value, anchor="w",
                 font=ctk.CTkFont(size=12), text_color=TEXT_SOFT).pack(side="left")
+
+
+# ── HTTP helper ───────────────────────────────────────────────────────────────
+
+def _http_preflight(ws_url: str, activation_key: str) -> dict:
+    """
+    POST <gateway_http_base>/activation/preflight and return the JSON body.
+    Derives the HTTP base URL from the WebSocket URL stored in config.
+    Raises RuntimeError with a human-readable message on any failure.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+    from urllib.parse import urlparse
+
+    url = ws_url.strip()
+    if url.startswith("wss://"):
+        url = "https://" + url[6:]
+    elif url.startswith("ws://"):
+        url = "http://" + url[5:]
+    parsed   = urlparse(url)
+    http_base = f"{parsed.scheme}://{parsed.netloc}"
+
+    payload = json.dumps({"activation_key": activation_key}).encode()
+    req = urllib.request.Request(
+        f"{http_base}/activation/preflight",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "AQAgent/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read())
+            msg  = body.get("message", str(exc))
+        except Exception:
+            msg = str(exc)
+        raise RuntimeError(msg) from exc
+    except Exception as exc:
+        raise RuntimeError(str(exc)) from exc

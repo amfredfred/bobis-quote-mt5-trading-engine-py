@@ -5,8 +5,9 @@ License key management, internal status display, and service management.
 
 Users can edit:
   - License key (gateway.activation_key)
+  - Trading pairs (gateway.symbols) — toggle per entitlement
 
-Everything else is read-only status — users cannot edit gateway URL, symbols,
+Everything else is read-only status — users cannot edit gateway URL,
 execution parameters, engine internals, or risk guardrails from here.
 """
 from __future__ import annotations
@@ -81,6 +82,28 @@ class AdvancedPage(ctk.CTkScrollableFrame):
             width=160, height=34,
             command=self._save_key,
         ).pack(anchor="w", pady=(12, 0))
+
+        # ── Trading Pairs ─────────────────────────────────────────────────────
+        section_rule(self, "TRADING PAIRS").pack(fill="x", padx=24, pady=(24, 8))
+
+        pairs_card = SectionCard(self)
+        pairs_card.pack(fill="x", padx=24)
+
+        ctk.CTkLabel(
+            pairs_card.body,
+            text="Select the pairs you want to receive signals for. "
+                 "Changes take effect after the engine restarts.",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
+            wraplength=540, justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+
+        self._sym_toggles_wrap = ctk.CTkFrame(pairs_card.body, fg_color="transparent")
+        self._sym_toggles_wrap.pack(fill="x")
+        self._sym_vars: dict[str, tk.BooleanVar] = {}
+
+        self._pairs_banner = ActionBanner(self)
+        self._pairs_banner.pack(fill="x", padx=24, pady=(4, 0))
+        self._pairs_banner.hide()
 
         # ── Gateway Status ────────────────────────────────────────────────────
         section_rule(self, "GATEWAY STATUS").pack(fill="x", padx=24, pady=(24, 8))
@@ -190,18 +213,86 @@ class AdvancedPage(ctk.CTkScrollableFrame):
         cfg = self.app.config.load(force=True)
         self._var_key.set(cfg.get("gateway", {}).get("activation_key", ""))
         self._refresh_gateway_table(cfg)
+        self._refresh_pair_toggles(cfg)
+
+    def _refresh_pair_toggles(self, cfg: dict) -> None:
+        from src.gui.onboarding import _SYMBOL_LABELS
+        gw = cfg.get("gateway", {})
+        # All symbols the license entitles — stored after preflight during onboarding.
+        # Fall back to current selection + defaults so existing installs still work.
+        known = list(gw.get("symbols", ["XAUUSD"]))
+        enabled = set(known)
+
+        for w in self._sym_toggles_wrap.winfo_children():
+            w.destroy()
+        self._sym_vars.clear()
+
+        if not known:
+            ctk.CTkLabel(
+                self._sym_toggles_wrap,
+                text="No pairs configured. Re-run setup to configure your license.",
+                font=ctk.CTkFont(size=12), text_color=MUTED,
+            ).pack(anchor="w")
+            return
+
+        for sym in known:
+            var = tk.BooleanVar(value=sym in enabled)
+            self._sym_vars[sym] = var
+
+            row = ctk.CTkFrame(
+                self._sym_toggles_wrap,
+                fg_color=SURFACE_RAISED, corner_radius=8,
+                border_width=1, border_color=LINE,
+            )
+            row.pack(fill="x", pady=3)
+            inner = ctk.CTkFrame(row, fg_color="transparent")
+            inner.pack(padx=14, pady=8, fill="x")
+
+            col = ctk.CTkFrame(inner, fg_color="transparent")
+            col.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                col, text=sym,
+                font=ctk.CTkFont(size=13, weight="bold"), text_color=TEXT, anchor="w",
+            ).pack(anchor="w")
+            sub = _SYMBOL_LABELS.get(sym, "")
+            if sub:
+                ctk.CTkLabel(
+                    col, text=sub,
+                    font=ctk.CTkFont(size=11), text_color=MUTED, anchor="w",
+                ).pack(anchor="w")
+
+            ctk.CTkSwitch(
+                inner, text="", variable=var,
+                onvalue=True, offvalue=False, width=46,
+                command=self._save_pairs,
+            ).pack(side="right")
 
     def _refresh_gateway_table(self, cfg: dict) -> None:
-        gw  = cfg.get("gateway", {})
-        raw = gw.get("symbols", ["XAUUSD"])
-        symbols = ", ".join(raw) if isinstance(raw, list) else str(raw)
+        gw      = cfg.get("gateway", {})
         version = gw.get("engine_version", "—")
-
         for widget in self._gw_table.winfo_children():
             widget.destroy()
-        self._gw_table.add_row("Gateway URL",     gw.get("ws_url", "—"))
-        self._gw_table.add_row("Engine Version",  version)
-        self._gw_table.add_row("Active Symbols",  symbols)
+        self._gw_table.add_row("Gateway URL",    gw.get("ws_url", "—"))
+        self._gw_table.add_row("Engine Version", version)
+
+    def _save_pairs(self) -> None:
+        selected = [sym for sym, var in self._sym_vars.items() if var.get()]
+        if not selected:
+            self._pairs_banner.show("At least one pair must be enabled.", "warn")
+            # Re-check the first var to keep at least one on
+            if self._sym_vars:
+                first = next(iter(self._sym_vars))
+                self._sym_vars[first].set(True)
+            return
+        err = self.app.config.update("gateway", {"symbols": selected})
+        if err:
+            self._pairs_banner.show(err, "danger")
+        else:
+            self._pairs_banner.show(
+                "Pairs saved — restart the engine for changes to take effect.",
+                "good",
+                auto_dismiss_after_ms=4000,
+            )
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
