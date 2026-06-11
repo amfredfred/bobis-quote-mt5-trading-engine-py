@@ -22,6 +22,70 @@ class _LossTracker:
         return 100.0
 
 
+def _account() -> AccountInfo:
+    return AccountInfo(
+        login=1,
+        server="test",
+        currency="USD",
+        balance=10_000.0,
+        equity=10_000.0,
+        margin=0.0,
+        free_margin=10_000.0,
+        margin_level=0.0,
+        leverage=100,
+    )
+
+
+def _planner() -> TradePlanner:
+    return TradePlanner(
+        RiskConfig(
+            max_losing_streak=3,
+            max_daily_loss_percent=2.0,
+            max_exposure_per_symbol=2,
+            min_rr_ratio=1.0,
+            max_lot_size=100.0,
+            min_lot_size=0.01,
+            sl_ratio_threshold=0.35,
+            symbol_sl_ratio_threshold={},
+        ),
+        ExecutionConfig(
+            tp1_trigger_pct=50.0,
+            tp1_percentage=0.0,
+            move_sl_to_be_on_tp1=True,
+            slippage=10,
+            magic=12345,
+            comment="test",
+            spread_risk_multiplier=0.0,
+            order_retry_count=0,
+            max_entry_slippage_pct_of_stop=0.0,
+            close_on_slippage_exceed=False,
+            order_retry_delay_sec=0.0,
+            tf_overrides={},
+        ),
+        _LossTracker(),
+    )
+
+
+def test_planner_records_applied_risk_multiplier_and_scales_size():
+    planner = _planner()
+    sig = _signal(htf_interval="1min", ltf_interval="1min")
+
+    full = planner.plan(sig, _account(), _symbol_info())
+    half = planner.plan(sig, _account(), _symbol_info(), risk_multiplier=0.5)
+
+    assert full.risk_multiplier == 1.0
+    assert half.risk_multiplier == 0.5
+    assert half.risk_amount == full.risk_amount * 0.5
+    assert half.lot_size == full.lot_size * 0.5
+
+
+def test_planner_clamps_risk_multiplier_to_one():
+    planner = _planner()
+    sig = _signal(htf_interval="1min", ltf_interval="1min")
+    plan = planner.plan(sig, _account(), _symbol_info(), risk_multiplier=1.7)
+    assert plan.risk_multiplier == 1.0
+
+
 def test_planner_uses_symbol_and_timeframe_specific_tp1_trigger_pct():
     planner = TradePlanner(
         RiskConfig(

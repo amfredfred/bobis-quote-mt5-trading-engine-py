@@ -52,6 +52,9 @@ class TradePlan:
     signal: "InboundSignal"
     # Lots to partially close when price hits tp1.  0.0 = disabled.
     tp1_lots: float = 0.0
+    # Risk multiplier actually applied when sizing (cluster × equity throttle).
+    # Persisted so closed-trade R contributions can be rebuilt after restart.
+    risk_multiplier: float = 1.0
 
 
 @dataclass
@@ -130,6 +133,7 @@ class Trade:
                 "riskAmount": self.plan.risk_amount,
                 "riskPercent": self.plan.risk_percent,
                 "riskRewardRatio": self.plan.risk_reward_ratio,
+                "riskMultiplier": self.plan.risk_multiplier,
             },
         }
 

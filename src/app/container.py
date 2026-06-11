@@ -24,6 +24,7 @@ from src.positions.manager import PositionManager
 from src.positions.store import PositionStore
 from src.risk.cluster_tracker import ClusterRiskTracker
 from src.risk.engine import RiskEngine
+from src.risk.equity_throttle import EquityThrottleTracker
 from src.risk.loss_tracker import LossTracker
 from src.signals.consumer import SignalConsumer
 from src.signals.queue import SignalQueue
@@ -49,6 +50,7 @@ class AppContainer:
     strategy_router: StrategyRouter
     loss_tracker: LossTracker
     cluster_tracker: ClusterRiskTracker
+    equity_throttle: EquityThrottleTracker
     ui_bridge: "UIBridge | None" = None
 
 
@@ -80,7 +82,13 @@ def build_container(config: AppConfig) -> AppContainer:
         config=config.risk.cluster_risk,
         engine_tz=config.engine_timezone,
     )
-    risk_engine = RiskEngine(config.risk, loss_tracker=loss_tracker, cluster_tracker=cluster_tracker)
+    equity_throttle = EquityThrottleTracker(config.risk.equity_throttle)
+    risk_engine = RiskEngine(
+        config.risk,
+        loss_tracker=loss_tracker,
+        cluster_tracker=cluster_tracker,
+        equity_throttle=equity_throttle,
+    )
     trade_planner = TradePlanner(config.risk, config.execution, loss_tracker)
     order_manager = OrderManager(mt5_orders, mt5_positions, config.execution)
 
@@ -145,4 +153,5 @@ def build_container(config: AppConfig) -> AppContainer:
         strategy_router=strategy_router,
         loss_tracker=loss_tracker,
         cluster_tracker=cluster_tracker,
+        equity_throttle=equity_throttle,
     )

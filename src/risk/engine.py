@@ -21,6 +21,7 @@ from .rules import ALL_RULES, RuleContext, RuleResult, RiskRule
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
     from src.risk.cluster_tracker import ClusterRiskTracker
+    from src.risk.equity_throttle import EquityThrottleTracker
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,13 @@ class RiskEngine:
         rules: Optional[List[RiskRule]] = None,
         loss_tracker: Optional["LossTracker"] = None,
         cluster_tracker: Optional["ClusterRiskTracker"] = None,
+        equity_throttle: Optional["EquityThrottleTracker"] = None,
     ) -> None:
         self._config = config
         self._rules = rules if rules is not None else ALL_RULES
         self._loss_tracker = loss_tracker
         self._cluster_tracker = cluster_tracker
+        self._equity_throttle = equity_throttle
 
     def set_loss_tracker(self, tracker: "LossTracker") -> None:
         """Wire in LossTracker after construction (container convenience)."""
@@ -77,6 +80,7 @@ class RiskEngine:
             symbol_info=symbol_info,  # type: ignore[arg-type]
             loss_tracker=self._loss_tracker,
             cluster_tracker=self._cluster_tracker,
+            equity_throttle=self._equity_throttle,
         )
 
         decision_data: dict = {}
@@ -121,6 +125,15 @@ class RiskEngine:
 
             decision_data.update(result.data)
 
+        # Compose the equity-throttle multiplier multiplicatively with the
+        # cluster multiplier — a plain dict update would overwrite one with
+        # the other.
+        throttle_mult = float(decision_data.pop("equity_throttle_multiplier", 1.0))
+        if throttle_mult < 1.0:
+            decision_data["risk_multiplier"] = (
+                float(decision_data.get("risk_multiplier", 1.0)) * throttle_mult
+            )
+
         logger.info(
             "Risk approved",
             extra={
@@ -130,6 +143,7 @@ class RiskEngine:
                 "rr": signal.risk_reward_ratio,
                 "risk_multiplier": decision_data.get("risk_multiplier", 1.0),
                 "cluster_name": decision_data.get("cluster_name"),
+                "equity_throttle_dd_r": decision_data.get("equity_throttle_dd_r"),
             },
         )
         metrics.increment("risk.approved")

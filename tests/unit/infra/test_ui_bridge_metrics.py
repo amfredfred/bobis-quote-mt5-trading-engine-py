@@ -9,6 +9,74 @@ class _Queue:
         return 0
 
 
+def _throttle_stats(**overrides) -> dict:
+    stats = {
+        "enabled": True,
+        "engaged": False,
+        "multiplier": 1.0,
+        "drawdown_r": 0.0,
+        "threshold_r": 8.0,
+        "release_r": 6.0,
+        "window_days": 30,
+        "samples": 0,
+    }
+    stats.update(overrides)
+    return stats
+
+
+def _guards_config() -> SimpleNamespace:
+    return SimpleNamespace(
+        risk=SimpleNamespace(
+            max_daily_loss_percent=2.5,
+            max_equity_drawdown_percent=2.0,
+            rolling_window_size=2,
+            rolling_drawdown_pct=2.0,
+            cluster_risk=SimpleNamespace(enabled=False, groups=[]),
+        )
+    )
+
+
+def _guards_bridge(throttle_stats: dict) -> UIBridge:
+    bridge = UIBridge.__new__(UIBridge)
+    bridge._container = SimpleNamespace(
+        cluster_tracker=SimpleNamespace(stats=lambda: {}),
+        equity_throttle=SimpleNamespace(stats=lambda: throttle_stats),
+    )
+    return bridge
+
+
+_LT = {
+    "daily_loss_pct": 0.0,
+    "equity_drawdown_pct": 0.0,
+    "paused": False,
+    "pause_reason": "",
+}
+
+
+def test_risk_guards_include_engaged_equity_throttle() -> None:
+    bridge = _guards_bridge(
+        _throttle_stats(engaged=True, multiplier=0.5, drawdown_r=9.2, samples=120)
+    )
+    guards = bridge._build_risk_guards(dict(_LT), _guards_config())
+
+    g5 = next(g for g in guards if g["id"] == "guard5")
+    assert g5["name"] == "EQUITY THROTTLE"
+    assert g5["status"] == "ACTIVE"
+    assert g5["unit"] == "R"
+    assert g5["current_value"] == 9.2
+    assert g5["threshold"] == 8.0
+    assert "Sizing at 0.5×" in g5["description"]
+
+
+def test_risk_guards_equity_throttle_disabled_state() -> None:
+    bridge = _guards_bridge(_throttle_stats(enabled=False))
+    guards = bridge._build_risk_guards(dict(_LT), _guards_config())
+
+    g5 = next(g for g in guards if g["id"] == "guard5")
+    assert g5["status"] == "DISABLED"
+    assert "Halves risk" in g5["description"]
+
+
 class _Repo:
     def __init__(self, trades: list | None = None) -> None:
         self._trades = trades or []

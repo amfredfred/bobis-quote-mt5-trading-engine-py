@@ -33,6 +33,7 @@ from src.utils.symbol import normalise_symbol
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
     from src.risk.cluster_tracker import ClusterRiskTracker
+    from src.risk.equity_throttle import EquityThrottleTracker
 
 _UNKNOWN_SIGNAL_ID = "unknown"
 
@@ -48,6 +49,7 @@ class RuleContext:
     symbol_info: SymbolInfo
     loss_tracker: Optional["LossTracker"] = field(default=None)
     cluster_tracker: Optional["ClusterRiskTracker"] = field(default=None)
+    equity_throttle: Optional["EquityThrottleTracker"] = field(default=None)
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,29 @@ def cluster_risk_rule(ctx: RuleContext) -> RuleResult:
             "planned_cluster_risk_r": preview.planned_risk_r,
         },
     )
+
+
+def equity_throttle_rule(ctx: RuleContext) -> RuleResult:
+    """Equity-curve drawdown throttle — scales risk, never rejects.
+
+    While the rolling R-equity is deep below its window peak the tracker
+    returns a multiplier < 1.0; RiskEngine composes it multiplicatively
+    with the cluster multiplier after the rule loop (a plain data update
+    would let one overwrite the other).
+    """
+    if ctx.equity_throttle is None:
+        return RuleResult(approved=True)
+
+    preview = ctx.equity_throttle.preview()
+    if preview.multiplier < 1.0:
+        return RuleResult(
+            approved=True,
+            data={
+                "equity_throttle_multiplier": preview.multiplier,
+                "equity_throttle_dd_r": round(preview.drawdown_r, 4),
+            },
+        )
+    return RuleResult(approved=True)
 
 
 def no_hedging_rule(ctx: RuleContext) -> RuleResult:
@@ -394,6 +419,7 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
 ALL_RULES: List[RiskRule] = [
     loss_guard_rule,      # memory-only: paused state check
     cluster_risk_rule,    # memory-only: shared cluster budget
+    equity_throttle_rule, # memory-only: equity-curve drawdown sizing
     no_hedging_rule,      # memory-only: open trades scan
     max_open_trades_rule,      # memory-only: counter check
     max_symbol_exposure_rule,  # memory-only: counter check

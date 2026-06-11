@@ -253,6 +253,11 @@ class Database:
                         "riskAmount": trade.plan.risk_amount,
                         "riskPercent": trade.plan.risk_percent,
                         "riskRewardRatio": trade.plan.risk_reward_ratio,
+                        "riskMultiplier": getattr(trade.plan, "risk_multiplier", 1.0),
+                        # Originals — the trades.stop_loss column is mutated to
+                        # breakeven after TP1, so R rebuilds need these.
+                        "entryPrice": trade.plan.entry_price,
+                        "stopLoss": trade.plan.stop_loss,
                     }
                 )
             except Exception:
@@ -345,6 +350,26 @@ class Database:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.execute("SELECT * FROM trades ORDER BY opened_at DESC")
+            return [dict(row) for row in cur.fetchall()]
+
+    def load_closed_trades_since(self, ts_ms: int) -> list[dict]:
+        """Closed trades with a realized R outcome, oldest first.
+
+        Used to rebuild the equity-throttle rolling window after a restart.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                """
+                SELECT * FROM trades
+                WHERE status = 'CLOSED'
+                  AND realized_rr IS NOT NULL
+                  AND closed_at IS NOT NULL
+                  AND closed_at >= ?
+                ORDER BY closed_at ASC
+            """,
+                (int(ts_ms),),
+            )
             return [dict(row) for row in cur.fetchall()]
 
     # ── Signals ───────────────────────────────────────────────────────────

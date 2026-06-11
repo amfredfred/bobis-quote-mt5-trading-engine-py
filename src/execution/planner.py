@@ -103,7 +103,8 @@ class TradePlanner:
         base_risk_amount = self._loss_tracker.daily_risk_amount(
             self._risk.max_losing_streak
         )
-        risk_amount = base_risk_amount * max(0.0, min(1.0, risk_multiplier))
+        clamped_multiplier = max(0.0, min(1.0, risk_multiplier))
+        risk_amount = base_risk_amount * clamped_multiplier
 
         # ── Lot size calculation ───────────────────────────────────────────
         calc = calculate_lot_size(
@@ -179,6 +180,7 @@ class TradePlanner:
             risk_reward_ratio=signal.risk_reward_ratio,
             planned_at=now_ms(),
             signal=signal,
+            risk_multiplier=clamped_multiplier,
         )
 
         logger.info(

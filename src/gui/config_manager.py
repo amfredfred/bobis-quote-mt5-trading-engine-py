@@ -40,6 +40,7 @@ _ALLOWED_USER_PATHS: frozenset = frozenset({
     "risk.max_equity_drawdown_percent",
     "risk.max_lot_size",
     "risk.no_hedging",
+    "risk.equity_throttle.enabled",
     "startup.auto_start_engine",
     "startup.minimise_on_start",
 })
@@ -168,6 +169,12 @@ class ConfigManager:
                     errors.append("Max Losing Streak must be between 1 and 10.")
             except (TypeError, ValueError):
                 errors.append("Max Losing Streak must be a number.")
+
+        throttle = risk.get("equity_throttle")
+        if isinstance(throttle, dict):
+            enabled = throttle.get("enabled")
+            if enabled is not None and not isinstance(enabled, (bool, int)):
+                errors.append("Drawdown Risk Throttle must be On or Off.")
 
         return errors
 

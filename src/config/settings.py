@@ -26,10 +26,36 @@ from src.utils.symbol import normalise_symbol
 # user_settings.yaml (containing only the allowed user paths) still produces a
 # fully-populated AppConfig.
 
+
+def _resolve_engine_version() -> str:
+    """Best-effort read of version.txt (exe dir, cwd, repo root).
+
+    The packaged build ships version.txt beside the exe (engine.spec) and the
+    auto-updater rewrites it, so this is the single source of truth for the
+    version the engine reports in its gateway handshake.
+    """
+    import sys
+
+    candidates = [
+        Path(sys.executable).parent / "version.txt",
+        Path("version.txt"),
+        Path(__file__).resolve().parents[2] / "version.txt",
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                version = candidate.read_text(encoding="utf-8-sig").strip()
+                if version:
+                    return version
+        except Exception:
+            continue
+    return "0.1.0"
+
+
 _INTERNAL_DEFAULTS: dict = {
     "gateway": {
         "ws_url": "wss://apex-gateway.somicast.com/engine",
-        "engine_version": "0.1.0",
+        "engine_version": _resolve_engine_version(),
         "room_ttl_seconds": 3600,
         "symbols": ["XAUUSD"],
     },
@@ -50,6 +76,13 @@ _INTERNAL_DEFAULTS: dict = {
         },
         "rolling_window_size": 2,
         "rolling_drawdown_pct": 2.0,
+        "equity_throttle": {
+            "enabled": True,
+            "drawdown_threshold_r": 8.0,
+            "release_threshold_r": 6.0,
+            "risk_multiplier": 0.5,
+            "window_days": 30,
+        },
         "cluster_risk": {
             "enabled": False,
             "groups": [
@@ -233,6 +266,56 @@ class ClusterRiskConfig:
     groups: tuple[ClusterGroupConfig, ...] = ()
 
 
+@dataclass(frozen=True)
+class EquityThrottleConfig:
+    """Equity-curve risk throttle — platform-internal except `enabled`.
+
+    Sizes new positions at `risk_multiplier` while the rolling R-equity of
+    closed trades sits more than `drawdown_threshold_r` below its window
+    peak; releases once drawdown recovers below `release_threshold_r`.
+    """
+
+    enabled: bool = True
+    drawdown_threshold_r: float = 8.0
+    release_threshold_r: float = 6.0
+    risk_multiplier: float = 0.5
+    window_days: int = 30
+
+    def __post_init__(self) -> None:
+        if self.drawdown_threshold_r <= 0:
+            raise ValueError("risk.equity_throttle.drawdown_threshold_r must be > 0.")
+        if not (0 < self.release_threshold_r <= self.drawdown_threshold_r):
+            raise ValueError(
+                "risk.equity_throttle.release_threshold_r must be > 0 and "
+                "<= drawdown_threshold_r."
+            )
+        if not (0 < self.risk_multiplier <= 1.0):
+            raise ValueError(
+                "risk.equity_throttle.risk_multiplier must be in (0, 1]."
+            )
+        if self.window_days < 1:
+            raise ValueError("risk.equity_throttle.window_days must be >= 1.")
+
+
+def _parse_equity_throttle(raw: Any) -> "EquityThrottleConfig":
+    if not raw:
+        return EquityThrottleConfig()
+    if not isinstance(raw, dict):
+        raise ValueError("risk.equity_throttle must be a mapping.")
+    defaults = EquityThrottleConfig()
+    return EquityThrottleConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        drawdown_threshold_r=float(
+            raw.get("drawdown_threshold_r", defaults.drawdown_threshold_r)
+        ),
+        release_threshold_r=float(
+            raw.get("release_threshold_r", defaults.release_threshold_r)
+        ),
+        risk_multiplier=float(raw.get("risk_multiplier", defaults.risk_multiplier)),
+        window_days=int(raw.get("window_days", defaults.window_days)),
+    )
+
+
 def _parse_cluster_risk(raw: Any) -> "ClusterRiskConfig":
     if not raw:
         return ClusterRiskConfig(enabled=False)
@@ -290,6 +373,7 @@ class RiskConfig:
     rolling_window_size: int = 0
     rolling_drawdown_pct: float = 0.0
     cluster_risk: ClusterRiskConfig = field(default_factory=ClusterRiskConfig)
+    equity_throttle: EquityThrottleConfig = field(default_factory=EquityThrottleConfig)
 
     def __post_init__(self) -> None:
         if self.max_losing_streak < 1:
@@ -502,6 +586,7 @@ class AppConfig:
                 rolling_window_size=int(risk.get("rolling_window_size", 0)),
                 rolling_drawdown_pct=float(risk.get("rolling_drawdown_pct", 0.0)),
                 cluster_risk=_parse_cluster_risk(risk.get("cluster_risk")),
+                equity_throttle=_parse_equity_throttle(risk.get("equity_throttle")),
             ),
             execution=ExecutionConfig(
                 tp1_trigger_pct=float(exe["tp1_trigger_pct"]),

@@ -522,6 +522,13 @@ class UIBridge:
                 "max_equity_drawdown_percent": config.risk.max_equity_drawdown_percent,
                 "rolling_window_size": config.risk.rolling_window_size,
                 "rolling_drawdown_pct": config.risk.rolling_drawdown_pct,
+                "equity_throttle": {
+                    "enabled": config.risk.equity_throttle.enabled,
+                    "drawdown_threshold_r": config.risk.equity_throttle.drawdown_threshold_r,
+                    "release_threshold_r": config.risk.equity_throttle.release_threshold_r,
+                    "risk_multiplier": config.risk.equity_throttle.risk_multiplier,
+                    "window_days": config.risk.equity_throttle.window_days,
+                },
                 "cluster_risk": {
                     "enabled": config.risk.cluster_risk.enabled,
                     "groups": [
@@ -602,7 +609,7 @@ class UIBridge:
             "mode":                    getattr(self._config, "mode", "LIVE"),
             "connected_mt5":           c.mt5_client.is_connected(),
             "connected_signal_engine": True,
-            "version":                 "0.1.0",
+            "version":                 self._config.gateway.engine_version,
             "magic":                   self._config.execution.magic,
         }
 
@@ -632,6 +639,17 @@ class UIBridge:
                 + group_state.get("pending_r", 0.0)
             )
 
+        throttle = self._container.equity_throttle.stats()
+        if throttle.get("engaged"):
+            throttle_desc = (
+                f"Sizing at {throttle['multiplier']:g}× — "
+                f"{throttle['drawdown_r']:.1f}R below {throttle['window_days']}-day peak"
+            )
+        else:
+            throttle_desc = (
+                f"Halves risk when >{throttle['threshold_r']:g}R below rolling peak"
+            )
+
         return [
             {"id": "guard1", "name": "DAILY LOSS",      "description": "Pause until midnight on breach",
              "status": _s("daily loss"),       "current_value": round(daily_loss, 4), "threshold": config.risk.max_daily_loss_percent,    "unit": "%"},
@@ -643,6 +661,9 @@ class UIBridge:
             {"id": "guard4", "name": "CLUSTER RISK",    "description": "Shared risk bucket for correlated symbols",
              "status": "DISABLED" if not cluster_on else "ACTIVE",
              "current_value": round(cluster_used, 4), "threshold": cluster_threshold, "unit": "R"},
+            {"id": "guard5", "name": "EQUITY THROTTLE", "description": throttle_desc,
+             "status": "DISABLED" if not throttle.get("enabled") else "ACTIVE",
+             "current_value": throttle.get("drawdown_r", 0.0), "threshold": throttle.get("threshold_r", 0.0), "unit": "R"},
         ]
 
     def _build_metrics(self) -> dict:

@@ -5,7 +5,7 @@
 gateway:
   ws_url: wss://apex-gateway.somicast.com/engine
   engine_id: execution-demo-001
-  engine_version: 0.1.0
+  # engine_version is platform-managed — resolved from version.txt at startup.
   room_ttl_seconds: 3600
   symbols:
     - XAUUSD
@@ -38,6 +38,12 @@ risk:
   max_equity_drawdown_percent: 2.0
   rolling_window_size: 2
   rolling_drawdown_pct: 2.0
+  # Equity-curve risk throttle — halves position risk while recent realized
+  # results sit deep below their rolling peak, restoring full size on
+  # recovery. Thresholds and window are platform-managed; `enabled` is the
+  # only user-facing knob.
+  equity_throttle:
+    enabled: true
   # Cluster risk guard — caps total intraday risk across correlated symbols.
   # Groups share a daily loss budget; once a loss occurs, subsequent trades
   # in the same group use a reduced risk multiplier until the budget runs out.

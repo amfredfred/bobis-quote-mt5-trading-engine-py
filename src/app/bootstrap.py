@@ -140,6 +140,16 @@ def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
         container.position_store.get_open_trades()
     )
 
+    # Rebuild the equity-throttle rolling window from persisted closed trades
+    throttle_window_ms = (
+        config.risk.equity_throttle.window_days * 86_400_000
+    )
+    container.equity_throttle.hydrate(
+        container.trade_repo.load_closed_trades_since(
+            int(time.time() * 1000) - throttle_window_ms
+        )
+    )
+
     # Prime daily loss tracker
     try:
         loss_pct, start_equity, current_equity = (
@@ -209,6 +219,7 @@ def _wire_events(container: AppContainer) -> None:
 
     def on_trade_closed(trade) -> None:
         container.cluster_tracker.mark_trade_closed(trade)
+        container.equity_throttle.record_trade_closed(trade)
 
     container.event_bus.on(Events.TRADE_CLOSED, on_trade_closed)
 

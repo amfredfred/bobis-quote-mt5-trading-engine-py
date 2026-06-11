@@ -87,6 +87,14 @@ class TradeRepository:
                 trades.append(t)
         return trades
 
+    def load_closed_trades_since(self, ts_ms: int) -> List[dict]:
+        """Raw closed-trade rows for equity-throttle hydration (oldest first)."""
+        try:
+            return self._db.load_closed_trades_since(ts_ms)
+        except Exception:
+            logger.exception("TradeRepository: failed to load closed trades")
+            return []
+
     # ── Private ───────────────────────────────────────────────────────────
 
     @staticmethod
@@ -105,8 +113,10 @@ class TradeRepository:
                 signal_id=row.get("signal_id", ""),
                 symbol=row["symbol"],
                 side=OrderSide(row["side"]),
-                entry_price=row.get("entry_price") or 0.0,
-                stop_loss=row.get("stop_loss") or 0.0,
+                # Prefer plan_json originals — the trades.stop_loss column is
+                # mutated to breakeven after TP1.
+                entry_price=plan_d.get("entryPrice") or row.get("entry_price") or 0.0,
+                stop_loss=plan_d.get("stopLoss") or row.get("stop_loss") or 0.0,
                 tp1=row.get("tp1") or 0.0,
                 tp2=row.get("tp2") or 0.0,
                 lot_size=plan_d.get("lotSize", 0.0),
@@ -115,6 +125,7 @@ class TradeRepository:
                 risk_reward_ratio=plan_d.get("riskRewardRatio", 0.0),
                 planned_at=0,
                 signal=None,
+                risk_multiplier=plan_d.get("riskMultiplier", 1.0),
             )
 
             return Trade(
