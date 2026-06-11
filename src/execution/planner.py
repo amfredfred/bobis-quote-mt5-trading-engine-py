@@ -124,10 +124,10 @@ class TradePlanner:
         # so a 5R trade doesn't move SL to BE on a mere 1R move.
         trade_range = abs(signal.tp2 - signal.entry_price)
         tp1_trigger_pct = self._exec.tp1_trigger_pct_for(
-            signal.htf_interval, signal.ltf_interval
+            signal.symbol, signal.htf_interval, signal.ltf_interval
         )
         tp1_percentage = self._exec.tp1_percentage_for(
-            signal.htf_interval, signal.ltf_interval
+            signal.symbol, signal.htf_interval, signal.ltf_interval
         )
         tp1_offset = (tp1_trigger_pct / 100.0) * trade_range
         static_tp1 = (

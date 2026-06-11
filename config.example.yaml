@@ -73,12 +73,24 @@ execution:
   breakeven_spread_multiplier: 1.5
   # Soft cap on extra margin; the buffer will never be clipped below one spread.
   breakeven_max_buffer_pct_of_risk: 10.0
-  # Per-pair overrides use "HTF_minutes/LTF_minutes" from signal htfInterval/ltfInterval.
+  # Per-symbol, per-timeframe TP1 trigger overrides.
+  # Keys: symbol name (or "*" = any symbol), then TF key "HTF/LTF" minutes (or "*" = any TF).
+  # Priority: symbol+TF > symbol+* > *+TF > *+* > global tp1_trigger_pct.
   tf_overrides:
-    "5/5":
-      tp1_trigger_pct: 45.0
-    "30/30":
-      tp1_trigger_pct: 45.0
+    XAUUSD:
+      "5/5":
+        tp1_trigger_pct: 45.0
+      "*":              # fallback for any other TF on XAUUSD
+        tp1_trigger_pct: 50.0
+    US100:
+      "5/5":
+        tp1_trigger_pct: 40.0
+    US500:
+      "5/5":
+        tp1_trigger_pct: 40.0
+    "*":                # wildcard symbol — any symbol not listed above
+      "30/30":
+        tp1_trigger_pct: 45.0
   spread_risk_multiplier: 1.0
   order_retry_count: 2
   order_retry_delay_sec: 0.5

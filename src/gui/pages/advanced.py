@@ -1,31 +1,34 @@
 """
 src/gui/pages/advanced.py
 
-Advanced settings — for technical users and developers only.
+License key management, internal status display, and service management.
 
-Exposes settings that normal users should never need to touch:
-  - Gateway WebSocket URL & activation key
-  - Engine monitoring port
-  - Log level
-  - Signal max age, TP1 trigger, order retry count
+Users can edit:
+  - License key (gateway.activation_key)
 
-The page starts with a clear warning that normal users should not be here.
+Everything else is read-only status — users cannot edit gateway URL, symbols,
+execution parameters, engine internals, or risk guardrails from here.
 """
 from __future__ import annotations
 
+import os
+import subprocess
 import threading
 import tkinter as tk
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
 from src.gui.theme import (
-    GREEN, RED, YELLOW, MUTED, TEXT,
-    SURFACE_RAISED, BASE, LINE, LINE_STRONG,
+    GREEN, RED, YELLOW, INFO, MUTED, TEXT, TEXT_SOFT,
+    SURFACE, SURFACE_RAISED, BASE, LINE, LINE_STRONG,
+    SUCCESS_BG, SUCCESS_BORDER,
     WARNING_BG, WARNING_BORDER,
-    INFO_BG,
+    INFO_BG, INFO_BORDER,
     section_rule, page_header,
 )
+from src.gui.components import SectionCard, ActionBanner, PrimaryButton, InfoTable
 
 if TYPE_CHECKING:
     from src.gui.app import ApexTraderGUI
@@ -33,105 +36,109 @@ if TYPE_CHECKING:
 
 class AdvancedPage(ctk.CTkScrollableFrame):
     def __init__(self, parent: tk.Widget, app: "ApexTraderGUI") -> None:
-        super().__init__(parent, fg_color="transparent", corner_radius=0)
+        super().__init__(parent, fg_color=SURFACE, corner_radius=0)
         self.app = app
-        self._vars: dict[str, tk.StringVar] = {}
+        self._var_key = tk.StringVar()
         self._build()
         self._load()
 
     # ── Build ─────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        page_header(self, "Advanced Settings")
+        page_header(self, "Advanced", "License key and internal status")
 
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=24, pady=16)
+        # ── License Key ───────────────────────────────────────────────────────
+        section_rule(self, "LICENSE KEY").pack(fill="x", padx=24, pady=(20, 8))
 
-        # Warning banner
-        warn = ctk.CTkFrame(
-            content, corner_radius=8,
-            fg_color=WARNING_BG, border_width=1, border_color=WARNING_BORDER,
-        )
-        warn.pack(fill="x", pady=(0, 20))
+        key_card = SectionCard(self)
+        key_card.pack(fill="x", padx=24)
+
         ctk.CTkLabel(
-            warn,
-            text="⚠  These settings are for technical users only.\n"
-                 "Incorrect values may cause the engine to stop working.",
-            font=ctk.CTkFont(size=12),
-            text_color=YELLOW,
-            justify="left",
-        ).pack(padx=16, pady=10, anchor="w")
-
-        # ── Gateway ───────────────────────────────────────────────────────────
-        section_rule(content, "Gateway Connection")
-
-        gw_card = ctk.CTkFrame(
-            content, corner_radius=8,
-            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
-        )
-        gw_card.pack(fill="x", pady=(0, 16))
-        gw_inner = ctk.CTkFrame(gw_card, fg_color="transparent")
-        gw_inner.pack(padx=24, pady=14, fill="x")
-
-        _adv_field(gw_inner, "WebSocket URL",   "gateway.ws_url",          width=360, vars_dict=self._vars)
-        _adv_field(gw_inner, "Activation Key",  "gateway.activation_key",  width=360, vars_dict=self._vars, masked=True)
-        _adv_field(gw_inner, "Symbols",         "gateway.symbols",         width=280, vars_dict=self._vars,
-                   hint="comma-separated, e.g. XAUUSD, US100")
-
-        # ── Engine ────────────────────────────────────────────────────────────
-        section_rule(content, "Engine")
-
-        eng_card = ctk.CTkFrame(
-            content, corner_radius=8,
-            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
-        )
-        eng_card.pack(fill="x", pady=(0, 16))
-        eng_inner = ctk.CTkFrame(eng_card, fg_color="transparent")
-        eng_inner.pack(padx=24, pady=14, fill="x")
-
-        _adv_field(eng_inner, "Monitoring Port", "engine.monitoring_port", width=100, vars_dict=self._vars,
-                   hint="Default: 8080.  Change requires reinstall.")
-        _adv_field(eng_inner, "Log Level",       "engine.log_level",       width=120, vars_dict=self._vars,
-                   hint="DEBUG / INFO / WARNING / ERROR")
-
-        # ── Execution ─────────────────────────────────────────────────────────
-        section_rule(content, "Execution Parameters")
-
-        exec_card = ctk.CTkFrame(
-            content, corner_radius=8,
-            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
-        )
-        exec_card.pack(fill="x", pady=(0, 16))
-        exec_inner = ctk.CTkFrame(exec_card, fg_color="transparent")
-        exec_inner.pack(padx=24, pady=14, fill="x")
-
-        _adv_field(exec_inner, "Max Signal Age (ms)",  "execution.max_signal_age_ms",  width=110, vars_dict=self._vars,
-                   hint="Signals older than this are ignored.  Default: 120000")
-        _adv_field(exec_inner, "TP1 Trigger (%)",      "execution.tp1_trigger_pct",    width=80,  vars_dict=self._vars,
-                   hint="% of SL→TP2 distance at which TP1 fires.  Default: 50")
-        _adv_field(exec_inner, "Order Retry Count",    "execution.order_retry_count",  width=80,  vars_dict=self._vars)
-
-        # ── Install / service ─────────────────────────────────────────────────
-        section_rule(content, "Service Management")
-
-        svc_card = ctk.CTkFrame(
-            content, corner_radius=8,
-            fg_color=SURFACE_RAISED, border_width=1, border_color=LINE,
-        )
-        svc_card.pack(fill="x", pady=(0, 16))
-        svc_inner = ctk.CTkFrame(svc_card, fg_color="transparent")
-        svc_inner.pack(padx=24, pady=14, fill="x")
-
-        svc_desc = ctk.CTkLabel(
-            svc_inner,
-            text="Reinstall if the AQ Agent executable has changed\n"
-                 "or if the task is not starting correctly.",
+            key_card.body,
+            text="Your activation key connects this installation to your Apex Quantel account.",
             font=ctk.CTkFont(size=12), text_color=MUTED,
-            justify="left",
-        )
-        svc_desc.pack(anchor="w", pady=(0, 10))
+            wraplength=540, justify="left",
+        ).pack(anchor="w", pady=(0, 12))
 
-        btn_row = ctk.CTkFrame(svc_inner, fg_color="transparent")
+        key_row = ctk.CTkFrame(key_card.body, fg_color="transparent")
+        key_row.pack(fill="x")
+        ctk.CTkLabel(
+            key_row, text="License Key", width=110, anchor="w",
+            font=ctk.CTkFont(size=12), text_color=TEXT,
+        ).pack(side="left")
+        ctk.CTkEntry(
+            key_row, textvariable=self._var_key, width=320, show="●",
+            font=ctk.CTkFont(family="Consolas", size=12),
+            placeholder_text="XXXX-XXXX-XXXX-XXXX",
+        ).pack(side="left", padx=(8, 8))
+
+        self._key_banner = ActionBanner(key_card.body)
+        self._key_banner.pack(fill="x", pady=(8, 0))
+        self._key_banner.hide()
+
+        PrimaryButton(
+            key_card.body, text="Save License Key", tone="good",
+            width=160, height=34,
+            command=self._save_key,
+        ).pack(anchor="w", pady=(12, 0))
+
+        # ── Gateway Status ────────────────────────────────────────────────────
+        section_rule(self, "GATEWAY STATUS").pack(fill="x", padx=24, pady=(24, 8))
+
+        self._gw_card = SectionCard(self)
+        self._gw_card.pack(fill="x", padx=24)
+        self._gw_table = InfoTable(self._gw_card.body)
+        self._gw_table.pack(fill="x")
+
+        # ── Internal Protections ──────────────────────────────────────────────
+        section_rule(self, "INTERNAL PROTECTIONS").pack(fill="x", padx=24, pady=(24, 8))
+
+        ctk.CTkLabel(
+            self,
+            text="These settings are managed by the engine to ensure consistent, safe execution. "
+                 "They are not user-editable.",
+            font=ctk.CTkFont(size=11), text_color=MUTED,
+            wraplength=580, justify="left",
+        ).pack(anchor="w", padx=24, pady=(0, 8))
+
+        mt5_card = SectionCard(self)
+        mt5_card.pack(fill="x", padx=24, pady=(0, 10))
+        _section_label(mt5_card.body, "MT5 Trade Tracking")
+        _status_row(mt5_card.body, "Magic Number",       "Managed by engine")
+        _status_row(mt5_card.body, "Execution Slippage", "Platform policy")
+        _status_row(mt5_card.body, "Trade Attribution",  "Protected")
+
+        exec_card = SectionCard(self)
+        exec_card.pack(fill="x", padx=24, pady=(0, 10))
+        _section_label(exec_card.body, "Execution Protection")
+        _status_row(exec_card.body, "Breakeven Logic",       "Enabled")
+        _status_row(exec_card.body, "Signal Expiry",         "120 seconds")
+        _status_row(exec_card.body, "Order Retry",           "2 attempts")
+        _status_row(exec_card.body, "Slippage Protection",   "Enabled")
+        _status_row(exec_card.body, "TP1 Logic",             "Engine managed")
+
+        risk_card = SectionCard(self)
+        risk_card.pack(fill="x", padx=24, pady=(0, 10))
+        _section_label(risk_card.body, "Risk Guardrails")
+        _status_row(risk_card.body, "Spread / SL Protection",  "Enabled")
+        _status_row(risk_card.body, "Symbol Exposure Guard",   "Enabled")
+        _status_row(risk_card.body, "Rolling Drawdown Guard",  "Enabled")
+        _status_row(risk_card.body, "Cluster Risk Guard",      "Engine managed")
+
+        # ── Service Management ────────────────────────────────────────────────
+        section_rule(self, "SERVICE MANAGEMENT").pack(fill="x", padx=24, pady=(24, 8))
+
+        svc_card = SectionCard(self)
+        svc_card.pack(fill="x", padx=24)
+
+        ctk.CTkLabel(
+            svc_card.body,
+            text="Reinstall if the AQ Agent executable has changed or if the task is not starting correctly.",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
+            wraplength=540, justify="left",
+        ).pack(anchor="w", pady=(0, 12))
+
+        btn_row = ctk.CTkFrame(svc_card.body, fg_color="transparent")
         btn_row.pack(anchor="w")
 
         ctk.CTkButton(
@@ -140,101 +147,77 @@ class AdvancedPage(ctk.CTkScrollableFrame):
             border_width=1, border_color=WARNING_BORDER,
             text_color=YELLOW,
             command=self._reinstall,
-        ).pack(side="left", padx=(0, 10))
+        ).pack(side="left", padx=(0, 12))
 
-        self._lbl_svc_result = ctk.CTkLabel(
+        self._lbl_svc = ctk.CTkLabel(
             btn_row, text="",
             font=ctk.CTkFont(size=11), text_color=MUTED,
         )
-        self._lbl_svc_result.pack(side="left")
+        self._lbl_svc.pack(side="left")
 
-        # ── Save ──────────────────────────────────────────────────────────────
-        self._lbl_status = ctk.CTkLabel(
-            content, text="",
-            font=ctk.CTkFont(size=12), text_color=MUTED,
+        # ── Diagnostics ───────────────────────────────────────────────────────
+        section_rule(self, "DIAGNOSTICS").pack(fill="x", padx=24, pady=(24, 8))
+
+        diag_card = SectionCard(self)
+        diag_card.pack(fill="x", padx=24, pady=(0, 24))
+
+        _diag_row(
+            diag_card.body, "View logs",
+            "Open the log folder to inspect recent engine output.",
+            "Open Logs",
+            self._open_logs,
         )
-        self._lbl_status.pack(pady=(8, 6))
+        _diag_row(
+            diag_card.body, "Open data folder",
+            "Browse the local trade data and storage files.",
+            "Open Folder",
+            self._open_data,
+        )
+        _diag_row(
+            diag_card.body, "Export diagnostics",
+            "Copy a diagnostic summary to the clipboard for support.",
+            "Copy Info",
+            self._export_diagnostics,
+        )
 
-        ctk.CTkButton(
-            content,
-            text="💾  Save Advanced Settings",
-            height=44, width=260,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color=INFO_BG, hover_color="#253850",
-            border_width=1, border_color="#1d2c42",
-            text_color="#8ab4ff",
-            command=self._save,
-        ).pack(pady=(0, 20))
+        self._diag_banner = ActionBanner(diag_card.body)
+        self._diag_banner.pack(fill="x", pady=(4, 0))
+        self._diag_banner.hide()
 
-    # ── Load / Save ───────────────────────────────────────────────────────────
+    # ── Load ──────────────────────────────────────────────────────────────────
 
     def _load(self) -> None:
         cfg = self.app.config.load(force=True)
+        self._var_key.set(cfg.get("gateway", {}).get("activation_key", ""))
+        self._refresh_gateway_table(cfg)
 
-        _MAP = {
-            "gateway.ws_url":              ("gateway",   "ws_url"),
-            "gateway.activation_key":      ("gateway",   "activation_key"),
-            "gateway.symbols":             ("gateway",   "symbols"),
-            "engine.monitoring_port":      ("engine",    "monitoring_port"),
-            "engine.log_level":            ("engine",    "log_level"),
-            "execution.max_signal_age_ms": ("execution", "max_signal_age_ms"),
-            "execution.tp1_trigger_pct":   ("execution", "tp1_trigger_pct"),
-            "execution.order_retry_count": ("execution", "order_retry_count"),
-        }
-        for key, (section, field) in _MAP.items():
-            if key not in self._vars:
-                continue
-            raw = cfg.get(section, {}).get(field)
-            if raw is None:
-                continue
-            if isinstance(raw, list):
-                raw = ", ".join(str(v) for v in raw)
-            self._vars[key].set(str(raw))
+    def _refresh_gateway_table(self, cfg: dict) -> None:
+        gw  = cfg.get("gateway", {})
+        raw = gw.get("symbols", ["XAUUSD"])
+        symbols = ", ".join(raw) if isinstance(raw, list) else str(raw)
+        version = gw.get("engine_version", "—")
 
-    def _save(self) -> None:
-        _WRITE_MAP: dict[str, tuple[str, str, Any]] = {
-            "gateway.ws_url":              ("gateway",   "ws_url",              str),
-            "gateway.activation_key":      ("gateway",   "activation_key",      str),
-            "gateway.symbols":             ("gateway",   "symbols",             "list"),
-            "engine.monitoring_port":      ("engine",    "monitoring_port",     int),
-            "engine.log_level":            ("engine",    "log_level",           str),
-            "execution.max_signal_age_ms": ("execution", "max_signal_age_ms",   int),
-            "execution.tp1_trigger_pct":   ("execution", "tp1_trigger_pct",     float),
-            "execution.order_retry_count": ("execution", "order_retry_count",   int),
-        }
-        errors: list[str] = []
-        cfg = self.app.config.load()
+        for widget in self._gw_table.winfo_children():
+            widget.destroy()
+        self._gw_table.add_row("Gateway URL",     gw.get("ws_url", "—"))
+        self._gw_table.add_row("Engine Version",  version)
+        self._gw_table.add_row("Active Symbols",  symbols)
 
-        for key, (section, field, typ) in _WRITE_MAP.items():
-            if key not in self._vars:
-                continue
-            raw = self._vars[key].get().strip()
-            if not raw:
-                continue
-            try:
-                if typ == "list":
-                    value: Any = [v.strip() for v in raw.split(",") if v.strip()]
-                else:
-                    value = typ(raw)
-            except Exception:
-                errors.append(f"'{key}' invalid: '{raw}'")
-                continue
-            cfg.setdefault(section, {})[field] = value
+    # ── Actions ───────────────────────────────────────────────────────────────
 
-        if errors:
-            self._lbl_status.configure(
-                text="⚠  " + "  |  ".join(errors), text_color=YELLOW,
-            )
+    def _save_key(self) -> None:
+        key = self._var_key.get().strip()
+        if not key:
+            self._key_banner.show("License key cannot be empty.", "warn")
             return
-
-        err = self.app.config.save(cfg)
+        if len(key) < 16:
+            self._key_banner.show("License key is too short — check that you copied it correctly.", "warn")
+            return
+        err = self.app.config.update("gateway", {"activation_key": key})
         if err:
-            self._lbl_status.configure(text=f"⚠  {err}", text_color=RED)
+            self._key_banner.show(err, "danger")
             return
-
-        self._lbl_status.configure(
-            text="✓  Saved — restarting AQ Agent…", text_color=GREEN,
-        )
+        self._key_banner.show("License key saved — restarting engine…", "good")
         self.app.app_state.mark_setup_complete(self.app.config.is_setup_complete())
         threading.Thread(target=self._delayed_restart, daemon=True).start()
 
@@ -244,55 +227,101 @@ class AdvancedPage(ctk.CTkScrollableFrame):
         self.app.restart_with_new_config()
 
     def _reinstall(self) -> None:
-        self._lbl_svc_result.configure(text="Reinstalling…", text_color=YELLOW)
+        self._lbl_svc.configure(text="Reinstalling…", text_color=YELLOW)
         self.app.installer.on_result = lambda ok, msg: self.after(
             0,
-            lambda: self._lbl_svc_result.configure(
+            lambda: self._lbl_svc.configure(
                 text=msg[:80], text_color=GREEN if ok else RED,
             ),
         )
         self.app.installer.reinstall_async(str(self.app.config.path))
 
+    def _open_logs(self) -> None:
+        from src.gui.config_manager import ConfigManager
+        path = ConfigManager.programdata_logs_path()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(["explorer", str(path)])
+        except Exception:
+            pass
+
+    def _open_data(self) -> None:
+        from src.gui.config_manager import ConfigManager
+        path = ConfigManager.programdata_data_path()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(["explorer", str(path)])
+        except Exception:
+            pass
+
+    def _export_diagnostics(self) -> None:
+        import sys
+        cfg = self.app.config.masked_copy()
+        gw  = cfg.get("gateway", {})
+        mt5 = cfg.get("mt5",     {})
+        eng = cfg.get("engine",  {})
+        lines = [
+            f"Apex Quantel — Diagnostics",
+            f"Engine Version : {gw.get('engine_version', '?')}",
+            f"Python         : {sys.version.split()[0]}",
+            f"MT5 Login      : {mt5.get('login', '?')}",
+            f"MT5 Server     : {mt5.get('server', '?')}",
+            f"Gateway URL    : {gw.get('ws_url', '?')}",
+            f"Log Level      : {eng.get('log_level', '?')}",
+            f"Config Path    : {self.app.config.path}",
+        ]
+        text = "\n".join(lines)
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._diag_banner.show("Diagnostics copied to clipboard.", "good", auto_dismiss_after_ms=3000)
+        except Exception:
+            self._diag_banner.show("Could not copy to clipboard.", "warn")
+
+    # ── Broadcast callbacks ───────────────────────────────────────────────────
+
     def on_engine_status(self, status: str, detail: str | None) -> None:
         from src.gui.service_controller import ServiceStatus
         if status == ServiceStatus.STOPPED and detail:
-            self._lbl_svc_result.configure(
-                text=detail[:80], text_color=MUTED,
-            )
+            self._lbl_svc.configure(text=detail[:80], text_color=MUTED)
         elif status == ServiceStatus.RUNNING:
-            self._lbl_svc_result.configure(text="")
+            self._lbl_svc.configure(text="")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _adv_field(
-    parent: tk.Widget,
-    label: str,
-    key: str,
-    width: int,
-    vars_dict: dict[str, tk.StringVar],
-    hint: str = "",
-    masked: bool = False,
-) -> None:
+def _section_label(parent: tk.Widget, text: str) -> None:
+    ctk.CTkLabel(
+        parent, text=text, anchor="w",
+        font=ctk.CTkFont(size=11, weight="bold"), text_color=MUTED,
+    ).pack(anchor="w", pady=(0, 6))
+
+
+def _status_row(parent: tk.Widget, label: str, value: str) -> None:
     row = ctk.CTkFrame(parent, fg_color="transparent")
     row.pack(fill="x", pady=3)
-
     ctk.CTkLabel(
         row, text=label, width=200, anchor="w",
         font=ctk.CTkFont(size=12), text_color=TEXT,
     ).pack(side="left")
+    ctk.CTkLabel(
+        row, text=value, anchor="w",
+        font=ctk.CTkFont(size=12), text_color=MUTED,
+    ).pack(side="left", padx=(8, 0))
 
-    var = tk.StringVar()
-    vars_dict[key] = var
 
-    ctk.CTkEntry(
-        row, textvariable=var, width=width,
-        show="●" if masked else "",
-        font=ctk.CTkFont(family="Consolas", size=12),
-    ).pack(side="left", padx=(8, 8))
-
-    if hint:
-        ctk.CTkLabel(
-            row, text=hint,
-            font=ctk.CTkFont(size=10), text_color=MUTED, anchor="w",
-        ).pack(side="left")
+def _diag_row(
+    parent: tk.Widget,
+    label: str,
+    detail: str,
+    btn_label: str,
+    command,
+) -> None:
+    row = ctk.CTkFrame(parent, fg_color="transparent")
+    row.pack(fill="x", pady=6)
+    left = ctk.CTkFrame(row, fg_color="transparent")
+    left.pack(side="left", fill="x", expand=True)
+    ctk.CTkLabel(left, text=label, anchor="w", font=ctk.CTkFont(size=13), text_color=TEXT).pack(anchor="w")
+    ctk.CTkLabel(left, text=detail, anchor="w", font=ctk.CTkFont(size=11), text_color=MUTED,
+                 wraplength=400).pack(anchor="w")
+    PrimaryButton(row, text=btn_label, tone="info", width=110, height=30, command=command).pack(side="right")

@@ -22,7 +22,7 @@ class _LossTracker:
         return 100.0
 
 
-def test_planner_uses_timeframe_specific_tp1_trigger_pct():
+def test_planner_uses_symbol_and_timeframe_specific_tp1_trigger_pct():
     planner = TradePlanner(
         RiskConfig(
             max_losing_streak=3,
@@ -46,7 +46,7 @@ def test_planner_uses_timeframe_specific_tp1_trigger_pct():
             max_entry_slippage_pct_of_stop=0.0,
             close_on_slippage_exceed=False,
             order_retry_delay_sec=0.0,
-            tf_overrides={"1/1": {"tp1_trigger_pct": 5.0}},
+            tf_overrides={"XAUUSD": {"1/1": {"tp1_trigger_pct": 5.0}}},
         ),
         _LossTracker(),
     )
@@ -70,6 +70,60 @@ def test_planner_uses_timeframe_specific_tp1_trigger_pct():
     assert plan.tp1 == 100.5
 
 
+def test_execution_config_wildcard_tf_fallback():
+    cfg = ExecutionConfig(
+        tp1_trigger_pct=50.0,
+        tp1_percentage=0.0,
+        move_sl_to_be_on_tp1=True,
+        slippage=10,
+        magic=12345,
+        comment="test",
+        spread_risk_multiplier=0.0,
+        order_retry_count=0,
+        max_entry_slippage_pct_of_stop=0.0,
+        close_on_slippage_exceed=False,
+        order_retry_delay_sec=0.0,
+        tf_overrides={
+            "XAUUSD": {
+                "1/1": {"tp1_trigger_pct": 30.0},
+                "*":   {"tp1_trigger_pct": 40.0},  # fallback TF
+            },
+        },
+    )
+    # Exact symbol+TF match
+    assert cfg.tp1_trigger_pct_for("XAUUSD", "1min", "1min") == 30.0
+    # Symbol matches, TF falls back to "*"
+    assert cfg.tp1_trigger_pct_for("XAUUSD", "5min", "5min") == 40.0
+    # Unknown symbol falls back to global default
+    assert cfg.tp1_trigger_pct_for("US100", "1min", "1min") == 50.0
+
+
+def test_execution_config_wildcard_symbol_fallback():
+    cfg = ExecutionConfig(
+        tp1_trigger_pct=50.0,
+        tp1_percentage=0.0,
+        move_sl_to_be_on_tp1=True,
+        slippage=10,
+        magic=12345,
+        comment="test",
+        spread_risk_multiplier=0.0,
+        order_retry_count=0,
+        max_entry_slippage_pct_of_stop=0.0,
+        close_on_slippage_exceed=False,
+        order_retry_delay_sec=0.0,
+        tf_overrides={
+            "XAUUSD": {"1/1": {"tp1_trigger_pct": 30.0}},
+            "*":       {"1/1": {"tp1_trigger_pct": 20.0}},  # wildcard symbol
+        },
+    )
+    # Exact symbol+TF
+    assert cfg.tp1_trigger_pct_for("XAUUSD", "1min", "1min") == 30.0
+    # Unknown symbol falls back to "*" symbol entry
+    assert cfg.tp1_trigger_pct_for("US100", "1min", "1min") == 20.0
+    # Unknown symbol, unknown TF → global default
+    assert cfg.tp1_trigger_pct_for("US100", "5min", "5min") == 50.0
+
+
 def test_execution_config_supports_tp1_close_pct_override_alias():
     cfg = ExecutionConfig(
         tp1_trigger_pct=50.0,
@@ -83,11 +137,11 @@ def test_execution_config_supports_tp1_close_pct_override_alias():
         max_entry_slippage_pct_of_stop=0.0,
         close_on_slippage_exceed=False,
         order_retry_delay_sec=0.0,
-        tf_overrides={"1/1": {"tp1_close_pct": 25.0}},
+        tf_overrides={"XAUUSD": {"1/1": {"tp1_percentage": 25.0}}},
     )
 
-    assert cfg.tp1_percentage_for("1min", "1min") == 25.0
-    assert cfg.tp1_percentage_for("5min", "5min") == 0.0
+    assert cfg.tp1_percentage_for("XAUUSD", "1min", "1min") == 25.0
+    assert cfg.tp1_percentage_for("XAUUSD", "5min", "5min") == 0.0
 
 
 def _signal(*, htf_interval: str, ltf_interval: str) -> InboundSignal:

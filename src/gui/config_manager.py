@@ -27,6 +27,23 @@ logger = logging.getLogger(__name__)
 # Default web dashboard URL — override via config.yaml: dashboard.url
 DEFAULT_DASHBOARD_URL = "https://app.somicast.com"
 
+# Fields the user is permitted to set.  Everything outside this list is
+# managed by internal defaults and must never be written to user config.
+_ALLOWED_USER_PATHS: frozenset = frozenset({
+    "gateway.activation_key",
+    "mt5.login",
+    "mt5.password",
+    "mt5.server",
+    "mt5.path",
+    "risk.max_losing_streak",
+    "risk.max_daily_loss_percent",
+    "risk.max_equity_drawdown_percent",
+    "risk.max_lot_size",
+    "risk.no_hedging",
+    "startup.auto_start_engine",
+    "startup.minimise_on_start",
+})
+
 # ProgramData path (production install location)
 _APPNAME    = "Apex Quantel"
 _PROGDATA   = Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / _APPNAME
@@ -66,17 +83,23 @@ class ConfigManager:
         return self._path.exists()
 
     def load(self, force: bool = False) -> dict:
-        """Load and cache config.  Returns empty dict on failure (no crash)."""
+        """Load and cache config.  Returns internal defaults on failure (no crash).
+
+        The returned dict is a deep-merge of internal defaults (base layer) and
+        the persisted user settings (override layer), so callers always receive a
+        fully-populated config regardless of how slim the on-disk file is.
+        """
         if self._cache is not None and not force:
             return self._cache
         try:
+            from src.config.settings import _INTERNAL_DEFAULTS, _deep_merge  # type: ignore
             if not self._path.exists():
-                self._cache = {}
-                return {}
+                self._cache = dict(_INTERNAL_DEFAULTS)
+                return self._cache
             with open(self._path, "r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh) or {}
-            self._cache = data
-            return data
+                user_data = yaml.safe_load(fh) or {}
+            self._cache = _deep_merge(_INTERNAL_DEFAULTS, user_data)
+            return self._cache
         except Exception as exc:
             logger.warning("Config load error: %s", exc)
             self._cache = {}
@@ -108,12 +131,43 @@ class ConfigManager:
                 errors.append(f"{label} is not configured.")
 
         # Extra semantic checks
-        mt5 = cfg.get("mt5", {}) if isinstance(cfg, dict) else {}
+        mt5  = cfg.get("mt5",  {}) if isinstance(cfg, dict) else {}
+        risk = cfg.get("risk", {}) if isinstance(cfg, dict) else {}
+
         try:
             if mt5.get("login"):
                 int(mt5["login"])
         except (TypeError, ValueError):
             errors.append("MT5 account login must be a number.")
+
+        def _check_float(field: str, label: str, lo: float, hi: float, inclusive_lo: bool = False) -> None:
+            raw = risk.get(field)
+            if raw is None:
+                return
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                errors.append(f"{label} must be a number.")
+                return
+            if inclusive_lo:
+                if v <= 0 or v > hi:
+                    errors.append(f"{label} must be > 0 and <= {hi}.")
+            else:
+                if v < lo or v > hi:
+                    errors.append(f"{label} must be between {lo} and {hi}.")
+
+        _check_float("max_daily_loss_percent",      "Daily Loss Limit",         lo=0,   hi=20,  inclusive_lo=True)
+        _check_float("max_equity_drawdown_percent", "Max Account Drawdown",     lo=0,   hi=50,  inclusive_lo=True)
+        _check_float("max_lot_size",                "Max Lot Size",             lo=0,   hi=1e9, inclusive_lo=True)
+
+        raw_streak = risk.get("max_losing_streak")
+        if raw_streak is not None:
+            try:
+                streak = int(float(raw_streak))
+                if streak < 1 or streak > 10:
+                    errors.append("Max Losing Streak must be between 1 and 10.")
+            except (TypeError, ValueError):
+                errors.append("Max Losing Streak must be a number.")
 
         return errors
 
@@ -123,9 +177,14 @@ class ConfigManager:
 
     def save(self, cfg: dict) -> Optional[str]:
         """
-        Atomically write config.yaml.
+        Atomically write config.yaml containing only user-allowed fields.
         Returns None on success or a plain-English error string.
+
+        Internal/platform fields are stripped before writing; they are always
+        supplied at load time via _INTERNAL_DEFAULTS so the engine can run from
+        a minimal user_settings file.
         """
+        cfg = _extract_allowed(cfg)
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -276,3 +335,30 @@ def _mask_sensitive(node: object) -> None:
             node[key] = "••••••••"
         elif isinstance(value, dict):
             _mask_sensitive(value)
+
+
+def _extract_allowed(cfg: dict) -> dict:
+    """Return a new dict containing only the user-allowed configuration paths.
+
+    Any field not in _ALLOWED_USER_PATHS is silently dropped.  Internal
+    defaults will supply those values at load time, so nothing is lost.
+    """
+    result: dict = {}
+    for path in _ALLOWED_USER_PATHS:
+        parts = path.split(".")
+        src: object = cfg
+        for part in parts[:-1]:
+            if not isinstance(src, dict):
+                src = None
+                break
+            src = src.get(part)  # type: ignore[assignment]
+        if not isinstance(src, dict):
+            continue
+        value = src.get(parts[-1])
+        if value is None:
+            continue
+        dst = result
+        for part in parts[:-1]:
+            dst = dst.setdefault(part, {})
+        dst[parts[-1]] = value
+    return result

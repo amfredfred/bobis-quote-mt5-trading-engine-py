@@ -20,6 +20,101 @@ from dotenv import load_dotenv
 from src.utils.symbol import normalise_symbol
 
 
+# ── Internal defaults ─────────────────────────────────────────────────────────
+# These values are platform-controlled and must not be editable by users.
+# They are merged as the base layer before user config is applied, so a slim
+# user_settings.yaml (containing only the allowed user paths) still produces a
+# fully-populated AppConfig.
+
+_INTERNAL_DEFAULTS: dict = {
+    "gateway": {
+        "ws_url": "wss://apex-gateway.somicast.com/engine",
+        "engine_version": "0.1.0",
+        "room_ttl_seconds": 3600,
+        "symbols": ["XAUUSD"],
+    },
+    "mt5": {
+        "magic": 8858,
+        "slippage": 10,
+        "comment": "bobisquote",
+    },
+    "risk": {
+        "max_exposure_per_symbol": 2,
+        "min_rr_ratio": 1.0,
+        "min_lot_size": 0.01,
+        "sl_ratio_threshold": 0.35,
+        "symbol_sl_ratio_threshold": {
+            "XAUUSD": 0.35,
+            "US100": 0.20,
+            "US500": 0.20,
+        },
+        "rolling_window_size": 2,
+        "rolling_drawdown_pct": 2.0,
+        "cluster_risk": {
+            "enabled": False,
+            "groups": [
+                {
+                    "name": "indices",
+                    "symbols": ["US100", "US500", "US30"],
+                    "max_same_day_loss_r": 1.5,
+                    "max_concurrent_positions": 2,
+                    "max_same_day_losses": 2,
+                    "after_first_loss_risk_multiplier": 0.5,
+                    "min_trade_risk_multiplier": 0.25,
+                },
+                {
+                    "name": "metals",
+                    "symbols": ["XAUUSD", "XAGUSD"],
+                    "max_same_day_loss_r": 1.5,
+                    "max_concurrent_positions": 2,
+                    "max_same_day_losses": 2,
+                    "after_first_loss_risk_multiplier": 0.5,
+                    "min_trade_risk_multiplier": 0.25,
+                },
+            ],
+        },
+    },
+    "execution": {
+        "tp1_trigger_pct": 50.0,
+        "tp1_percentage": 0.0,
+        "move_sl_to_be_on_tp1": True,
+        "breakeven_spread_multiplier": 1.5,
+        "breakeven_max_buffer_pct_of_risk": 10.0,
+        "tf_overrides": {
+            "*": {
+                "5/5":   {"tp1_trigger_pct": 45.0},
+                "30/30": {"tp1_trigger_pct": 45.0},
+            },
+        },
+        "spread_risk_multiplier": 1.0,
+        "order_retry_count": 2,
+        "order_retry_delay_sec": 0.5,
+        "max_entry_slippage_pct_of_stop": 0.20,
+        "max_signal_age_ms": 120_000,
+        "close_on_slippage_exceed": False,
+        "adjust_levels_on_slippage": False,
+    },
+    "engine": {
+        "timezone": "UTC",
+        "log_level": "INFO",
+        "storage_path": "./data",
+        "monitoring_port": 8080,
+        "position_poll_interval": 0.6,
+    },
+}
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Return a new dict: override wins on scalar conflicts; dicts are merged recursively."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def _validate_pct_range(name: str, value: float) -> None:
     if value <= 0.0 or value >= 100.0:
         raise ValueError(f"{name} must be > 0 and < 100.")
@@ -30,25 +125,54 @@ def _validate_pct_inclusive(name: str, value: float) -> None:
         raise ValueError(f"{name} must be between 0 and 100.")
 
 
-def _parse_tf_overrides(raw: Any) -> Dict[str, Dict[str, Any]]:
+def _parse_tf_overrides(raw: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Parse per-symbol, per-timeframe TP1 overrides.
+
+    YAML form:
+      XAUUSD:
+        "5/5":
+          tp1_trigger_pct: 45.0
+        "*":              # wildcard TF for this symbol
+          tp1_trigger_pct: 42.0
+      "*":                # wildcard symbol
+        "5/5":
+          tp1_trigger_pct: 40.0
+
+    Resolution priority: symbol+TF > symbol+* > *+TF > *+* > global default.
+    Symbol keys are uppercased; "*" is kept as-is.
+    """
     if raw is None:
         return {}
     if not isinstance(raw, dict):
         raise ValueError("execution.tf_overrides must be a mapping.")
 
-    parsed: Dict[str, Dict[str, Any]] = {}
-    for pair, values in raw.items():
-        if not isinstance(values, dict):
-            raise ValueError(f"execution.tf_overrides.{pair} must be a mapping.")
-        override: Dict[str, Any] = {}
-        if "tp1_trigger_pct" in values:
-            override["tp1_trigger_pct"] = float(values["tp1_trigger_pct"])
-        if "tp1_percentage" in values:
-            override["tp1_percentage"] = float(values["tp1_percentage"])
-        if "tp1_close_pct" in values:
-            override["tp1_percentage"] = float(values["tp1_close_pct"])
-        parsed[str(pair)] = override
-    return parsed
+    result: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for raw_symbol, tf_map in raw.items():
+        if not isinstance(tf_map, dict):
+            raise ValueError(
+                f"execution.tf_overrides.{raw_symbol} must be a mapping."
+            )
+        symbol = str(raw_symbol)
+        if symbol != "*":
+            symbol = symbol.upper().replace("/", "")
+        parsed_tf: Dict[str, Dict[str, Any]] = {}
+        for pair, values in tf_map.items():
+            if not isinstance(values, dict):
+                raise ValueError(
+                    f"execution.tf_overrides.{raw_symbol}.{pair} must be a mapping."
+                )
+            override: Dict[str, Any] = {}
+            if "tp1_trigger_pct" in values:
+                override["tp1_trigger_pct"] = float(values["tp1_trigger_pct"])
+            if "tp1_percentage" in values:
+                override["tp1_percentage"] = float(values["tp1_percentage"])
+            if "tp1_close_pct" in values:
+                override["tp1_percentage"] = float(values["tp1_close_pct"])
+            if override:
+                parsed_tf[str(pair)] = override
+        if parsed_tf:
+            result[symbol] = parsed_tf
+    return result
 
 
 def _tf_pair_key(htf_interval: str | None, ltf_interval: str | None) -> str | None:
@@ -191,7 +315,7 @@ class ExecutionConfig:
     breakeven_max_buffer_pct_of_risk: float = 10.0
     adjust_levels_on_slippage: bool = False
     max_signal_age_ms: int = 90_000
-    tf_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    tf_overrides: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_pct_range("execution.tp1_trigger_pct", self.tp1_trigger_pct)
@@ -207,45 +331,67 @@ class ExecutionConfig:
             "execution.breakeven_max_buffer_pct_of_risk",
             self.breakeven_max_buffer_pct_of_risk,
         )
-        for key, override in self.tf_overrides.items():
-            if "tp1_trigger_pct" in override:
-                _validate_pct_range(
-                    f"execution.tf_overrides.{key}.tp1_trigger_pct",
-                    float(override["tp1_trigger_pct"]),
-                )
-            if "tp1_percentage" in override:
-                _validate_pct_inclusive(
-                    f"execution.tf_overrides.{key}.tp1_percentage",
-                    float(override["tp1_percentage"]),
-                )
-            if "tp1_close_pct" in override:
-                _validate_pct_inclusive(
-                    f"execution.tf_overrides.{key}.tp1_close_pct",
-                    float(override["tp1_close_pct"]),
-                )
+        for sym, tf_map in self.tf_overrides.items():
+            for tf_key, override in tf_map.items():
+                if "tp1_trigger_pct" in override:
+                    _validate_pct_range(
+                        f"execution.tf_overrides.{sym}.{tf_key}.tp1_trigger_pct",
+                        float(override["tp1_trigger_pct"]),
+                    )
+                if "tp1_percentage" in override:
+                    _validate_pct_inclusive(
+                        f"execution.tf_overrides.{sym}.{tf_key}.tp1_percentage",
+                        float(override["tp1_percentage"]),
+                    )
+
+    def _resolve_tf_override(
+        self, symbol: str | None, tf_key: str | None
+    ) -> Dict[str, Any]:
+        """Return the most-specific override dict for (symbol, tf_key).
+
+        Priority: symbol+TF > symbol+* > *+TF > *+* > {} (no override).
+        """
+        if not self.tf_overrides:
+            return {}
+        norm = symbol.upper().replace("/", "") if symbol else None
+        candidates: list[tuple[str | None, str | None]] = []
+        if norm and tf_key:
+            candidates.append((norm, tf_key))
+        if norm:
+            candidates.append((norm, "*"))
+        if tf_key:
+            candidates.append(("*", tf_key))
+        candidates.append(("*", "*"))
+        for sym, tf in candidates:
+            if sym is None:
+                continue
+            sym_map = self.tf_overrides.get(sym)
+            if not sym_map:
+                continue
+            entry = sym_map.get(tf or "*", {})
+            if entry:
+                return dict(entry)
+        return {}
 
     def tp1_trigger_pct_for(
-        self, htf_interval: str | None, ltf_interval: str | None
+        self,
+        symbol: str | None,
+        htf_interval: str | None,
+        ltf_interval: str | None,
     ) -> float:
-        key = _tf_pair_key(htf_interval, ltf_interval)
-        if key is None:
-            return self.tp1_trigger_pct
-        override = self.tf_overrides.get(key, {})
+        tf_key = _tf_pair_key(htf_interval, ltf_interval)
+        override = self._resolve_tf_override(symbol, tf_key)
         return float(override.get("tp1_trigger_pct", self.tp1_trigger_pct))
 
     def tp1_percentage_for(
-        self, htf_interval: str | None, ltf_interval: str | None
+        self,
+        symbol: str | None,
+        htf_interval: str | None,
+        ltf_interval: str | None,
     ) -> float:
-        key = _tf_pair_key(htf_interval, ltf_interval)
-        if key is None:
-            return self.tp1_percentage
-        override = self.tf_overrides.get(key, {})
-        return float(
-            override.get(
-                "tp1_percentage",
-                override.get("tp1_close_pct", self.tp1_percentage),
-            )
-        )
+        tf_key = _tf_pair_key(htf_interval, ltf_interval)
+        override = self._resolve_tf_override(symbol, tf_key)
+        return float(override.get("tp1_percentage", self.tp1_percentage))
 
 
 @dataclass(frozen=True)
@@ -297,7 +443,7 @@ class AppConfig:
         load_dotenv(override=False)
 
         with open(path, "r", encoding="utf-8") as fh:
-            raw: dict = yaml.safe_load(fh)
+            raw: dict = _deep_merge(_INTERNAL_DEFAULTS, yaml.safe_load(fh) or {})
 
         gateway = raw.get("gateway", {})
         mt5 = raw.get("mt5", {})
