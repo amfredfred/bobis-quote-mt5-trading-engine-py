@@ -622,7 +622,12 @@ def _valid_breakeven_sl(
     if trade.entry_price is None:
         return None
 
-    entry = float(trade.entry_price)
+    # Use the original signal analysis entry as the BE anchor so it matches the
+    # signal engine's BE check (which uses signal.entry_price, not the fill price).
+    # Slippage shifts the fill but not the analysis levels — BE should agree with them.
+    _signal = getattr(getattr(trade, "plan", None), "signal", None)
+    _signal_entry = getattr(_signal, "entry_price", None)
+    entry = float(_signal_entry if _signal_entry is not None else trade.entry_price)
     original_stop = float(getattr(trade.plan, "stop_loss", trade.stop_loss))
     initial_risk = abs(entry - original_stop)
     bid = float(getattr(tick, "bid", 0.0) or 0.0)
