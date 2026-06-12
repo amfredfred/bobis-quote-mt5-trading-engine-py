@@ -42,7 +42,6 @@ def is_valid_signal_dict(obj: object) -> bool:
         "tp2",
         "riskRewardRatio",
         "htfRange",
-        "ltfRange",
         "rejectionCandle",
     }
     return required.issubset(obj.keys())

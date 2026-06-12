@@ -153,11 +153,11 @@ class InboundSignal:
     risk_reward_ratio: float
     risk_pips: float
     htf_range: HtfRange
-    ltf_range: LtfRange
     rejection_candle: RejectionCandle
     created_at: int
     htf_interval: str = ""
     ltf_interval: str = ""
+    ltf_range: Optional[LtfRange] = None
     pending_at: Optional[int] = None
     triggered_at: Optional[int] = None
     tp1_hit_at: Optional[int] = None
@@ -216,11 +216,11 @@ class InboundSignal:
             risk_reward_ratio=d["riskRewardRatio"],
             risk_pips=d["riskPips"],
             htf_range=HtfRange.from_dict(d["htfRange"]),
-            ltf_range=LtfRange.from_dict(d["ltfRange"]),
             rejection_candle=RejectionCandle.from_dict(d["rejectionCandle"]),
             created_at=d["createdAt"],
             htf_interval=str(d.get("htfInterval") or d.get("htf_interval") or ""),
             ltf_interval=str(d.get("ltfInterval") or d.get("ltf_interval") or ""),
+            ltf_range=LtfRange.from_dict(d["ltfRange"]) if d.get("ltfRange") else None,
             pending_at=d.get("pendingAt"),
             triggered_at=triggered_at,
             tp1_hit_at=d.get("tp1HitAt"),

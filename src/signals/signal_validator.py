@@ -93,11 +93,6 @@ class SignalValidator:
         if htf.bos_direction.value not in ("BULLISH", "BEARISH"):
             errors.append(f"htfRange: unknown bosDirection: {htf.bos_direction}")
 
-        # ── LTF range ─────────────────────────────────────────────────────
-        ltf = signal.ltf_range
-        if ltf.range_high <= ltf.range_low:
-            errors.append("ltfRange: rangeHigh must be > rangeLow")
-
         # ── Timestamps ────────────────────────────────────────────────────
         if not signal.created_at or signal.created_at <= 0:
             errors.append("createdAt must be a valid timestamp")
