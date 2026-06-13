@@ -28,7 +28,7 @@ def _guards_config() -> SimpleNamespace:
     return SimpleNamespace(
         risk=SimpleNamespace(
             max_daily_loss_percent=2.5,
-            max_equity_drawdown_percent=2.0,
+            max_profit_drawdown_percent=2.0,
             rolling_window_size=2,
             rolling_drawdown_pct=2.0,
             cluster_risk=SimpleNamespace(enabled=False, groups=[]),

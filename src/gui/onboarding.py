@@ -1157,8 +1157,8 @@ class _StepRisk(_WizardStep):
             self._var_daily_pct.set(str(risk["max_daily_loss_percent"]))
         if risk.get("max_losing_streak"):
             self._var_streak.set(str(risk["max_losing_streak"]))
-        if risk.get("max_equity_drawdown_percent"):
-            self._var_drawdown.set(str(risk["max_equity_drawdown_percent"]))
+        if risk.get("max_profit_drawdown_percent"):
+            self._var_drawdown.set(str(risk["max_profit_drawdown_percent"]))
         self._update_formula()
 
     def validate_and_save(self, config: "ConfigManager", data: dict) -> tuple:
@@ -1178,7 +1178,7 @@ class _StepRisk(_WizardStep):
         err = config.update("risk", {
             "max_daily_loss_percent":      pct,
             "max_losing_streak":           streak,
-            "max_equity_drawdown_percent": drawdown,
+            "max_profit_drawdown_percent": drawdown,
         })
         if err:
             self._banner.show(err, "danger"); return False, err

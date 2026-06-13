@@ -369,7 +369,7 @@ class RiskConfig:
     sl_ratio_threshold: float
     symbol_sl_ratio_threshold: Dict[str, float]
     no_hedging: bool = True
-    max_equity_drawdown_percent: float = 2.0
+    max_profit_drawdown_percent: float = 2.0
     rolling_window_size: int = 0
     rolling_drawdown_pct: float = 0.0
     cluster_risk: ClusterRiskConfig = field(default_factory=ClusterRiskConfig)
@@ -582,7 +582,7 @@ class AppConfig:
                     ).items()
                 },
                 no_hedging=bool(risk.get("no_hedging", True)),
-                max_equity_drawdown_percent=float(risk.get("max_equity_drawdown_percent", 2.0)),
+                max_profit_drawdown_percent=float(risk.get("max_profit_drawdown_percent", 2.0)),
                 rolling_window_size=int(risk.get("rolling_window_size", 0)),
                 rolling_drawdown_pct=float(risk.get("rolling_drawdown_pct", 0.0)),
                 cluster_risk=_parse_cluster_risk(risk.get("cluster_risk")),

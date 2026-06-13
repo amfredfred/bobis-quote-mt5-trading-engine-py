@@ -41,8 +41,14 @@ risk:
     GBPUSD: 0.30   # forex
     USDJPY: 0.30   # forex
   no_hedging: true
-  # Intraday capital-protection guards (0 = disabled)
-  max_equity_drawdown_percent: 2.0
+  # Profit drawdown guard — pauses until midnight if today's closed P&L gives
+  # back this % of start-of-day equity from its session peak. Dormant until
+  # the first profitable close (nothing to protect until gains are banked).
+  # Set to 0 to disable.
+  max_profit_drawdown_percent: 2.0
+  # Rolling equity window guard — pauses if broker equity swings more than
+  # rolling_drawdown_pct% across the last rolling_window_size readings.
+  # Disabled when rolling_window_size < 3 (set to 0 to disable entirely).
   rolling_window_size: 2
   rolling_drawdown_pct: 2.0
   # Equity-curve risk throttle — halves position risk while recent realized

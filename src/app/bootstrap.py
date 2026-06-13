@@ -220,6 +220,9 @@ def _wire_events(container: AppContainer) -> None:
     def on_trade_closed(trade) -> None:
         container.cluster_tracker.mark_trade_closed(trade)
         container.equity_throttle.record_trade_closed(trade)
+        pnl = getattr(trade, "realized_pnl", None)
+        if pnl is not None:
+            container.loss_tracker.record_trade_closed(float(pnl))
 
     container.event_bus.on(Events.TRADE_CLOSED, on_trade_closed)
 

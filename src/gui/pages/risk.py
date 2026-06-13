@@ -116,11 +116,13 @@ class RiskPage(ctk.CTkScrollableFrame):
 
         _risk_field(
             equity_card.body,
-            label="Max Account Drawdown",
-            key="risk.max_equity_drawdown_percent",
+            label="Max Profit Drawdown",
+            key="risk.max_profit_drawdown_percent",
             unit="%",
-            tip="AQ Agent pauses all trading if live equity drops by this percentage from the day's opening balance.\n"
-                "Recommended: 1% – 10%.",
+            tip="Protects realized gains. AQ Agent pauses until midnight if today's closed\n"
+                "profit gives back this percentage of start-of-day equity from its session peak.\n"
+                "Guard is dormant until you have a profitable close — nothing to protect until then.\n"
+                "Recommended: 2% – 10%.",
             vars_dict=self._vars,
         )
 
@@ -280,7 +282,7 @@ class RiskPage(ctk.CTkScrollableFrame):
         _FIELD_MAP = {
             "risk.max_daily_loss_percent":      ("max_daily_loss_percent",      "2.5"),
             "risk.max_losing_streak":           ("max_losing_streak",           "3"),
-            "risk.max_equity_drawdown_percent": ("max_equity_drawdown_percent", "2.0"),
+            "risk.max_profit_drawdown_percent": ("max_profit_drawdown_percent", "2.0"),
             "risk.max_lot_size":                ("max_lot_size",                "100.0"),
         }
         for key, (field, default) in _FIELD_MAP.items():
@@ -297,7 +299,7 @@ class RiskPage(ctk.CTkScrollableFrame):
         _WRITE_MAP = {
             "risk.max_daily_loss_percent":      ("max_daily_loss_percent",      float),
             "risk.max_losing_streak":           ("max_losing_streak",           int),
-            "risk.max_equity_drawdown_percent": ("max_equity_drawdown_percent", float),
+            "risk.max_profit_drawdown_percent": ("max_profit_drawdown_percent", float),
             "risk.max_lot_size":                ("max_lot_size",                float),
         }
         errors:  list[str]         = []
@@ -323,8 +325,8 @@ class RiskPage(ctk.CTkScrollableFrame):
             v = int(updates["max_losing_streak"])
             if v < 1 or v > 10:
                 errors.append("Max Losing Streak must be between 1 and 10")
-        if "max_equity_drawdown_percent" in updates:
-            v = float(updates["max_equity_drawdown_percent"])
+        if "max_profit_drawdown_percent" in updates:
+            v = float(updates["max_profit_drawdown_percent"])
             if v <= 0 or v > 50:
                 errors.append("Max Account Drawdown must be between 0 and 50%")
         if "max_lot_size" in updates:

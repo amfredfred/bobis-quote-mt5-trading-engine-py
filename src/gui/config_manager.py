@@ -39,7 +39,7 @@ _ALLOWED_USER_PATHS: frozenset = frozenset({
     "mt5.path",
     "risk.max_losing_streak",
     "risk.max_daily_loss_percent",
-    "risk.max_equity_drawdown_percent",
+    "risk.max_profit_drawdown_percent",
     "risk.max_lot_size",
     "risk.no_hedging",
     "risk.equity_throttle.enabled",
@@ -160,7 +160,7 @@ class ConfigManager:
                     errors.append(f"{label} must be between {lo} and {hi}.")
 
         _check_float("max_daily_loss_percent",      "Daily Loss Limit",         lo=0,   hi=20,  inclusive_lo=True)
-        _check_float("max_equity_drawdown_percent", "Max Account Drawdown",     lo=0,   hi=50,  inclusive_lo=True)
+        _check_float("max_profit_drawdown_percent", "Max Profit Drawdown",      lo=0,   hi=50,  inclusive_lo=True)
         _check_float("max_lot_size",                "Max Lot Size",             lo=0,   hi=1e9, inclusive_lo=True)
 
         raw_streak = risk.get("max_losing_streak")

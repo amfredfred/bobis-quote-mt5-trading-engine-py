@@ -519,7 +519,7 @@ class UIBridge:
                 "sl_ratio_threshold": config.risk.sl_ratio_threshold,
                 "symbol_sl_ratio_threshold": dict(config.risk.symbol_sl_ratio_threshold),
                 "no_hedging": config.risk.no_hedging,
-                "max_equity_drawdown_percent": config.risk.max_equity_drawdown_percent,
+                "max_profit_drawdown_percent": config.risk.max_profit_drawdown_percent,
                 "rolling_window_size": config.risk.rolling_window_size,
                 "rolling_drawdown_pct": config.risk.rolling_drawdown_pct,
                 "equity_throttle": {
@@ -615,7 +615,7 @@ class UIBridge:
 
     def _build_risk_guards(self, lt: dict, config: Any) -> list[dict]:
         daily_loss  = lt.get("daily_loss_pct", 0.0)
-        eq_dd       = lt.get("equity_drawdown_pct", 0.0)
+        eq_dd       = lt.get("profit_drawback_pct", 0.0)
         paused      = lt.get("paused", False)
         reason      = (lt.get("pause_reason") or "").lower()
         rolling_on  = config.risk.rolling_window_size > 0 and config.risk.rolling_drawdown_pct > 0
@@ -653,8 +653,8 @@ class UIBridge:
         return [
             {"id": "guard1", "name": "DAILY LOSS",      "description": "Pause until midnight on breach",
              "status": _s("daily loss"),       "current_value": round(daily_loss, 4), "threshold": config.risk.max_daily_loss_percent,    "unit": "%"},
-            {"id": "guard2", "name": "EQUITY DRAWDOWN", "description": "Peak equity drawdown limit",
-             "status": _s("equity drawdown"),  "current_value": round(eq_dd, 4),      "threshold": config.risk.max_equity_drawdown_percent, "unit": "%"},
+            {"id": "guard2", "name": "PROFIT DRAWDOWN", "description": "Pause if session profit gives back this % of equity",
+             "status": _s("profit drawdown"),  "current_value": round(eq_dd, 4),      "threshold": config.risk.max_profit_drawdown_percent, "unit": "%"},
             {"id": "guard3", "name": "ROLLING WINDOW",  "description": f"Rolling {config.risk.rolling_window_size}-trade drawdown",
              "status": "DISABLED" if not rolling_on else _s("rolling drawdown"),
              "current_value": round(eq_dd, 4), "threshold": config.risk.rolling_drawdown_pct, "unit": "%"},
@@ -697,7 +697,7 @@ class UIBridge:
         daily_loss = lt.get("daily_loss_pct", 0.0)
         daily_budget = lt.get("daily_budget", 0.0)
         peak_eq    = lt.get("equity_peak", 0.0)
-        eq_dd      = lt.get("equity_drawdown_pct", 0.0)
+        eq_dd      = lt.get("profit_drawback_pct", 0.0)
 
         current_equity = account["equity"] if account else (peak_eq if peak_eq else start_eq)
         peak_equity = max(peak_eq, current_equity) if current_equity else peak_eq
