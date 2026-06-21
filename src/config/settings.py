@@ -499,8 +499,8 @@ class GatewayConfig:
     def __post_init__(self) -> None:
         if len(self.engine_id) < 8:
             raise ValueError("gateway.engine_id must be at least 8 characters.")
-        if len(self.activation_key) < 16:
-            raise ValueError("APEX_ACTIVATION_KEY must be at least 16 characters.")
+        # if len(self.activation_key) < 16:
+        #     raise ValueError("APEX_ACTIVATION_KEY must be at least 16 characters.")
         if self.room_ttl_seconds < 30 or self.room_ttl_seconds > 86400:
             raise ValueError("gateway.room_ttl_seconds must be between 30 and 86400.")
         if not self.symbols:

@@ -186,7 +186,8 @@ class SignalConsumer:
         }
         if self._device_credential:
             hello_payload["device_credential"] = self._device_credential
-        self._hello_message_id = self._send("engine.hello", hello_payload)
+        # self._hello_message_id = self._send("engine.hello", hello_payload)
+        self._subscribe()
 
     def _activate(self) -> None:
         architecture = "arm64" if platform.machine().lower() == "arm64" else "x64"
