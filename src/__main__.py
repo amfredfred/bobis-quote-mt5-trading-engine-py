@@ -1,59 +1,44 @@
-﻿"""
-Apex Quantel — agent entry point.
+"""
+Apex Quantel Execution Engine — entry point.
 
-Modes:
-    GUI (default)      python -m src
-    Headless service   python -m src --headless
-    Custom config      python -m src path/to/config.yaml
-    Headless + config  python -m src --headless config/custom.yaml
+Usage:
+    python -m src                      # config.yaml auto-located
+    python -m src path/to/config.yaml  # explicit config path
 
-GUI mode opens the desktop control panel.  The panel connects to the
-running apex-quant-trader-agent Windows service and lets you start/stop
-it, edit config, and monitor live trades.  Closing the GUI does NOT stop
-the engine service.
-
-Headless mode IS the service — run by NSSM directly.  The engine connects
-to the cloud gateway so the online dashboard works 24/7.
+This is a headless service — run directly, or via NSSM/systemd as a
+background service. It connects straight to the signal engine's own
+WebSocket server (no gateway, no GUI, no remote control).
 """
 
 from __future__ import annotations
 
+import logging
+import os
+import signal
 import sys
+import threading
+from pathlib import Path
+
+from src.app.bootstrap import bootstrap, shutdown
+from src.app.container import build_container
+from src.config.settings import AppConfig
+from src.infra.logger import setup_logging
+from src.utils import time as _time
+
+logger = logging.getLogger("main")
 
 
-def _is_headless() -> bool:
-    return "--headless" in sys.argv
-
-
-def _headless_main() -> None:
-    """
-    Original service-mode entry point — blocks until SIGINT / SIGTERM.
-    """
-    import logging
-    import os
-    import signal
-    import threading
-    from pathlib import Path
-
-    from src.app.bootstrap import bootstrap, shutdown
-    from src.app.container import build_container
-    from src.config.settings import AppConfig
-    from src.infra.logger import setup_logging
-    from src.utils import time as _time
-
-    logger = logging.getLogger("main")
-
-    # Explicit config path from CLI args takes priority.  If none is supplied,
-    # delegate to ConfigManager which applies the same priority rules the GUI
-    # uses: ProgramData → next to exe → walk-up → _MEIPASS → CWD.
-    _explicit_cfg = next(
+def main() -> None:
+    # Explicit config path from CLI args takes priority. If none is supplied,
+    # fall back to the same lookup order the packaged build has always used.
+    explicit_cfg = next(
         (a for a in sys.argv[1:] if not a.startswith("-")), None
     )
-    if _explicit_cfg:
-        config_path: str = _explicit_cfg
+    if explicit_cfg:
+        config_path: str = explicit_cfg
     else:
-        from src.gui.config_manager import ConfigManager as _CM
-        config_path = str(_CM().path)
+        from src.config.paths import locate_config_path
+        config_path = str(locate_config_path())
 
     cfg = AppConfig.from_yaml(config_path)
     setup_logging(cfg.log_level, cfg.engine_timezone)
@@ -67,29 +52,27 @@ def _headless_main() -> None:
     #   - Dev / source run: logs go adjacent to config.yaml as before.
     from src.infra.logger import add_file_handler
     if getattr(sys, "frozen", False):
-        import os as _os
-        _logs_dir = (
-            Path(_os.environ.get("PROGRAMDATA", "C:/ProgramData"))
+        logs_dir = (
+            Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
             / "Apex Quantel"
             / "logs"
         )
     else:
-        _cfg_resolved = Path(config_path).resolve()
-        _logs_dir = _cfg_resolved.parent / "logs"
+        cfg_resolved = Path(config_path).resolve()
+        logs_dir = cfg_resolved.parent / "logs"
     try:
-        add_file_handler(_logs_dir, cfg.engine_timezone)
-    except Exception as _fh_exc:
-        # Non-fatal: stdout logging still works; NSSM captures it too.
-        logger.warning("Could not enable file logging to %s: %s", _logs_dir, _fh_exc)
+        add_file_handler(logs_dir, cfg.engine_timezone)
+    except Exception as exc:
+        # Non-fatal: stdout logging still works; NSSM/systemd capture it too.
+        logger.warning("Could not enable file logging to %s: %s", logs_dir, exc)
 
     logger.info(
-        "Execution Engine initialising (headless)",
+        "Execution Engine initialising",
         extra={
             "pid":               os.getpid(),
             "python":            sys.executable,
-            "symbols":           cfg.gateway.symbols,
-            "gateway_ws":        cfg.gateway.ws_url,
-            "engine_id":         cfg.gateway.engine_id,
+            "symbols":           cfg.signal_engine.symbols,
+            "signal_engine_ws":  cfg.signal_engine.ws_url,
             "mt5_login":         cfg.mt5.login,
             "mt5_server":        cfg.mt5.server,
             "mt5_path":          cfg.mt5.path,
@@ -151,49 +134,6 @@ def _headless_main() -> None:
     finally:
         shutdown(container)
         lock_file.close()
-
-
-def _gui_main() -> None:
-    """
-    Launch the CustomTkinter desktop app — single instance only.
-
-    On Windows a named mutex is created before the window opens.  If another
-    GUI process already holds that mutex we focus its window and exit silently.
-    """
-    if sys.platform == "win32":
-        import ctypes
-
-        _MUTEX_NAME = "Global\\ApexQuantel_GUI_v1"
-        _ERROR_ALREADY_EXISTS = 183
-
-        kernel32 = ctypes.windll.kernel32
-        _mutex = kernel32.CreateMutexW(None, True, _MUTEX_NAME)
-        if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
-            # Another instance is running — bring its window to the foreground.
-            user32 = ctypes.windll.user32
-            hwnd = user32.FindWindowW(None, "Apex Quantel")
-            if hwnd:
-                # Restore if minimised, then force to front.
-                SW_RESTORE = 9
-                user32.ShowWindow(hwnd, SW_RESTORE)
-                user32.SetForegroundWindow(hwnd)
-            # Release our handle and exit without showing a window.
-            kernel32.CloseHandle(_mutex)
-            sys.exit(0)
-        # Keep _mutex referenced so Python doesn't GC it before mainloop exits.
-        # It is released automatically when the process ends.
-        _gui_main._mutex = _mutex  # type: ignore[attr-defined]
-
-    from src.gui.app import ApexTraderGUI, resolve_config_path
-    app = ApexTraderGUI(config_path=resolve_config_path(sys.argv))
-    app.mainloop()
-
-
-def main() -> None:
-    if _is_headless():
-        _headless_main()
-    else:
-        _gui_main()
 
 
 if __name__ == "__main__":

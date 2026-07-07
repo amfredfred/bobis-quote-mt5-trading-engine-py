@@ -1,15 +1,13 @@
 """
 app/bootstrap.py — wires event bus subscriptions and starts all services.
 
-Startup order (revised):
+Startup order:
   1. DB + metrics init
-  2. UIBridge WebSocket server starts immediately → GUI can always connect
-  3. Non-MT5 services wire up
-  4. MT5 connection attempted in a daemon thread with exponential back-off
+  2. MT5 connection attempted in a daemon thread with exponential back-off
      → trading services (position_manager, signal_queue, signal_consumer)
        start only after MT5 is authenticated
-  5. If MT5 never connects the service stays alive, the GUI shows the error,
-     and the engine retries automatically (no manual restarts needed).
+  3. If MT5 never connects the service stays alive and retries automatically
+     (no manual restarts needed) — errors are logged, not surfaced to a GUI.
 """
 
 from __future__ import annotations
@@ -34,25 +32,15 @@ logger = logging.getLogger(__name__)
 
 def bootstrap(container: AppContainer, config: AppConfig) -> None:
     """
-    Start the engine.  Returns as soon as UIBridge is listening.
-    MT5 is connected asynchronously — the GUI will update automatically
-    when it comes online.
+    Start the engine. MT5 is connected asynchronously in the background;
+    trading services come online once it authenticates.
     """
-    # ── DB ────────────────────────────────────────────────────────────────────
+    # ── DB ────────────────────────────────────────────────────────────────
     container.db.init()
     container.trade_repo.init()
     metrics.init_db(container.db)
 
-    # ── UIBridge (start FIRST so the GUI can connect immediately) ─────────────
-    from src.infra.ui_bridge import UIBridge  # local import avoids circular dep
-    container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
-    container.signal_consumer.set_snapshot_provider(
-        container.ui_bridge.build_remote_snapshot
-    )
-    _wire_commands(container)
-    container.ui_bridge.start()
-
-    # ── MT5 + trading services (background, retries forever) ──────────────────
+    # ── MT5 + trading services (background, retries forever) ────────────────
     t = threading.Thread(
         target=_connect_mt5_with_retry,
         args=(container, config),
@@ -61,7 +49,7 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     )
     t.start()
 
-    logger.info("Engine started — UIBridge up, awaiting MT5 connection")
+    logger.info("Engine started — awaiting MT5 connection")
 
 
 def shutdown(container: AppContainer) -> None:
@@ -70,8 +58,6 @@ def shutdown(container: AppContainer) -> None:
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()
-    if container.ui_bridge:
-        container.ui_bridge.stop()
     container.mt5_client.disconnect()
     metrics.stop()
     logger.info("Shutdown complete")
@@ -87,8 +73,8 @@ _MT5_RETRY_DELAYS = [5, 10, 15, 30, 60]   # seconds; last value repeats
 def _connect_mt5_with_retry(container: AppContainer, config: AppConfig) -> None:
     """
     Keep trying to connect to MT5 until it succeeds, then start the
-    trading services.  Runs in a daemon thread so the service (and UIBridge)
-    stay alive regardless.
+    trading services. Runs in a daemon thread so the service stays alive
+    regardless.
     """
     attempt = 0
     while True:
@@ -103,13 +89,11 @@ def _connect_mt5_with_retry(container: AppContainer, config: AppConfig) -> None:
                 "MT5 connection failed (attempt %d) — retrying in %ds: %s",
                 attempt, delay, exc,
             )
-            # Surface the error to the GUI via UIBridge snapshot
-            _broadcast_mt5_error(container, str(exc))
             time.sleep(delay)
 
 
 def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
-    """Single connection attempt.  Raises on any failure."""
+    """Single connection attempt. Raises on any failure."""
     container.mt5_client.connect()
 
     try:
@@ -181,24 +165,15 @@ def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
     logger.info(
         "Execution Engine fully online",
         extra={
-            "symbols":           config.gateway.symbols,
-            "gateway_ws":        config.gateway.ws_url,
+            "symbols":           config.signal_engine.symbols,
+            "signal_engine_ws":  config.signal_engine.ws_url,
             "max_losing_streak": config.risk.max_losing_streak,
         },
     )
 
 
-def _broadcast_mt5_error(container: AppContainer, error: str) -> None:
-    """Push the MT5 error into the UIBridge so the GUI sees it immediately."""
-    try:
-        if container.ui_bridge:
-            container.ui_bridge.push_event("mt5.error", {"message": error})
-    except Exception:
-        pass   # UIBridge might not be ready yet on the very first attempt
-
-
 def _wire_events(container: AppContainer) -> None:
-    """Register event-bus subscribers.  Called once after MT5 connects."""
+    """Register event-bus subscribers. Called once after MT5 connects."""
     def on_signal_triggered(signal: InboundSignal) -> None:
         resolved = container.mt5_positions.resolve_symbol(signal.symbol)
         if not resolved:
@@ -230,30 +205,3 @@ def _wire_events(container: AppContainer) -> None:
         metrics.increment(f"events.{event}")
 
     container.event_bus.on_any(on_any_event)
-    container.event_bus.on_any(container.signal_consumer.report_event)
-
-
-def _wire_commands(container: AppContainer) -> None:
-    """Register command callbacks for pause/resume/emergency-stop."""
-    def _on_pause() -> None:
-        if container.signal_queue.is_paused():
-            raise ValueError("ENGINE_ALREADY_PAUSED")
-        container.signal_queue.pause()
-
-    def _on_resume() -> None:
-        if not container.signal_queue.is_paused():
-            raise ValueError("ENGINE_NOT_PAUSED")
-        container.signal_queue.resume()
-
-    def _on_emergency_stop() -> None:
-        open_trades = container.position_store.get_open_trades()
-        if not open_trades:
-            raise ValueError("NO_OPEN_POSITIONS")
-        container.signal_queue.pause()
-        container.position_manager.emergency_close_all()
-
-    container.signal_consumer.set_command_callbacks(
-        on_pause=_on_pause,
-        on_resume=_on_resume,
-        on_emergency_stop=_on_emergency_stop,
-    )

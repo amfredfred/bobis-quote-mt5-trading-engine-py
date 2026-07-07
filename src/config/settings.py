@@ -1,6 +1,11 @@
 """
 Application configuration — loaded from config.yaml at startup.
 
+Every value comes from config.yaml — there are no hidden internal defaults.
+If a required key is missing, from_yaml() raises a clear error naming the
+exact config.yaml path that needs to be filled in. See config.example.yaml
+for a fully-populated reference file.
+
 Usage:
     cfg = AppConfig.from_yaml()                    # looks for config.yaml in cwd
     cfg = AppConfig.from_yaml("path/to/config.yaml")
@@ -20,132 +25,14 @@ from dotenv import load_dotenv
 from src.utils.symbol import normalise_symbol
 
 
-# ── Internal defaults ─────────────────────────────────────────────────────────
-# These values are platform-controlled and must not be editable by users.
-# They are merged as the base layer before user config is applied, so a slim
-# user_settings.yaml (containing only the allowed user paths) still produces a
-# fully-populated AppConfig.
-
-
-def _resolve_engine_version() -> str:
-    """Best-effort read of version.txt (exe dir, cwd, repo root).
-
-    The packaged build ships version.txt beside the exe (engine.spec) and the
-    auto-updater rewrites it, so this is the single source of truth for the
-    version the engine reports in its gateway handshake.
-    """
-    import sys
-
-    candidates = [
-        Path(sys.executable).parent / "version.txt",
-        Path("version.txt"),
-        Path(__file__).resolve().parents[2] / "version.txt",
-    ]
-    for candidate in candidates:
-        try:
-            if candidate.exists():
-                version = candidate.read_text(encoding="utf-8-sig").strip()
-                if version:
-                    return version
-        except Exception:
-            continue
-    return "0.1.0"
-
-
-_INTERNAL_DEFAULTS: dict = {
-    "gateway": {
-        "ws_url": "wss://apex-gateway.somicast.com/engine",
-        "engine_version": _resolve_engine_version(),
-        "room_ttl_seconds": 3600,
-        "symbols": ["XAUUSD"],
-    },
-    "mt5": {
-        "magic": 8858,
-        "slippage": 10,
-        "comment": "bobisquote",
-    },
-    "risk": {
-        "max_exposure_per_symbol": 2,
-        "min_rr_ratio": 1.0,
-        "min_lot_size": 0.01,
-        "sl_ratio_threshold": 0.35,
-        "symbol_sl_ratio_threshold": {
-            "XAUUSD": 0.35,
-            "US100": 0.20,
-            "US500": 0.20,
-        },
-        "rolling_window_size": 2,
-        "rolling_drawdown_pct": 2.0,
-        "equity_throttle": {
-            "enabled": True,
-            "drawdown_threshold_r": 8.0,
-            "release_threshold_r": 6.0,
-            "risk_multiplier": 0.5,
-            "window_days": 30,
-        },
-        "cluster_risk": {
-            "enabled": False,
-            "groups": [
-                {
-                    "name": "indices",
-                    "symbols": ["US100", "US500", "US30"],
-                    "max_same_day_loss_r": 1.5,
-                    "max_concurrent_positions": 2,
-                    "max_same_day_losses": 2,
-                    "after_first_loss_risk_multiplier": 0.5,
-                    "min_trade_risk_multiplier": 0.25,
-                },
-                {
-                    "name": "metals",
-                    "symbols": ["XAUUSD", "XAGUSD"],
-                    "max_same_day_loss_r": 1.5,
-                    "max_concurrent_positions": 2,
-                    "max_same_day_losses": 2,
-                    "after_first_loss_risk_multiplier": 0.5,
-                    "min_trade_risk_multiplier": 0.25,
-                },
-            ],
-        },
-    },
-    "execution": {
-        "tp1_trigger_pct": 50.0,
-        "tp1_percentage": 0.0,
-        "move_sl_to_be_on_tp1": True,
-        "breakeven_spread_multiplier": 1.5,
-        "breakeven_max_buffer_pct_of_risk": 10.0,
-        "tf_overrides": {
-            "*": {
-                "5/5":   {"tp1_trigger_pct": 45.0},
-                "30/30": {"tp1_trigger_pct": 45.0},
-            },
-        },
-        "spread_risk_multiplier": 1.0,
-        "order_retry_count": 2,
-        "order_retry_delay_sec": 0.5,
-        "max_entry_slippage_pct_of_stop": 0.20,
-        "max_signal_age_ms": 120_000,
-        "close_on_slippage_exceed": False,
-        "adjust_levels_on_slippage": False,
-    },
-    "engine": {
-        "timezone": "UTC",
-        "log_level": "INFO",
-        "storage_path": "./data",
-        "monitoring_port": 8080,
-        "position_poll_interval": 0.6,
-    },
-}
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    """Return a new dict: override wins on scalar conflicts; dicts are merged recursively."""
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
+def _require(mapping: dict, key: str, section: str) -> Any:
+    """Fetch a required key or raise a clear, actionable config error."""
+    if key not in mapping:
+        raise ValueError(
+            f"config.yaml is missing required key: {section}.{key}  "
+            f"(see config.example.yaml for a fully-populated reference)"
+        )
+    return mapping[key]
 
 
 def _validate_pct_range(name: str, value: float) -> None:
@@ -299,20 +186,27 @@ class EquityThrottleConfig:
 
 def _parse_equity_throttle(raw: Any) -> "EquityThrottleConfig":
     if not raw:
-        return EquityThrottleConfig()
+        # Block omitted entirely = feature off. Values are inert while
+        # disabled but must still satisfy __post_init__'s validation.
+        return EquityThrottleConfig(
+            enabled=False,
+            drawdown_threshold_r=1.0,
+            release_threshold_r=1.0,
+            risk_multiplier=1.0,
+            window_days=1,
+        )
     if not isinstance(raw, dict):
         raise ValueError("risk.equity_throttle must be a mapping.")
-    defaults = EquityThrottleConfig()
     return EquityThrottleConfig(
-        enabled=bool(raw.get("enabled", defaults.enabled)),
+        enabled=bool(_require(raw, "enabled", "risk.equity_throttle")),
         drawdown_threshold_r=float(
-            raw.get("drawdown_threshold_r", defaults.drawdown_threshold_r)
+            _require(raw, "drawdown_threshold_r", "risk.equity_throttle")
         ),
         release_threshold_r=float(
-            raw.get("release_threshold_r", defaults.release_threshold_r)
+            _require(raw, "release_threshold_r", "risk.equity_throttle")
         ),
-        risk_multiplier=float(raw.get("risk_multiplier", defaults.risk_multiplier)),
-        window_days=int(raw.get("window_days", defaults.window_days)),
+        risk_multiplier=float(_require(raw, "risk_multiplier", "risk.equity_throttle")),
+        window_days=int(_require(raw, "window_days", "risk.equity_throttle")),
     )
 
 
@@ -342,18 +236,28 @@ def _parse_cluster_risk(raw: Any) -> "ClusterRiskConfig":
         group = ClusterGroupConfig(
             name=str(item["name"]),
             symbols=tuple(normalise_symbol(str(s)) for s in symbols_raw),
-            max_same_day_loss_r=float(item.get("max_same_day_loss_r", 1.5)),
-            max_concurrent_positions=int(item.get("max_concurrent_positions", 2)),
-            max_same_day_losses=int(item.get("max_same_day_losses", 2)),
-            after_first_loss_risk_multiplier=float(
-                item.get("after_first_loss_risk_multiplier", 0.5)
+            max_same_day_loss_r=float(
+                _require(item, "max_same_day_loss_r", "risk.cluster_risk.groups[]")
             ),
-            min_trade_risk_multiplier=float(item.get("min_trade_risk_multiplier", 0.25)),
+            max_concurrent_positions=int(
+                _require(item, "max_concurrent_positions", "risk.cluster_risk.groups[]")
+            ),
+            max_same_day_losses=int(
+                _require(item, "max_same_day_losses", "risk.cluster_risk.groups[]")
+            ),
+            after_first_loss_risk_multiplier=float(
+                _require(
+                    item, "after_first_loss_risk_multiplier", "risk.cluster_risk.groups[]"
+                )
+            ),
+            min_trade_risk_multiplier=float(
+                _require(item, "min_trade_risk_multiplier", "risk.cluster_risk.groups[]")
+            ),
         )
         groups.append(group)
 
     return ClusterRiskConfig(
-        enabled=bool(raw.get("enabled", False)),
+        enabled=bool(_require(raw, "enabled", "risk.cluster_risk")),
         groups=tuple(groups),
     )
 
@@ -487,24 +391,13 @@ class Mt5Config:
 
 
 @dataclass(frozen=True)
-class GatewayConfig:
+class SignalEngineConfig:
     ws_url: str
-    activation_key: str
-    engine_id: str
-    engine_version: str
     symbols: list[str]
-    room_ttl_seconds: int
-    signal_hmac_secret: Optional[str] = None
 
     def __post_init__(self) -> None:
-        if len(self.engine_id) < 8:
-            raise ValueError("gateway.engine_id must be at least 8 characters.")
-        # if len(self.activation_key) < 16:
-        #     raise ValueError("APEX_ACTIVATION_KEY must be at least 16 characters.")
-        if self.room_ttl_seconds < 30 or self.room_ttl_seconds > 86400:
-            raise ValueError("gateway.room_ttl_seconds must be between 30 and 86400.")
         if not self.symbols:
-            raise ValueError("gateway.symbols must contain at least one symbol.")
+            raise ValueError("signal_engine.symbols must contain at least one symbol.")
 
 
 @dataclass(frozen=True)
@@ -512,107 +405,132 @@ class AppConfig:
     risk: RiskConfig
     execution: ExecutionConfig
     mt5: Mt5Config
-    gateway: GatewayConfig
+    signal_engine: SignalEngineConfig
     storage_path: str
     log_level: str
     position_poll_interval: float
     engine_timezone: ZoneInfo
-    monitoring_port: int
 
     @classmethod
     def from_yaml(cls, path: Path | str = "config.yaml") -> "AppConfig":
         # Load .env if present — kept for backward compatibility with existing
-        # installations that still have a .env file.  New installs write
+        # installations that still have a .env file. New installs write
         # everything into config.yaml and no longer need .env.
         load_dotenv(override=False)
 
         with open(path, "r", encoding="utf-8") as fh:
-            raw: dict = _deep_merge(_INTERNAL_DEFAULTS, yaml.safe_load(fh) or {})
+            raw: dict = yaml.safe_load(fh) or {}
 
-        gateway = raw.get("gateway", {})
+        # "signal_engine" is the current key; "gateway" is accepted as a
+        # fallback so existing config.yaml files from before this engine
+        # connected directly to the signal engine keep working unmodified.
+        signal_engine = raw.get("signal_engine") or raw.get("gateway") or {}
         mt5 = raw.get("mt5", {})
         risk = raw.get("risk", {})
         exe = raw.get("execution", {})
         eng = raw.get("engine", {})
 
-        gateway_symbols_raw = gateway.get("symbols", [])
-        if isinstance(gateway_symbols_raw, str):
-            gateway_symbols_raw = [s.strip() for s in gateway_symbols_raw.split(",")]
+        signal_engine_symbols_raw = _require(signal_engine, "symbols", "signal_engine")
+        if isinstance(signal_engine_symbols_raw, str):
+            signal_engine_symbols_raw = [
+                s.strip() for s in signal_engine_symbols_raw.split(",")
+            ]
 
-        # Secrets: prefer config.yaml values; fall back to env vars so that
-        # existing .env-based installs continue to work without reconfiguration.
+        # Secret: prefer config.yaml, fall back to MT5_PASSWORD env var so
+        # existing .env-based installs don't need to put a password in a
+        # committed file. One of the two must be set — this is the only
+        # value in this file allowed to come from outside config.yaml.
         mt5_password = str(mt5.get("password") or os.environ.get("MT5_PASSWORD", ""))
-        activation_key = str(
-            gateway.get("activation_key") or os.environ.get("APEX_ACTIVATION_KEY", "")
-        )
-        signal_hmac_secret = (
-            gateway.get("signal_hmac_secret") or os.environ.get("SIGNAL_HMAC_SECRET") or None
-        )
+        if not mt5_password:
+            raise ValueError(
+                "mt5.password is not set in config.yaml and MT5_PASSWORD is not "
+                "set in the environment — one of the two is required."
+            )
 
         return cls(
-            gateway=GatewayConfig(
-                ws_url=str(gateway["ws_url"]),
-                activation_key=activation_key,
-                engine_id=str(gateway.get("engine_id", f"execution-{mt5['login']}")),
-                engine_version=str(gateway.get("engine_version", "0.1.0")),
+            signal_engine=SignalEngineConfig(
+                ws_url=str(_require(signal_engine, "ws_url", "signal_engine")),
                 symbols=[
-                    normalise_symbol(str(symbol)) for symbol in gateway_symbols_raw
+                    normalise_symbol(str(symbol)) for symbol in signal_engine_symbols_raw
                 ],
-                room_ttl_seconds=int(gateway.get("room_ttl_seconds", 3600)),
-                signal_hmac_secret=signal_hmac_secret,
             ),
             mt5=Mt5Config(
-                login=int(mt5["login"]),
+                login=int(_require(mt5, "login", "mt5")),
                 password=mt5_password,
-                server=str(mt5["server"]),
+                server=str(_require(mt5, "server", "mt5")),
                 path=str(mt5.get("path", "")),
             ),
             risk=RiskConfig(
-                max_losing_streak=int(risk["max_losing_streak"]),
-                max_daily_loss_percent=float(risk["max_daily_loss_percent"]),
-                max_exposure_per_symbol=int(risk["max_exposure_per_symbol"]),
-                min_rr_ratio=float(risk["min_rr_ratio"]),
-                max_lot_size=float(risk["max_lot_size"]),
-                min_lot_size=float(risk.get("min_lot_size", 0.01)),
-                sl_ratio_threshold=float(risk["sl_ratio_threshold"]),
+                max_losing_streak=int(_require(risk, "max_losing_streak", "risk")),
+                max_daily_loss_percent=float(
+                    _require(risk, "max_daily_loss_percent", "risk")
+                ),
+                max_exposure_per_symbol=int(
+                    _require(risk, "max_exposure_per_symbol", "risk")
+                ),
+                min_rr_ratio=float(_require(risk, "min_rr_ratio", "risk")),
+                max_lot_size=float(_require(risk, "max_lot_size", "risk")),
+                min_lot_size=float(_require(risk, "min_lot_size", "risk")),
+                sl_ratio_threshold=float(_require(risk, "sl_ratio_threshold", "risk")),
+                # Per-symbol override map — omitting it means no per-symbol
+                # overrides, which is a structural choice, not a defaulted value.
                 symbol_sl_ratio_threshold={
                     normalise_symbol(str(symbol)): float(threshold)
                     for symbol, threshold in risk.get(
                         "symbol_sl_ratio_threshold", {}
                     ).items()
                 },
-                no_hedging=bool(risk.get("no_hedging", True)),
-                max_profit_drawdown_percent=float(risk.get("max_profit_drawdown_percent", 2.0)),
-                rolling_window_size=int(risk.get("rolling_window_size", 0)),
-                rolling_drawdown_pct=float(risk.get("rolling_drawdown_pct", 0.0)),
+                no_hedging=bool(_require(risk, "no_hedging", "risk")),
+                max_profit_drawdown_percent=float(
+                    _require(risk, "max_profit_drawdown_percent", "risk")
+                ),
+                rolling_window_size=int(_require(risk, "rolling_window_size", "risk")),
+                rolling_drawdown_pct=float(
+                    _require(risk, "rolling_drawdown_pct", "risk")
+                ),
+                # Structural feature blocks: omitted entirely = feature off.
                 cluster_risk=_parse_cluster_risk(risk.get("cluster_risk")),
                 equity_throttle=_parse_equity_throttle(risk.get("equity_throttle")),
             ),
             execution=ExecutionConfig(
-                tp1_trigger_pct=float(exe["tp1_trigger_pct"]),
-                tp1_percentage=float(exe["tp1_percentage"]),
-                move_sl_to_be_on_tp1=bool(exe.get("move_sl_to_be_on_tp1", True)),
-                slippage=int(mt5.get("slippage", 10)),
-                magic=int(mt5.get("magic", 20240101)),
-                comment=str(mt5.get("comment", "signal-engine")),
-                spread_risk_multiplier=float(exe.get("spread_risk_multiplier", 1.0)),
-                order_retry_count=int(exe.get("order_retry_count", 2)),
-                max_entry_slippage_pct_of_stop=float(exe.get("max_entry_slippage_pct_of_stop", 0.20)),
-                close_on_slippage_exceed=bool(exe.get("close_on_slippage_exceed", False)),
-                order_retry_delay_sec=float(exe.get("order_retry_delay_sec", 0.5)),
+                tp1_trigger_pct=float(_require(exe, "tp1_trigger_pct", "execution")),
+                tp1_percentage=float(_require(exe, "tp1_percentage", "execution")),
+                move_sl_to_be_on_tp1=bool(
+                    _require(exe, "move_sl_to_be_on_tp1", "execution")
+                ),
+                slippage=int(_require(mt5, "slippage", "mt5")),
+                magic=int(_require(mt5, "magic", "mt5")),
+                comment=str(_require(mt5, "comment", "mt5")),
+                spread_risk_multiplier=float(
+                    _require(exe, "spread_risk_multiplier", "execution")
+                ),
+                order_retry_count=int(_require(exe, "order_retry_count", "execution")),
+                max_entry_slippage_pct_of_stop=float(
+                    _require(exe, "max_entry_slippage_pct_of_stop", "execution")
+                ),
+                close_on_slippage_exceed=bool(
+                    _require(exe, "close_on_slippage_exceed", "execution")
+                ),
+                order_retry_delay_sec=float(
+                    _require(exe, "order_retry_delay_sec", "execution")
+                ),
                 breakeven_spread_multiplier=float(
-                    exe.get("breakeven_spread_multiplier", 1.5)
+                    _require(exe, "breakeven_spread_multiplier", "execution")
                 ),
                 breakeven_max_buffer_pct_of_risk=float(
-                    exe.get("breakeven_max_buffer_pct_of_risk", 10.0)
+                    _require(exe, "breakeven_max_buffer_pct_of_risk", "execution")
                 ),
-                adjust_levels_on_slippage=bool(exe.get("adjust_levels_on_slippage", False)),
-                max_signal_age_ms=int(exe.get("max_signal_age_ms", 90_000)),
+                adjust_levels_on_slippage=bool(
+                    _require(exe, "adjust_levels_on_slippage", "execution")
+                ),
+                max_signal_age_ms=int(_require(exe, "max_signal_age_ms", "execution")),
+                # Structural: omitted entirely = no per-symbol/timeframe overrides.
                 tf_overrides=_parse_tf_overrides(exe.get("tf_overrides")),
             ),
-            storage_path=str(eng.get("storage_path", "./data")),
-            log_level=str(eng.get("log_level", "INFO")),
-            position_poll_interval=float(eng.get("position_poll_interval", 5.0)),
-            engine_timezone=ZoneInfo(str(eng.get("timezone", "UTC"))),
-            monitoring_port=int(eng.get("monitoring_port", 8080)),
+            storage_path=str(_require(eng, "storage_path", "engine")),
+            log_level=str(_require(eng, "log_level", "engine")),
+            position_poll_interval=float(
+                _require(eng, "position_poll_interval", "engine")
+            ),
+            engine_timezone=ZoneInfo(str(_require(eng, "timezone", "engine"))),
         )

@@ -19,7 +19,6 @@ from src.execution.engine import ExecutionEngine
 from src.execution.order_manager import OrderManager
 from src.execution.planner import TradePlanner
 from src.infra.db import Database
-from src.infra.ui_bridge import UIBridge
 from src.positions.manager import PositionManager
 from src.positions.store import PositionStore
 from src.risk.cluster_tracker import ClusterRiskTracker
@@ -51,7 +50,6 @@ class AppContainer:
     loss_tracker: LossTracker
     cluster_tracker: ClusterRiskTracker
     equity_throttle: EquityThrottleTracker
-    ui_bridge: "UIBridge | None" = None
 
 
 def build_container(config: AppConfig) -> AppContainer:
@@ -123,15 +121,8 @@ def build_container(config: AppConfig) -> AppContainer:
     signal_consumer = SignalConsumer(
         event_bus=event_bus,
         validator=validator,
-        ws_url=config.gateway.ws_url,
-        activation_key=config.gateway.activation_key,
-        symbols=config.gateway.symbols,
-        engine_id=config.gateway.engine_id,
-        engine_version=config.gateway.engine_version,
-        room_ttl_seconds=config.gateway.room_ttl_seconds,
-        account_login=str(config.mt5.login),
-        signal_hmac_secret=config.gateway.signal_hmac_secret,
-        db=db,
+        ws_url=config.signal_engine.ws_url,
+        symbols=config.signal_engine.symbols,
     )
 
     # ── Strategies ────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 # ── Project metadata ───────────────────────────────────────────────────────────
 
 [project]
-name        = "apex-quant-trader-agent"
+name        = "aq-agent"
 version     = "0.1.0"
 description = "Apex Quantel — trade execution agent for MetaTrader 5"
 readme      = { text = "", content-type = "text/plain" }
@@ -27,7 +27,6 @@ dependencies = [
     "python-dotenv>=1.0",
     "tzdata>=2025.2",
     "websocket-client>=1.8.0",
-    "websockets>=12.0",
     "MetaTrader5>=5.0",
 ]
 
@@ -42,7 +41,7 @@ dev = [
 ]
 
 [project.scripts]
-apex-quant-trader-agent = "src.__main__:main"
+aq-agent = "src.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/apexquantel/apex-quant-trader"
@@ -82,7 +81,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["execution-engine"]
+known-first-party = ["src"]
 
 [tool.ruff.format]
 quote-style          = "double"
@@ -123,8 +122,8 @@ markers = [
 # ── Coverage ───────────────────────────────────────────────────────────────────
 
 [tool.coverage.run]
-source    = ["src/execution-engine"]
-omit      = ["*/__main__.py", "*/infra/html/*"]
+source    = ["src"]
+omit      = ["*/__main__.py"]
 branch    = true
 
 [tool.coverage.report]
