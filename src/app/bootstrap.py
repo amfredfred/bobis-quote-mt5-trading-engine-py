@@ -21,6 +21,7 @@ from src.app.container import AppContainer
 from src.config.settings import AppConfig
 from src.core.event_types import Events
 from src.infra.metrics import metrics
+from src.infra.ui_bridge import UIBridge
 from src.domain.signal_interface import InboundSignal
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,11 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     container.trade_repo.init()
     metrics.init_db(container.db)
 
+    # ── Dashboard bridge (starts immediately - doesn't wait on MT5) ────────
+    ui_bridge = UIBridge(container, config, port=config.monitoring_port)
+    ui_bridge.start()
+    container.ui_bridge = ui_bridge
+
     # ── MT5 + trading services (background, retries forever) ────────────────
     t = threading.Thread(
         target=_connect_mt5_with_retry,
@@ -55,6 +61,7 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 def shutdown(container: AppContainer) -> None:
     logger.info("Shutting down Execution Engine")
     container.event_bus.emit(Events.SYSTEM_STOPPING)
+    container.ui_bridge.stop()
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()

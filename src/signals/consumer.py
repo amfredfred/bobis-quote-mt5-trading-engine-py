@@ -124,6 +124,7 @@ class SignalConsumer:
             return
 
         metrics.increment(f"signal.received.{event}")
+        metrics.set_gauge("signals.last_received_at", float(now_ms()))
         self._process(event, payload)
 
     def _process(self, event: str, payload: dict) -> None:

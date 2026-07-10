@@ -20,15 +20,19 @@ import asyncio
 import collections
 import json
 import logging
+import os
+import platform
+import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import websockets
 import websockets.exceptions
 
-from src.infra.metrics import metrics
+from src.infra.metrics import get_cpu_percent, get_memory_mb, metrics
 
 if TYPE_CHECKING:
     from src.app.container import AppContainer
@@ -36,7 +40,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _read_version() -> str:
+    """Mirrors src/gui/app.py's _read_version() candidate paths (dev run vs frozen build)."""
+    for candidate in (
+        Path("version.txt"),
+        Path(sys.executable).parent / "version.txt",
+        Path(__file__).resolve().parent.parent.parent / "version.txt",
+    ):
+        try:
+            return candidate.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    return "?"
+
+
 _started_at = time.time()
+_ENGINE_VERSION = _read_version()
 _METRICS_PUSH_INTERVAL_SEC = 1.5
 _ACCOUNT_CACHE_TTL_SEC = 1.5
 # BUG-14 — Backpressure limits: the event queue drops oldest entries when full,
@@ -488,6 +508,7 @@ class UIBridge:
         return {
             "connected":   connected_mt5,
             "engine":      self._build_engine_info(lt),
+            "system":      self._build_system_info(snap.get("gauges", {})),
             "config":      self._build_config_snapshot(config),
             "trades":      [_serialize_trade(t) for t in trades],
             "riskGuards":  self._build_risk_guards(lt, config),
@@ -497,18 +518,31 @@ class UIBridge:
             "logs":        list(self._log_buf)[-50:],
         }
 
+    def _build_system_info(self, gauges: dict) -> dict:
+        last_received = gauges.get("signals.last_received_at")
+        return {
+            "version":               _ENGINE_VERSION,
+            "uptime_sec":            int(_uptime()),
+            "memory_mb":             round(get_memory_mb(), 1),
+            "cpu_percent":           get_cpu_percent(),
+            "python":                platform.python_version(),
+            "platform":              platform.system(),
+            "pid":                   os.getpid(),
+            "connected_clients":     len(self._clients),
+            "signals_last_received_at": last_received,
+        }
+
     def build_remote_snapshot(self) -> dict:
         snapshot = self._build_snapshot()
         snapshot.pop("config", None)
         snapshot.pop("logs", None)
         return snapshot
 
-    @staticmethod
-    def _build_config_snapshot(config: Any) -> dict:
+    def _build_config_snapshot(self, config: Any) -> dict:
         return {
             "mode": "LIVE",
-            "symbols": list(config.gateway.symbols),
-            "signal_ws_url": config.gateway.ws_url,
+            "symbols": list(config.signal_engine.symbols),
+            "signal_ws_url": config.signal_engine.ws_url,
             "risk": {
                 "max_losing_streak": config.risk.max_losing_streak,
                 "max_daily_loss_percent": config.risk.max_daily_loss_percent,
@@ -569,7 +603,7 @@ class UIBridge:
             "engine": {
                 "timezone": str(config.engine_timezone),
                 "position_poll_interval": config.position_poll_interval,
-                "monitoring_port": config.monitoring_port,
+                "monitoring_port": self._port,
             },
         }
 
@@ -609,7 +643,7 @@ class UIBridge:
             "mode":                    getattr(self._config, "mode", "LIVE"),
             "connected_mt5":           c.mt5_client.is_connected(),
             "connected_signal_engine": True,
-            "version":                 self._config.gateway.engine_version,
+            "version":                 getattr(self._config, "engine_version", _ENGINE_VERSION),
             "magic":                   self._config.execution.magic,
         }
 
@@ -714,8 +748,8 @@ class UIBridge:
         result = {
             "raw_counters":       counters,
             "raw_gauges":         gauges,
-            "configured_symbols":  list(config.gateway.symbols),
-            "active_symbol":       config.gateway.symbols[0] if config.gateway.symbols else None,
+            "configured_symbols":  list(config.signal_engine.symbols),
+            "active_symbol":       config.signal_engine.symbols[0] if config.signal_engine.symbols else None,
             "start_balance":      start_eq,
             "current_balance":    account["balance"] if account else current_equity,
             "equity":             current_equity,
@@ -775,6 +809,11 @@ class UIBridge:
             "latency_execution_pipeline_ms": int(gauges.get("latency.execution_pipeline_ms") or 0),
             "latency_pipeline_ms": int(gauges.get("latency.execution_pipeline_ms") or gauges.get("latency.pipeline_ms") or 0),
             "latency_broker_round_trip_ms": int(gauges.get("latency.broker_round_trip_ms") or 0),
+            "uptime_sec":         int(_uptime()),
+            "memory_mb":          round(get_memory_mb(), 1),
+            "cpu_percent":        get_cpu_percent(),
+            "connected_clients":  len(self._clients),
+            "signals_last_received_at": gauges.get("signals.last_received_at"),
         }
         if account:
             result.update(

@@ -11,6 +11,7 @@ Replace with prometheus_client for production scraping.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, Optional
@@ -21,6 +22,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 FLUSH_INTERVAL_SEC = 30
+
+
+def get_memory_mb() -> float:
+    """Resident memory of this process, in MB. 0.0 if unavailable."""
+    try:
+        import psutil
+
+        return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
+    except ImportError:
+        return 0.0
+
+
+def get_cpu_percent() -> Optional[float]:
+    """Process CPU usage since the last call. None if psutil isn't installed.
+
+    The non-blocking cpu_percent() reads 0.0 on its very first call per
+    process (needs a prior sample to diff against) - primed once at import
+    time below so the first real snapshot already has a meaningful value.
+    """
+    try:
+        import psutil
+
+        return psutil.Process(os.getpid()).cpu_percent(interval=None)
+    except ImportError:
+        return None
+
+
+get_cpu_percent()  # prime the baseline sample
 
 
 class Metrics:

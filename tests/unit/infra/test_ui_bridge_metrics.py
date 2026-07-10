@@ -88,12 +88,13 @@ class _Repo:
 def _bridge(trades: list | None = None) -> UIBridge:
     bridge = UIBridge.__new__(UIBridge)
     bridge._container = SimpleNamespace(signal_queue=_Queue(), trade_repo=_Repo(trades))
+    bridge._clients = set()
     return bridge
 
 
 def _config() -> SimpleNamespace:
     return SimpleNamespace(
-        gateway=SimpleNamespace(symbols=["XAUUSD"]),
+        signal_engine=SimpleNamespace(symbols=["XAUUSD"]),
         risk=SimpleNamespace(
             max_losing_streak=3,
             max_daily_loss_percent=2.0,

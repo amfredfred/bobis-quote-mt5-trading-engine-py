@@ -410,6 +410,7 @@ class AppConfig:
     log_level: str
     position_poll_interval: float
     engine_timezone: ZoneInfo
+    monitoring_port: int = 8080
 
     @classmethod
     def from_yaml(cls, path: Path | str = "config.yaml") -> "AppConfig":
@@ -533,4 +534,5 @@ class AppConfig:
                 _require(eng, "position_poll_interval", "engine")
             ),
             engine_timezone=ZoneInfo(str(_require(eng, "timezone", "engine"))),
+            monitoring_port=int(eng.get("monitoring_port", 8080)),
         )
