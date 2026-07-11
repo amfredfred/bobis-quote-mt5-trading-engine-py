@@ -512,7 +512,7 @@ class UIBridge:
             "system":      self._build_system_info(snap.get("gauges", {})),
             "config":      self._build_config_snapshot(config),
             "trades":      [_serialize_trade(t) for t in trades],
-            "riskGuards":  self._build_risk_guards(lt, config),
+            "riskGuards":  self._build_risk_guards(lt, config, snap.get("gauges", {})),
             "clusterRisk": c.cluster_tracker.stats(),
             "metrics":     self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
             "signals":     list(self._signal_buf),
@@ -662,7 +662,7 @@ class UIBridge:
             "magic":                   self._config.execution.magic,
         }
 
-    def _build_risk_guards(self, lt: dict, config: Any) -> list[dict]:
+    def _build_risk_guards(self, lt: dict, config: Any, gauges: dict) -> list[dict]:
         daily_loss  = lt.get("daily_loss_pct", 0.0)
         eq_dd       = lt.get("profit_drawback_pct", 0.0)
         paused      = lt.get("paused", False)
@@ -713,6 +713,10 @@ class UIBridge:
             {"id": "guard5", "name": "EQUITY THROTTLE", "description": throttle_desc,
              "status": "DISABLED" if not throttle.get("enabled") else "ACTIVE",
              "current_value": throttle.get("drawdown_r", 0.0), "threshold": throttle.get("threshold_r", 0.0), "unit": "R"},
+            {"id": "guard6", "name": "ENTRY DRIFT", "description": "Rejects if live fill has drifted this % of signal risk from entry",
+             "status": "DISABLED" if not config.risk.entry_drift.enabled else "ACTIVE",
+             "current_value": round(gauges.get("risk.last_entry_drift_pct_of_risk", 0.0), 2),
+             "threshold": config.risk.entry_drift.max_drift_pct_of_risk, "unit": "%"},
         ]
 
     def _build_metrics(self) -> dict:

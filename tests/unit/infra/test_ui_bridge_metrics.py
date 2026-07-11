@@ -32,6 +32,7 @@ def _guards_config() -> SimpleNamespace:
             rolling_window_size=2,
             rolling_drawdown_pct=2.0,
             cluster_risk=SimpleNamespace(enabled=False, groups=[]),
+            entry_drift=SimpleNamespace(enabled=False, max_drift_pct_of_risk=25.0),
         )
     )
 
@@ -57,7 +58,7 @@ def test_risk_guards_include_engaged_equity_throttle() -> None:
     bridge = _guards_bridge(
         _throttle_stats(engaged=True, multiplier=0.5, drawdown_r=9.2, samples=120)
     )
-    guards = bridge._build_risk_guards(dict(_LT), _guards_config())
+    guards = bridge._build_risk_guards(dict(_LT), _guards_config(), {})
 
     g5 = next(g for g in guards if g["id"] == "guard5")
     assert g5["name"] == "EQUITY THROTTLE"
@@ -70,11 +71,36 @@ def test_risk_guards_include_engaged_equity_throttle() -> None:
 
 def test_risk_guards_equity_throttle_disabled_state() -> None:
     bridge = _guards_bridge(_throttle_stats(enabled=False))
-    guards = bridge._build_risk_guards(dict(_LT), _guards_config())
+    guards = bridge._build_risk_guards(dict(_LT), _guards_config(), {})
 
     g5 = next(g for g in guards if g["id"] == "guard5")
     assert g5["status"] == "DISABLED"
     assert "Halves risk" in g5["description"]
+
+
+def test_risk_guards_entry_drift_disabled_by_default() -> None:
+    bridge = _guards_bridge(_throttle_stats())
+    guards = bridge._build_risk_guards(dict(_LT), _guards_config(), {})
+
+    g6 = next(g for g in guards if g["id"] == "guard6")
+    assert g6["name"] == "ENTRY DRIFT"
+    assert g6["status"] == "DISABLED"
+    assert g6["threshold"] == 25.0
+    assert g6["current_value"] == 0.0
+
+
+def test_risk_guards_entry_drift_enabled_reflects_live_gauge() -> None:
+    bridge = _guards_bridge(_throttle_stats())
+    config = _guards_config()
+    config.risk.entry_drift = SimpleNamespace(enabled=True, max_drift_pct_of_risk=25.0)
+
+    guards = bridge._build_risk_guards(
+        dict(_LT), config, {"risk.last_entry_drift_pct_of_risk": 13.4}
+    )
+
+    g6 = next(g for g in guards if g["id"] == "guard6")
+    assert g6["status"] == "ACTIVE"
+    assert g6["current_value"] == 13.4
 
 
 class _Repo:
