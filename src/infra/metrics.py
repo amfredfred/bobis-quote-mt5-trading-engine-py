@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Dict, Optional
 
 if TYPE_CHECKING:
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 FLUSH_INTERVAL_SEC = 30
+REJECTION_LOG_MAXLEN = 200
 
 
 def get_memory_mb() -> float:
@@ -57,6 +58,7 @@ class Metrics:
         self._lock: threading.Lock = threading.Lock()
         self._counters: Dict[str, int] = defaultdict(int)
         self._gauges: Dict[str, float] = {}
+        self._rejections: "deque[dict]" = deque(maxlen=REJECTION_LOG_MAXLEN)
         self._db: Optional["Database"] = None
         self._flush_timer: Optional[threading.Timer] = None
 
@@ -137,6 +139,24 @@ class Metrics:
                 "counters": dict(self._counters),
                 "gauges": dict(self._gauges),
             }
+
+    # ── Risk rejections (in-memory ring buffer, not persisted) ─────────────
+    #
+    # Every "Risk rejected" log line already carries the forensic fields
+    # needed to diagnose an RRR collapse (both R:Rs, live bid/ask, fill
+    # price) but was only ever grep-able from raw logs. This makes that same
+    # data queryable in-process for a dashboard or ad-hoc inspection.
+
+    def record_rejection(self, record: dict) -> None:
+        with self._lock:
+            self._rejections.append(record)
+
+    def recent_rejections(self, rule: Optional[str] = None, limit: int = 50) -> list:
+        with self._lock:
+            items = list(self._rejections)
+        if rule:
+            items = [r for r in items if r.get("rule") == rule]
+        return items[-limit:]
 
     def log_snapshot(self) -> None:
         logger.info("Metrics snapshot", extra=self.snapshot())

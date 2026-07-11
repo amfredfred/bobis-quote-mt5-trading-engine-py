@@ -517,6 +517,7 @@ class UIBridge:
             "metrics":     self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
             "signals":     list(self._signal_buf),
             "logs":        list(self._log_buf)[-50:],
+            "riskRejections": metrics.recent_rejections(limit=50),
         }
 
     def _build_system_info(self, gauges: dict) -> dict:

@@ -98,29 +98,34 @@ class RiskEngine:
                     )
                     if symbol_info.ask is not None and symbol_info.bid is not None:
                         spread = symbol_info.ask - symbol_info.bid
-                logger.warning(
-                    "Risk rejected",
-                    extra={
-                        "signal_id": signal.id,
-                        "symbol": signal.resolved_symbol,
-                        "direction": signal.direction.value,
-                        "reason": result.reason,
-                        "signal_entry": signal.entry_price,
-                        "signal_stop_loss": signal.stop_loss,
-                        "signal_tp1": signal.tp1,
-                        "signal_tp2": signal.tp2,
-                        "signal_rr": signal.risk_reward_ratio,
-                        "broker_bid": symbol_info.bid if symbol_info else None,
-                        "broker_ask": symbol_info.ask if symbol_info else None,
-                        "broker_fill_price": fill_price,
-                        "broker_spread": spread,
-                        "setup_candle_close_at": signal.setup_candle_close_at,
-                        "triggered_at": signal.triggered_at,
-                        "emitted_at": signal.emitted_at,
-                        "received_at": signal.received_at,
-                    },
-                )
+                rule_name = getattr(rule, "__name__", "unknown_rule")
+                rejection_record = {
+                    "rule": rule_name,
+                    "signal_id": signal.id,
+                    "symbol": signal.resolved_symbol,
+                    "direction": signal.direction.value,
+                    "reason": result.reason,
+                    "signal_entry": signal.entry_price,
+                    "signal_stop_loss": signal.stop_loss,
+                    "signal_tp1": signal.tp1,
+                    "signal_tp2": signal.tp2,
+                    "signal_rr": signal.risk_reward_ratio,
+                    "broker_bid": symbol_info.bid if symbol_info else None,
+                    "broker_ask": symbol_info.ask if symbol_info else None,
+                    "broker_fill_price": fill_price,
+                    "broker_spread": spread,
+                    "setup_candle_close_at": signal.setup_candle_close_at,
+                    "triggered_at": signal.triggered_at,
+                    "emitted_at": signal.emitted_at,
+                    "received_at": signal.received_at,
+                    # Rule-specific numeric detail, when the rule provides it
+                    # (e.g. min_rr_rule's actual_rr, spread_quality_rule's ratio).
+                    **result.data,
+                }
+                logger.warning("Risk rejected", extra=rejection_record)
                 metrics.increment("risk.rejected")
+                metrics.increment(f"risk.rejected.{rule_name}")
+                metrics.record_rejection(rejection_record)
                 return RiskDecision(approved=False, reason=result.reason)
 
             decision_data.update(result.data)
@@ -144,7 +149,13 @@ class RiskEngine:
                 "risk_multiplier": decision_data.get("risk_multiplier", 1.0),
                 "cluster_name": decision_data.get("cluster_name"),
                 "equity_throttle_dd_r": decision_data.get("equity_throttle_dd_r"),
+                "entry_drift_pct_of_risk": decision_data.get("entry_drift_pct_of_risk"),
             },
         )
         metrics.increment("risk.approved")
+        if "entry_drift_pct_of_risk" in decision_data:
+            metrics.set_gauge(
+                "risk.last_entry_drift_pct_of_risk",
+                decision_data["entry_drift_pct_of_risk"],
+            )
         return RiskDecision(approved=True, data=decision_data)

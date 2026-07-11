@@ -331,6 +331,62 @@ def _actual_reward_risk(
     return (stop_loss - fill_price) / pip, (fill_price - tp2) / pip, None
 
 
+def entry_drift_rule(ctx: RuleContext) -> RuleResult:
+    """How far has the live fill price drifted from the signal's own entry.
+
+    min_rr_rule (immediately after this rule) recomputes R:R from the live
+    fill price while holding the signal's SL/TP fixed — a rejection there
+    conflates two different things: the setup genuinely decaying, versus the
+    entry side simply moving against the spread since signal-engine froze
+    entry/SL/TP at candle-close. This rule measures that drift directly, as
+    a percentage of the signal's own risk distance, so a rejection can be
+    attributed to one cause or the other instead of only ever seeing "R:R
+    too low."
+
+    The measurement (`entry_drift_pct_of_risk` in this result's `data`) is
+    always computed and returned, on both approval and rejection — RiskEngine
+    surfaces it as a metric either way. Only the reject *decision* is gated
+    on `config.entry_drift.enabled`, which defaults to False: this rule adds
+    diagnostic visibility on day one without silently changing which signals
+    get approved until someone deliberately turns it on and tunes the
+    threshold against real data.
+    """
+    si = ctx.symbol_info
+    invalid = _validate_symbol_info(si)
+    if invalid:
+        return invalid
+
+    if ctx.signal.entry_price is None or ctx.signal.stop_loss is None:
+        return RuleResult(approved=True)
+
+    signal_risk = abs(ctx.signal.entry_price - ctx.signal.stop_loss)
+    if signal_risk == 0:
+        return RuleResult(approved=True)
+
+    fill_price = _resolve_fill_price(si, ctx.signal.direction)
+    drift = abs(fill_price - ctx.signal.entry_price)
+    drift_pct_of_risk = (drift / signal_risk) * 100.0
+
+    data = {
+        "entry_drift_price": drift,
+        "entry_drift_pct_of_risk": drift_pct_of_risk,
+        "fill_price": fill_price,
+    }
+
+    cfg = ctx.config.entry_drift
+    if cfg.enabled and drift_pct_of_risk > cfg.max_drift_pct_of_risk:
+        return RuleResult(
+            approved=False,
+            reason=(
+                f"Entry drifted {drift_pct_of_risk:.1f}% of signal risk "
+                f"(max {cfg.max_drift_pct_of_risk:.1f}%) — fill {fill_price:.5f} "
+                f"vs signal entry {ctx.signal.entry_price:.5f}"
+            ),
+            data=data,
+        )
+    return RuleResult(approved=True, data=data)
+
+
 def min_rr_rule(ctx: RuleContext) -> RuleResult:
     """Check R:R from the actual fill price, not the stale signal entry_price.
 
@@ -370,6 +426,13 @@ def min_rr_rule(ctx: RuleContext) -> RuleResult:
                 f"Actual R:R {actual_rr:.2f} < minimum {ctx.config.min_rr_ratio} "
                 f"(signal R:R was {ctx.signal.risk_reward_ratio:.2f})"
             ),
+            data={
+                "actual_rr": actual_rr,
+                "min_rr": ctx.config.min_rr_ratio,
+                "fill_price": fill_price,
+                "sl_pips": sl_pips,
+                "tp_pips": tp_pips,
+            },
         )
     return RuleResult(approved=True)
 
@@ -408,6 +471,12 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
                 f"Spread/SL ratio too high: {ratio:.2f} > {threshold:.2f} "
                 f"({spread_pips:.1f} pip spread vs {sl_pips:.1f} pip SL)"
             ),
+            data={
+                "spread_pips": spread_pips,
+                "sl_pips": sl_pips,
+                "ratio": ratio,
+                "threshold": threshold,
+            },
         )
 
     return RuleResult(approved=True)
@@ -425,6 +494,7 @@ ALL_RULES: List[RiskRule] = [
     max_symbol_exposure_rule,  # memory-only: counter check
     duplicate_signal_rule,     # memory-only: open trades scan
     daily_loss_limit_rule,     # memory-only: loss budget check
+    entry_drift_rule,     # broker I/O: live fill price vs. signal's own entry
     min_rr_rule,          # broker I/O: live fill price
     spread_quality_rule,  # broker I/O: live spread
 ]
