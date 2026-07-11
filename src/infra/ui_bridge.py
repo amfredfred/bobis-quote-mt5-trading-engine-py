@@ -507,6 +507,7 @@ class UIBridge:
 
         return {
             "connected":   connected_mt5,
+            "autotrading_enabled": self._autotrading_enabled(),
             "engine":      self._build_engine_info(lt),
             "system":      self._build_system_info(snap.get("gauges", {})),
             "config":      self._build_config_snapshot(config),
@@ -624,6 +625,19 @@ class UIBridge:
             self._account_cache = snapshot
             self._account_cache_at = now
             return snapshot
+        except Exception:
+            return None
+
+    def _autotrading_enabled(self) -> bool | None:
+        """
+        Whether the MT5 terminal's own "Algo Trading" toggle is on. Distinct
+        from `connected` (Python↔terminal link) — a terminal can be fully
+        connected with AutoTrading switched off, silently rejecting every
+        order (retcode 10027) until a human clicks the button.
+        """
+        try:
+            info = self._container.mt5_client.mt5.terminal_info()
+            return bool(info.trade_allowed) if info is not None else None
         except Exception:
             return None
 
@@ -746,6 +760,8 @@ class UIBridge:
         risk_per_trade = round(daily_budget / risk_slots, 2) if daily_budget else 0.0
 
         result = {
+            "connected":          bool(account) or self._container.mt5_client.is_connected(),
+            "autotrading_enabled": self._autotrading_enabled(),
             "raw_counters":       counters,
             "raw_gauges":         gauges,
             "configured_symbols":  list(config.signal_engine.symbols),

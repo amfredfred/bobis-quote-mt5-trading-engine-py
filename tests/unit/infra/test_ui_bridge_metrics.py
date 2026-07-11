@@ -87,7 +87,11 @@ class _Repo:
 
 def _bridge(trades: list | None = None) -> UIBridge:
     bridge = UIBridge.__new__(UIBridge)
-    bridge._container = SimpleNamespace(signal_queue=_Queue(), trade_repo=_Repo(trades))
+    bridge._container = SimpleNamespace(
+        signal_queue=_Queue(),
+        trade_repo=_Repo(trades),
+        mt5_client=SimpleNamespace(is_connected=lambda: True, mt5=SimpleNamespace(terminal_info=lambda: None)),
+    )
     bridge._clients = set()
     return bridge
 
