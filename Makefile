@@ -1,6 +1,6 @@
 # Makefile for Execution Engine
 
-.PHONY: help install test lint format type-check clean docker-build docker-run service-install service-status service-restart backup
+.PHONY: help install test test-unit test-integration lint format type-check check-env gen-secret clean docker-build docker-run run dev pre-commit service-install service-status service-logs service-restart service-stop service-remove backup
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -53,24 +53,24 @@ dev: ## Run in development mode with debug logging
 pre-commit: ## Run pre-commit hooks
 	pre-commit run --all-files
 
-# Windows Service Management (NSSM)
-service-install: ## Install as Windows service (run as Administrator)
-	powershell -ExecutionPolicy Bypass -File install_service.ps1
+# Windows Background Task (Task Scheduler - runs headless, no GUI)
+service-install: ## Register the AQ Agent scheduled task (run at logon)
+	powershell -ExecutionPolicy Bypass -File install.ps1
 
-service-status: ## Check Windows service status
-	powershell -File scripts/service.ps1 status
+service-status: ## Check scheduled task status
+	powershell -Command "Get-ScheduledTask -TaskName 'AQ Agent' -TaskPath '\Apex Quantel\' | Select-Object TaskName, State"
 
-service-logs: ## Monitor Windows service logs
-	powershell -File scripts/service.ps1 logs
+service-logs: ## Tail the most recent log file (checks ProgramData, falls back to ./logs)
+	powershell -File scripts/tail_logs.ps1
 
-service-restart: ## Restart Windows service
-	powershell -File scripts/service.ps1 restart
+service-restart: ## Restart the scheduled task
+	powershell -Command "Stop-ScheduledTask -TaskName 'AQ Agent' -TaskPath '\Apex Quantel\'; Start-Sleep 2; Start-ScheduledTask -TaskName 'AQ Agent' -TaskPath '\Apex Quantel\'"
 
-service-stop: ## Stop Windows service
-	powershell -File scripts/service.ps1 stop
+service-stop: ## Stop the scheduled task
+	powershell -Command "Stop-ScheduledTask -TaskName 'AQ Agent' -TaskPath '\Apex Quantel\'"
 
-service-remove: ## Uninstall Windows service
-	powershell -File scripts/service.ps1 remove
+service-remove: ## Unregister the scheduled task
+	powershell -ExecutionPolicy Bypass -File install.ps1 uninstall
 
 # Backup & Recovery
 backup: ## Backup database and configuration

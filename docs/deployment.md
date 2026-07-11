@@ -6,24 +6,27 @@ This guide covers deploying the Execution Engine for production use on Windows a
 
 Choose your deployment method:
 
-- **Windows Native (Recommended)**: [NSSM Service](#windows-nssm-service)
+- **Windows Native (Recommended)**: [Task Scheduler](#windows-task-scheduler)
 - **Cross-Platform**: [Docker](#docker-deployment)
 - **Linux/Mac**: [Systemd Service](#linux-systemd-service)
 
-## Windows NSSM Service
+## Windows Task Scheduler
 
-NSSM (Non-Sucking Service Manager) is the **recommended approach for Windows** because:
-- Native Windows service integration
-- Direct MetaTrader 5 terminal access
-- Automatic restart on failure
-- Windows Event Viewer logging
+This is a **headless-only engine - there is no GUI**. It's installed as a
+Task Scheduler task (not a Windows Service): Windows services run in
+Session 0, which has no desktop, and the MT5 Python API cannot attach to a
+terminal from there. A scheduled task runs in your own interactive session
+at logon, so MT5 is fully visible and the engine connects normally.
+
+Recommended for Windows because:
+- Direct MetaTrader 5 terminal access (interactive session)
+- Automatic restart on failure (up to 10x, 1-minute interval)
 - No container overhead
 - 24/7 operation optimized for trading
 
 ### Prerequisites
 
-- Windows 7 or later
-- Administrator privileges
+- Windows 10 or later
 - MetaTrader 5 terminal installed and running
 - Python 3.12+
 - Virtual environment setup
@@ -32,117 +35,75 @@ NSSM (Non-Sucking Service Manager) is the **recommended approach for Windows** b
 
 1. **Prepare environment**:
    ```powershell
-   # Create virtual environment
    python -m venv venv
    venv\Scripts\activate
-
-   # Install dependencies
    pip install -e .[dev]
-
-   # Validate configuration
-   python scripts/check_env.py
    ```
 
-2. **Create logs directory**:
-   ```powershell
-   New-Item -ItemType Directory -Force -Path logs
-   ```
+2. **Configure**: copy `config.example.yaml` to `config.yaml` and fill in
+   `mt5`, `risk`, `execution`, `signal_engine`, and `engine` sections.
 
-3. **Install as service** (run as Administrator):
+3. **Install the scheduled task**:
    ```powershell
-   powershell -ExecutionPolicy Bypass -File install_service.ps1
+   powershell -ExecutionPolicy Bypass -File install.ps1
    ```
 
    The script will:
-   - Download NSSM if needed
-   - Register ExecutionEngine service
-   - Set automatic startup
+   - Register `\Apex Quantel\AQ Agent` in Task Scheduler
+   - Set it to start ~30 s after logon (so MT5 can start first)
    - Configure auto-restart on failure
-   - Start the service
+   - Start it now
 
 4. **Verify installation**:
    ```powershell
-   # Check service status
-   nssm status ExecutionEngine
-
-   # View logs
-   Get-Content logs\service_stderr.log -Tail 50 -Wait
-
-   # Windows Services: services.msc
+   make service-status
+   # or: Get-ScheduledTask -TaskName "AQ Agent" -TaskPath "\Apex Quantel\"
    ```
 
-### Service Management
+### Task Management
 
 ```powershell
-# Check status
-nssm status ExecutionEngine
-
-# Start service
-nssm start ExecutionEngine
-
-# Stop service
-nssm stop ExecutionEngine
-
-# Restart service
-nssm restart ExecutionEngine
-
-# Edit service configuration
-nssm edit ExecutionEngine
-
-# Uninstall service
-powershell -ExecutionPolicy Bypass -File install_service.ps1 -Action uninstall
+make service-status    # Check task state
+make service-logs      # Tail the most recent log file
+make service-restart   # Stop then start
+make service-stop      # Stop
+make service-remove    # Unregister (equivalent to install.ps1 uninstall)
 ```
 
 ### Monitoring
 
-**Windows Event Viewer**:
-1. Open `Event Viewer`
-2. Go to `Windows Logs > Application`
-3. Look for `ExecutionEngine` events
+**Task Scheduler history**: open `taskschd.msc`, navigate to
+`Task Scheduler Library\Apex Quantel\AQ Agent`, click the History tab.
 
-**Service Logs**:
+**Logs**: `%ProgramData%\Apex Quantel\logs\` for packaged builds, or next to
+whichever `config.yaml` was loaded for a dev/venv run.
 ```powershell
-# Real-time monitoring
-Get-Content logs\service_stderr.log -Tail 50 -Wait
-
-# Check service startup log
-Get-Content logs\service_stdout.log
+make service-logs
 ```
 
 ### Troubleshooting
 
-**Service won't start**:
+**Task won't stay running**:
 ```powershell
-# Check error log
-Get-Content logs\service_stderr.log -Tail 100
-
-# Verify .env file exists and is valid
-type .env
-
-# Test Python executable
-venv\Scripts\python -m src --help
+make service-logs   # check the actual error
 ```
 
-**Permission denied**:
+Common causes:
+- `config.yaml` missing or invalid
+- MT5 terminal not running, or wrong `mt5.path`/`login`/`server`
+- `risk.max_losing_streak` missing or `0` (must be >= 1)
+
+**Reinstall**:
 ```powershell
-# Must run PowerShell as Administrator
-Start-Process powershell -Verb RunAs
+powershell -ExecutionPolicy Bypass -File install.ps1 update
 ```
 
-**NSSM issues**:
-```powershell
-# Manually remove service
-nssm remove ExecutionEngine confirm
-
-# Reinstall
-powershell -ExecutionPolicy Bypass -File install_service.ps1
+**`risk.max_losing_streak` validation error on startup**:
 ```
-
-**`MAX_LOSING_STREAK` validation error on startup**:
+ValueError: risk.max_losing_streak must be >= 1
 ```
-ValueError: MAX_LOSING_STREAK must be >= 1
-```
-Set `MAX_LOSING_STREAK` to your system's worst recorded consecutive losing streak (minimum `1`) in `.env` and restart the service.
+Set it to your system's worst recorded consecutive losing streak (minimum
+`1`) in `config.yaml` and restart the task.
 
 ---
 
@@ -216,7 +177,7 @@ docker-compose down -v
 
 **Options**:
 1. Run engine in Docker, connect to host MT5 (requires network setup)
-2. Run everything on Windows with NSSM (recommended for trading)
+2. Run everything on Windows with Task Scheduler (recommended for trading)
 3. Use cloud MT5 broker with API access
 
 **Host Network Access**:
@@ -300,12 +261,13 @@ Deploy on Linux/Mac with systemd:
 
 ## Dashboard Monitoring
 
-The execution engine exposes a WebSocket UI bridge on the configured monitoring
-port. Use the separate `execution-engine-dashboard` app for live state,
-metrics, risk guards, rejections, and dashboard commands.
+The execution engine exposes a read-only WebSocket telemetry bridge
+(UIBridge) on `engine.monitoring_port` (default 8080). The `customer-dashboard`
+app connects directly to it - no login, no commands sent, live account/trade/
+risk-guard state only.
 
 ```text
-ws://localhost:8080/ws
+ws://localhost:8080
 ```
 
 ---
@@ -420,22 +382,25 @@ services:
 
 ### Automated Restarts
 
-NSSM automatically restarts failed services. Verify:
+`install.ps1` registers the task with `-RestartCount 10 -RestartInterval 1min`,
+so Task Scheduler automatically restarts it on failure. Verify:
 ```powershell
-nssm get ExecutionEngine AppExit
-# Should show restart settings
+Get-ScheduledTask -TaskName "AQ Agent" -TaskPath "\Apex Quantel\" |
+  Select-Object -ExpandProperty Settings |
+  Select-Object RestartCount, RestartInterval
 ```
 
 ### Daily Restarts
 
-Prevent memory leaks with scheduled restarts:
+Prevent memory leaks with a separate scheduled restart:
 
 **Windows Task Scheduler**:
 ```powershell
 $trigger = New-ScheduledTaskTrigger -Daily -At 02:00AM
 Register-ScheduledTask `
-  -TaskName "RestartExecutionEngine" `
-  -Action (New-ScheduledTaskAction -Execute "nssm" -Argument "restart ExecutionEngine") `
+  -TaskName "RestartAQAgent" `
+  -TaskPath "\Apex Quantel\" `
+  -Action (New-ScheduledTaskAction -Execute "powershell" -Argument "-Command `"Stop-ScheduledTask -TaskName 'AQ Agent' -TaskPath '\Apex Quantel\'; Start-Sleep 2; Start-ScheduledTask -TaskName 'AQ Agent' -TaskPath '\Apex Quantel\'`"") `
   -Trigger $trigger `
   -RunLevel Highest
 ```
@@ -446,14 +411,14 @@ Register-ScheduledTask `
 0 2 * * * systemctl restart execution-engine
 ```
 
-Note: `LossTracker` automatically resets its daily state at midnight via the internal `paused_until` rollover mechanism. A daily service restart is optional but recommended to clear any in-memory accumulation.
+Note: `LossTracker` automatically resets its daily state at midnight via the internal `paused_until` rollover mechanism. A daily restart is optional but recommended to clear any in-memory accumulation.
 
 ---
 
 ## Choosing Your Deployment
 
-| Requirement | NSSM | Docker | Systemd |
-|-------------|------|--------|---------|
+| Requirement | Task Scheduler | Docker | Systemd |
+|-------------|-----------------|--------|---------|
 | **Windows native** | ✓ Best | Limited | ✗ |
 | **MT5 integration** | ✓ Direct | Complex | Depends |
 | **Cross-platform** | ✗ | ✓ Best | Linux only |
@@ -462,4 +427,4 @@ Note: `LossTracker` automatically resets its daily state at midnight via the int
 | **Simple setup** | ✓ | Moderate | ✓ |
 | **24/7 trading** | ✓ Best | ✓ | ✓ |
 
-**TL;DR**: Use **NSSM** for Windows trading, **Docker** for cloud/scaling, **systemd** for Linux.
+**TL;DR**: Use **Task Scheduler** for Windows trading, **Docker** for cloud/scaling, **systemd** for Linux.

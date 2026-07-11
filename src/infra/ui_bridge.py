@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 def _read_version() -> str:
-    """Mirrors src/gui/app.py's _read_version() candidate paths (dev run vs frozen build)."""
+    """Reads version.txt, trying both dev-run and frozen-build layouts."""
     for candidate in (
         Path("version.txt"),
         Path(sys.executable).parent / "version.txt",

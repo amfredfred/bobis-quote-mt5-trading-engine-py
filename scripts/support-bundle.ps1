@@ -18,7 +18,6 @@ $ErrorActionPreference = "Continue"
 
 $ScriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EngineDir    = Split-Path -Parent $ScriptDir
-$ServiceName  = "apex-quant-trader-agent"
 $Timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
 $BundleName   = "Apex Quantel-Support-$Timestamp"
 $StagingDir   = Join-Path $env:TEMP $BundleName
@@ -137,27 +136,20 @@ if (Test-Path $envFile) {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Service status
+# 4. Scheduled task status
 # ---------------------------------------------------------------------------
-Write-Section "Service status"
+Write-Section "Scheduled task status"
 
 $svcOut = Join-Path $StagingDir "service-status.txt"
-$svc    = Get-Service $ServiceName -ErrorAction SilentlyContinue
+$task   = Get-ScheduledTask -TaskName "AQ Agent" -TaskPath "\Apex Quantel\" -ErrorAction SilentlyContinue
 
-if ($svc) {
-    $svc | Format-List * | Out-String | Set-Content $svcOut -Encoding utf8
-    Write-Host "  Service: $ServiceName — $($svc.Status)"
-
-    # NSSM status if available
-    $NssmExe = Join-Path $EngineDir "nssm\nssm-2.24\win64\nssm.exe"
-    if (Test-Path $NssmExe) {
-        $nssmOut = & $NssmExe status $ServiceName 2>&1
-        "`nNSSM status:`n$nssmOut" | Add-Content $svcOut -Encoding utf8
-        Write-Host "  NSSM status appended"
-    }
+if ($task) {
+    $info = Get-ScheduledTaskInfo -TaskName "AQ Agent" -TaskPath "\Apex Quantel\"
+    $(($task | Format-List *); ($info | Format-List *)) | Out-String | Set-Content $svcOut -Encoding utf8
+    Write-Host "  Task: AQ Agent — $($task.State)"
 } else {
-    "Service '$ServiceName' not found (not installed)" | Set-Content $svcOut -Encoding utf8
-    Write-Host "  Service $ServiceName not installed"
+    "Task '\Apex Quantel\AQ Agent' not found (not installed)" | Set-Content $svcOut -Encoding utf8
+    Write-Host "  Task \Apex Quantel\AQ Agent not installed"
 }
 
 # ---------------------------------------------------------------------------

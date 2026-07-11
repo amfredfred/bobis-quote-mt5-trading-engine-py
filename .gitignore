@@ -76,4 +76,3 @@ installer/apex_build*.ps1
 # RepoWise
 .repowise/.env
 logs
-nssm/

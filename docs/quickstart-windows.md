@@ -1,13 +1,15 @@
-# Quick Start Guide - Windows NSSM
+# Quick Start Guide - Windows
 
-Get the Execution Engine running as a Windows service in 5 minutes.
+Get the Execution Engine running as a background task in 5 minutes. This is
+a headless service - there is no GUI, and it runs invisibly in the
+background via Windows Task Scheduler (not a Windows Service or NSSM - MT5
+needs an interactive desktop session, which Session-0 services don't have).
 
 ## Prerequisites
 
-- Windows 7 or later
+- Windows 10 or later
 - Python 3.12+
-- MetaTrader 5 terminal (running)
-- Administrator privileges
+- MetaTrader 5 terminal (installed, and running before the engine starts)
 
 ## Step 1: Clone Repository
 
@@ -25,7 +27,7 @@ python -m venv venv
 # Activate it
 venv\Scripts\activate
 
-# Install dependencies
+# Install dependencies (registers the venv\Scripts\execution-engine.exe entry point)
 pip install -e .
 ```
 
@@ -33,244 +35,160 @@ pip install -e .
 
 ```powershell
 # Copy example configuration
-Copy-Item .env.example .env
+Copy-Item config.example.yaml config.yaml
 
-# Edit .env
-notepad .env
+# Edit it
+notepad config.yaml
 ```
 
-**Required fields**:
-```dotenv
-MT5_LOGIN=your_login_number
-MT5_PASSWORD=your_password
-MT5_SERVER=your_server_address
-```
+**Required sections**: `mt5` (login/password/server/path), `risk`, `execution`,
+`signal_engine` (ws_url + symbols), and `engine` (storage_path/log_level/
+position_poll_interval/timezone). See `config.example.yaml` for the full,
+commented reference. `mt5.password` can also come from the `MT5_PASSWORD`
+environment variable instead of the file.
 
 **Key risk settings** (set these before going live):
-```dotenv
-MAX_LOSING_STREAK=4          # Your system's worst recorded consecutive losing streak
-                             # Determines max concurrent trades (streak + 1) and
-                             # per-trade risk amount automatically
-MAX_DAILY_LOSS_PERCENT=5.0   # Daily loss budget as % of account equity
-SL_RATIO_THRESHOLD=0.34      # Max spread/SL ratio — lower = stricter
-MIN_RR_RATIO=1.0             # Minimum risk:reward ratio
+```yaml
+risk:
+  max_losing_streak: 4          # Your system's worst recorded consecutive losing streak
+  max_daily_loss_percent: 5.0   # Daily loss budget as % of account equity
+  sl_ratio_threshold: 0.34      # Max spread/SL ratio — lower = stricter
+  min_rr_ratio: 1.0             # Minimum risk:reward ratio
 ```
 
-## Step 4: Validate Configuration
-
-```powershell
-python scripts/check_env.py
-```
-
-Should output: `OK: .env looks good`
-
-If you see `ValueError: MAX_LOSING_STREAK must be >= 1` — set `MAX_LOSING_STREAK` to at least `1` in `.env` and re-run.
-
-## Step 5: Install as Service
-
-**Run PowerShell as Administrator**, then:
+## Step 4: Install as a Background Task
 
 ```powershell
 cd execution-engine
-powershell -ExecutionPolicy Bypass -File install_service.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 The script will:
-- Download NSSM if needed
-- Register the service
-- Set it to start automatically
-- Start it now
+- Register `\Apex Quantel\AQ Agent` as a Task Scheduler task
+- Set it to start ~30 s after you log in (giving MT5 time to start)
+- Set it to auto-restart up to 10x on failure
+- Start it immediately
 
 ✓ Done!
 
 ## Verify Installation
 
 ```powershell
-# Check status
-powershell -File scripts/service.ps1 status
-
-# View logs
-powershell -File scripts/service.ps1 logs
-
-# Should see something like:
-# Service Status: SERVICE_RUNNING
+make service-status
+# or directly:
+powershell -Command "Get-ScheduledTask -TaskName 'AQ Agent' -TaskPath '\Apex Quantel\'"
 ```
+
+Should show `State: Running`.
 
 ## Common Operations
 
 ```powershell
-# View status
-powershell -File scripts/service.ps1 status
+make service-status    # Check task state
+make service-logs      # Tail the most recent log file
+make service-restart   # Stop then start the task
+make service-stop      # Stop the task
+make service-remove    # Unregister the task
+```
 
-# Watch logs in real-time
-powershell -File scripts/service.ps1 logs
-
-# Restart service
-powershell -File scripts/service.ps1 restart
-
-# Stop service
-powershell -File scripts/service.ps1 stop
-
-# Start service again
-powershell -File scripts/service.ps1 start
-
-# Remove service (keep code, just unregister)
-powershell -File scripts/service.ps1 remove
+Or run `install.ps1` directly:
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 uninstall
+powershell -ExecutionPolicy Bypass -File install.ps1 update    # re-registers with the current exe path
 ```
 
 ## View Logs
 
-### Real-time Monitoring
-```powershell
-powershell -File scripts/service.ps1 logs
-```
+Logs go to `%ProgramData%\Apex Quantel\logs\` for a packaged/installed build,
+or next to whichever `config.yaml` was actually loaded for a dev/venv run
+(usually `execution-engine\logs\`).
 
-### Error Log File
 ```powershell
-Get-Content logs\service_stderr.log -Tail 50
+make service-logs
 
-# Or open directly
-notepad logs\service_stderr.log
+# Or manually:
+Get-Content "$env:PROGRAMDATA\Apex Quantel\logs\*.log" -Tail 50 -Wait
 ```
 
 ### Windows Event Viewer
-1. Open Event Viewer (eventvwr.msc)
-2. Navigate to `Windows Logs > Application`
-3. Look for ExecutionEngine events
+
+Task Scheduler task history (not application logs) can be inspected via:
+1. Open Task Scheduler (`taskschd.msc`)
+2. Navigate to Task Scheduler Library `\Apex Quantel\AQ Agent`
+3. Click the "History" tab
 
 ## Troubleshooting
 
-### Service won't start
+### Task won't stay running
 
-Check error log:
-```powershell
-Get-Content logs\service_stderr.log -Tail 100 | Out-Host
-```
-
-Common causes:
-- `.env` file missing or invalid
-- MT5 terminal not running
-- `MAX_LOSING_STREAK` missing or set to `0` (must be >= 1)
-- Python environment not activated before install
+Check the log file (see above) for the actual error. Common causes:
+- `config.yaml` missing or invalid (run the exe manually once to see the error)
+- MT5 terminal not running, or wrong `mt5.path`/`login`/`server`
+- `risk.max_losing_streak` missing or set to `0` (must be >= 1)
+- Python environment not activated before `pip install -e .`
 
 **Solution**:
 ```powershell
-# Reinstall service
-powershell -File scripts/service.ps1 remove
-powershell -File scripts/install_service.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1 update
 ```
 
 ### High CPU/Memory Usage
 
-Check if running normally:
+Check the live values via the dashboard's Performance tab (connects directly
+to the engine's WebSocket bridge), or:
 ```powershell
-Get-Process python | Select-Object Name, Handles, WorkingSet
-```
-
-For memory issues, restart daily:
-```powershell
-# Scheduled restart at 2 AM (Windows Task Scheduler)
-# See docs/deployment.md for details
+Get-Process python,apex-quant-trader-agent -ErrorAction SilentlyContinue |
+  Select-Object Name, Id, CPU, WorkingSet
 ```
 
 ### Can't run PowerShell scripts
 
-Enable execution policy:
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope CurrentUser
 ```
 
-### Need to update .env
+### Need to update config.yaml
 
-1. Stop service:
-   ```powershell
-   powershell -File scripts/service.ps1 stop
-   ```
-
-2. Edit .env:
-   ```powershell
-   notepad .env
-   ```
-
-3. Restart service:
-   ```powershell
-   powershell -File scripts/service.ps1 start
-   ```
+```powershell
+make service-stop
+notepad config.yaml
+make service-restart
+```
 
 ## Update/Upgrade
 
 ```powershell
 cd execution-engine
-
-# Pull latest code
 git pull
-
-# Activate environment
 venv\Scripts\activate
-
-# Update dependencies
 pip install -e . --upgrade
-
-# Restart service
-powershell -File scripts/service.ps1 restart
-```
-
-## Backup
-
-Backup your database and configuration:
-```powershell
-powershell -File scripts/backup.ps1
-```
-
-Creates timestamped backup in `backups/` directory.
-
-## Advanced: Manual Service Commands
-
-Using NSSM directly:
-
-```powershell
-# Check status
-nssm status ExecutionEngine
-
-# View configuration
-nssm dump ExecutionEngine
-
-# Edit config (GUI)
-nssm edit ExecutionEngine
-
-# Manual start
-nssm start ExecutionEngine
-
-# Manual stop
-nssm stop ExecutionEngine confirm
-
-# Manual restart
-nssm restart ExecutionEngine
+make service-restart
 ```
 
 ## Get Help
 
-- 📖 [Full Documentation](../docs/)
-- 🐛 [Report Issues](https://github.com/amfredfred/execution-engine/issues)
-- 💬 [Discussions](https://github.com/amfredfred/execution-engine/discussions)
-- 📋 [Deployment Guide](../docs/deployment.md)
+- [Full Documentation](../docs/)
+- [Report Issues](https://github.com/amfredfred/execution-engine/issues)
+- [Deployment Guide](../docs/deployment.md)
 
 ## Next Steps
 
-1. **Monitor Dashboard**: Run the separate `execution-engine-dashboard` app and connect it to `ws://localhost:8080/ws`
-2. **Send Signals**: Use the dashboard/WebSocket bridge at `ws://localhost:8080/ws`
-3. **Review Risk Settings**: Tune `MAX_LOSING_STREAK`, `MAX_DAILY_LOSS_PERCENT`, and `SL_RATIO_THRESHOLD` in `.env`
-4. **Review Logs**: Check logs regularly for rule rejections and sizing info
-5. **Test Signals**: Start with demo account to verify integration before live trading
+1. **Monitor**: Point the `customer-dashboard` app's `NEXT_PUBLIC_EXECUTION_ENGINE_WS_URL`
+   at `ws://localhost:8080` (or the host running this engine) - it connects
+   directly, read-only, no login required.
+2. **Review Risk Settings**: Tune `max_losing_streak`, `max_daily_loss_percent`,
+   and `sl_ratio_threshold` in `config.yaml`.
+3. **Review Logs**: Check logs regularly for rule rejections and sizing info.
+4. **Test Signals**: Start with a demo account to verify integration before live trading.
 
 ## Security Reminders
 
-- ✓ Keep `.env` file private (git-ignored)
-- ✓ Don't share your MT5 credentials
-- ✓ Rotate passwords regularly
-- ✓ Use firewall to restrict WebSocket access
-- ✓ Keep Windows and Python updated
+- Keep `config.yaml` private (it contains your MT5 password) - it's git-ignored
+- Don't share your MT5 credentials
+- Rotate passwords regularly
+- Use a firewall to restrict access to the engine's WebSocket port (8080) if
+  the dashboard connects from another machine
 
 ---
 
-**Ready to trade?** Your Execution Engine is now running as a Windows service! 🚀
+**Ready to trade?** Your Execution Engine is now running in the background!

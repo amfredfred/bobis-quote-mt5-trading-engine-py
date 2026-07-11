@@ -5,9 +5,10 @@ Usage:
     python -m src                      # config.yaml auto-located
     python -m src path/to/config.yaml  # explicit config path
 
-This is a headless service — run directly, or via NSSM/systemd as a
-background service. It connects straight to the signal engine's own
-WebSocket server (no gateway, no GUI, no remote control).
+This is a headless service — run directly, or via Task Scheduler (Windows,
+see install.ps1)/systemd (Linux) as a background service. It connects
+straight to the signal engine's own WebSocket server (no gateway, no GUI,
+no remote control).
 """
 
 from __future__ import annotations
@@ -44,26 +45,16 @@ def main() -> None:
     setup_logging(cfg.log_level, cfg.engine_timezone)
     _time.configure(cfg.engine_timezone)
 
-    # File logging:
-    #   - Packaged (PyInstaller): logs go to %ProgramData%\Apex Quantel\logs\
-    #     This is the standard Windows location for app data and is always
-    #     writable by the service account. Program Files is often read-only.
-    #     e.g. C:\ProgramData\Apex Quantel\logs\engine.log
-    #   - Dev / source run: logs go adjacent to config.yaml as before.
+    # File logging: always adjacent to whichever config.yaml was loaded, so
+    # everything (config, logs, storage) lives together in one folder.
     from src.infra.logger import add_file_handler
-    if getattr(sys, "frozen", False):
-        logs_dir = (
-            Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
-            / "Apex Quantel"
-            / "logs"
-        )
-    else:
-        cfg_resolved = Path(config_path).resolve()
-        logs_dir = cfg_resolved.parent / "logs"
+    logs_dir = Path(config_path).resolve().parent / "logs"
     try:
         add_file_handler(logs_dir, cfg.engine_timezone)
     except Exception as exc:
-        # Non-fatal: stdout logging still works; NSSM/systemd capture it too.
+        # Non-fatal: stdout logging still works (systemd captures it via
+        # journal; Task Scheduler does not capture it anywhere, so file
+        # logging failing there means these lines are effectively lost).
         logger.warning("Could not enable file logging to %s: %s", logs_dir, exc)
 
     logger.info(
