@@ -1,8 +1,5 @@
-﻿gateway:
+﻿signal_engine:
   ws_url: ws://localhost:8765
-  room_ttl_seconds: 3600
-  activation_key: ""
-  signal_hmac_secret: ""
   symbols:
     - XAUUSD
     - US100
@@ -46,6 +43,13 @@ risk:
   # only user-facing knob.
   equity_throttle:
     enabled: true
+  # Entry-drift diagnostic — measures how far the live fill price has moved
+  # from the signal's own entry, as % of the signal's own risk distance.
+  # Always measured regardless of `enabled`; only rejects on that basis
+  # (separately from min_rr_ratio) when enabled.
+  entry_drift:
+    enabled: false
+    max_drift_pct_of_risk: 25.0
   # Cluster risk guard — caps total intraday risk across correlated symbols.
   # Cross-symbol correlation is near-zero across all 5 pairs (max 0.13
   # EURUSD/USDJPY over 3yr), so this guard is disabled. Groups are defined

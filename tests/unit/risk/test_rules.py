@@ -1,6 +1,6 @@
 """Test risk rules."""
 
-from src.config.settings import RiskConfig
+from src.config.settings import EntryDriftConfig, RiskConfig
 from src.domain.position import SymbolInfo
 from src.domain.signal_interface import (
     BosDirection,
@@ -12,7 +12,7 @@ from src.domain.signal_interface import (
     SignalDirection,
     SignalStatus,
 )
-from src.risk.rules import RuleContext, min_rr_rule, spread_quality_rule
+from src.risk.rules import RuleContext, entry_drift_rule, min_rr_rule, spread_quality_rule
 
 
 def test_spread_quality_uses_xauusd_threshold_override() -> None:
@@ -103,6 +103,71 @@ def test_min_rr_rejects_short_chase_that_loses_reward() -> None:
     assert "Actual R:R 0.13 < minimum 1.0" in result.reason
 
 
+def test_entry_drift_disabled_always_approves_but_records_diagnostic() -> None:
+    # LONG entry=100, stop=99 -> signal risk = 1.0. Fill at ask=104 is a 400%
+    # drift, which would fail any sane threshold - but the rule is disabled
+    # by default, so it must approve while still returning the measurement.
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.LONG,
+        ask=104.0,
+        bid=103.9,
+        entry_price=100.0,
+        stop_loss=99.0,
+        tp2=110.0,
+        risk_reward_ratio=3.0,
+        symbol_thresholds={},
+    )
+
+    result = entry_drift_rule(ctx)
+
+    assert result.approved is True
+    assert result.data["entry_drift_pct_of_risk"] == 400.0
+
+
+def test_entry_drift_enabled_rejects_beyond_threshold() -> None:
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.LONG,
+        ask=104.0,
+        bid=103.9,
+        entry_price=100.0,
+        stop_loss=99.0,
+        tp2=110.0,
+        risk_reward_ratio=3.0,
+        symbol_thresholds={},
+        entry_drift=EntryDriftConfig(enabled=True, max_drift_pct_of_risk=25.0),
+    )
+
+    result = entry_drift_rule(ctx)
+
+    assert result.approved is False
+    assert "Entry drifted 400.0% of signal risk" in result.reason
+    assert result.data["entry_drift_pct_of_risk"] == 400.0
+
+
+def test_entry_drift_enabled_approves_within_threshold() -> None:
+    # LONG entry=100, stop=99 -> signal risk = 1.0. Fill at ask=100.1 is a
+    # 10% drift, under the 25% threshold.
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.LONG,
+        ask=100.1,
+        bid=100.0,
+        entry_price=100.0,
+        stop_loss=99.0,
+        tp2=110.0,
+        risk_reward_ratio=3.0,
+        symbol_thresholds={},
+        entry_drift=EntryDriftConfig(enabled=True, max_drift_pct_of_risk=25.0),
+    )
+
+    result = entry_drift_rule(ctx)
+
+    assert result.approved is True
+    assert abs(result.data["entry_drift_pct_of_risk"] - 10.0) < 1e-6
+
+
 def _context(
     *,
     symbol: str,
@@ -115,6 +180,7 @@ def _context(
     tp2: float = 66791.6,
     risk_reward_ratio: float = 2.0,
     min_rr_ratio: float = 1.0,
+    entry_drift: EntryDriftConfig | None = None,
 ) -> RuleContext:
     return RuleContext(
         signal=_signal(
@@ -126,7 +192,9 @@ def _context(
             risk_reward_ratio=risk_reward_ratio,
         ),
         open_trades=[],
-        config=_risk_config(symbol_thresholds, min_rr_ratio=min_rr_ratio),
+        config=_risk_config(
+            symbol_thresholds, min_rr_ratio=min_rr_ratio, entry_drift=entry_drift
+        ),
         daily_loss_pct=0.0,
         effective_open=0,
         effective_symbol=0,
@@ -135,7 +203,9 @@ def _context(
 
 
 def _risk_config(
-    symbol_thresholds: dict[str, float], min_rr_ratio: float = 1.0
+    symbol_thresholds: dict[str, float],
+    min_rr_ratio: float = 1.0,
+    entry_drift: EntryDriftConfig | None = None,
 ) -> RiskConfig:
     return RiskConfig(
         max_losing_streak=3,
@@ -146,6 +216,7 @@ def _risk_config(
         min_lot_size=0.01,
         sl_ratio_threshold=0.25,
         symbol_sl_ratio_threshold=symbol_thresholds,
+        entry_drift=entry_drift if entry_drift is not None else EntryDriftConfig(),
     )
 
 

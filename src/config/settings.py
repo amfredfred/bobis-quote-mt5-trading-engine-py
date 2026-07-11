@@ -184,6 +184,46 @@ class EquityThrottleConfig:
             raise ValueError("risk.equity_throttle.window_days must be >= 1.")
 
 
+@dataclass(frozen=True)
+class EntryDriftConfig:
+    """Entry-drift diagnostic/gate — separate from the min_rr_rule floor.
+
+    min_rr_rule recomputes R:R from the live fill price while leaving the
+    signal's SL/TP unchanged; a rejection there conflates "the setup decayed"
+    with "the entry side moved against the spread." This rule measures how
+    far the live fill price has drifted from the signal's own entry, as a
+    percentage of the signal's own risk distance, and — only when enabled —
+    rejects on that basis with a distinct, diagnosable reason. The drift
+    measurement itself is always recorded (via risk-rejection metrics) even
+    while disabled, so it has diagnostic value from day one.
+    """
+
+    enabled: bool = False
+    max_drift_pct_of_risk: float = 25.0
+
+    def __post_init__(self) -> None:
+        if self.max_drift_pct_of_risk <= 0:
+            raise ValueError(
+                "risk.entry_drift.max_drift_pct_of_risk must be > 0."
+            )
+
+
+def _parse_entry_drift(raw: Any) -> "EntryDriftConfig":
+    if not raw:
+        # Block omitted entirely = feature off (diagnostic recording still
+        # runs unconditionally inside the rule itself; only the reject
+        # decision is gated on `enabled`).
+        return EntryDriftConfig(enabled=False)
+    if not isinstance(raw, dict):
+        raise ValueError("risk.entry_drift must be a mapping.")
+    return EntryDriftConfig(
+        enabled=bool(_require(raw, "enabled", "risk.entry_drift")),
+        max_drift_pct_of_risk=float(
+            _require(raw, "max_drift_pct_of_risk", "risk.entry_drift")
+        ),
+    )
+
+
 def _parse_equity_throttle(raw: Any) -> "EquityThrottleConfig":
     if not raw:
         # Block omitted entirely = feature off. Values are inert while
@@ -278,6 +318,7 @@ class RiskConfig:
     rolling_drawdown_pct: float = 0.0
     cluster_risk: ClusterRiskConfig = field(default_factory=ClusterRiskConfig)
     equity_throttle: EquityThrottleConfig = field(default_factory=EquityThrottleConfig)
+    entry_drift: EntryDriftConfig = field(default_factory=EntryDriftConfig)
 
     def __post_init__(self) -> None:
         if self.max_losing_streak < 1:
@@ -492,6 +533,7 @@ class AppConfig:
                 # Structural feature blocks: omitted entirely = feature off.
                 cluster_risk=_parse_cluster_risk(risk.get("cluster_risk")),
                 equity_throttle=_parse_equity_throttle(risk.get("equity_throttle")),
+                entry_drift=_parse_entry_drift(risk.get("entry_drift")),
             ),
             execution=ExecutionConfig(
                 tp1_trigger_pct=float(_require(exe, "tp1_trigger_pct", "execution")),
