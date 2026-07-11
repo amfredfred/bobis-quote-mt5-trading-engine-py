@@ -30,6 +30,10 @@ $TaskFolder  = "\Apex Quantel\"
 $Description = "Apex Quantel AQ Agent - automated trade execution engine for MetaTrader 5"
 $EngineDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+$WatchdogTaskName    = "AQ Agent Watchdog"
+$WatchdogDescription = "Restarts AQ Agent if it dies or hangs. Runs independently of the agent task's own -RestartCount cap."
+$WatchdogScript      = Join-Path $EngineDir "watchdog.ps1"
+
 # ── Resolve executable ────────────────────────────────────────────────────────
 # Installed via Inno Setup: files land directly under the install dir (no dist\ prefix)
 $InstalledExe = Join-Path $EngineDir "apex-quant-trader-agent\apex-quant-trader-agent.exe"
@@ -75,6 +79,61 @@ function Remove-Task {
         Write-Host "  Removing existing task..."
         Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder -Confirm:$false
     }
+}
+
+function Remove-Watchdog {
+    if (Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder -ErrorAction SilentlyContinue) {
+        Write-Host "  Removing existing watchdog task..."
+        Unregister-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder -Confirm:$false
+    }
+}
+
+function Register-Watchdog {
+    # Trigger: at logon (90s after this user logs in, so the agent task's own
+    # 30s-delayed first start has had time to happen), then repeat every 5
+    # minutes for as long as the session is up. This is deliberately separate
+    # from the agent task's own -RestartCount: that cap only fires on a
+    # *failure* exit code and permanently gives up after 10 tries in an hour,
+    # whereas the watchdog re-checks forever and also catches a process that
+    # exits cleanly (code 0) without actually doing anything.
+    $wTrigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $wTrigger.Delay = "PT90S"
+    # RepetitionDuration must be a valid XML duration - [TimeSpan]::MaxValue
+    # overflows Task Scheduler's schema (P99999999DT23H59M59S, rejected).
+    # 10 years covers "runs for years" without hitting that ceiling.
+    $wTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+        -RepetitionInterval (New-TimeSpan -Minutes 5) `
+        -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
+
+    $wAction = New-ScheduledTaskAction `
+        -Execute          "powershell.exe" `
+        -Argument         "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WatchdogScript`"" `
+        -WorkingDirectory $EngineDir
+
+    $wSettings = New-ScheduledTaskSettingsSet `
+        -MultipleInstances  IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable
+
+    $wPrincipal = New-ScheduledTaskPrincipal `
+        -UserId    "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType Interactive `
+        -RunLevel  Highest
+
+    Register-ScheduledTask `
+        -TaskName    $WatchdogTaskName `
+        -TaskPath    $TaskFolder `
+        -Action      $wAction `
+        -Trigger     $wTrigger `
+        -Settings    $wSettings `
+        -Principal   $wPrincipal `
+        -Description $WatchdogDescription `
+        -Force | Out-Null
+
+    Start-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder
+    Write-Host "  Watchdog registered: checks every 5 min, force-restarts on failure" -ForegroundColor DarkGray
 }
 
 function Cleanup-Orphans {
@@ -188,6 +247,9 @@ function _install {
     Write-Host ""
     Write-Host "  AQ Agent will start automatically 30 s after each login."
     Write-Host "  Logs: logs\ next to whichever config.yaml is loaded (same folder as the engine)"
+
+    Remove-Watchdog
+    Register-Watchdog
 }
 
 # ── Update ────────────────────────────────────────────────────────────────────
@@ -201,6 +263,7 @@ function _update {
 switch ($Action) {
     "uninstall" {
         Remove-Task
+        Remove-Watchdog
         Cleanup-Orphans
         Write-Host "Uninstall complete."
     }
