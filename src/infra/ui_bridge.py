@@ -512,7 +512,7 @@ class UIBridge:
             "system":      self._build_system_info(snap.get("gauges", {})),
             "config":      self._build_config_snapshot(config),
             "trades":      [_serialize_trade(t) for t in trades],
-            "riskGuards":  self._build_risk_guards(lt, config, snap.get("gauges", {})),
+            "riskGuards":  self._build_risk_guards(lt, config),
             "clusterRisk": c.cluster_tracker.stats(),
             "metrics":     self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
             "signals":     list(self._signal_buf),
@@ -662,7 +662,7 @@ class UIBridge:
             "magic":                   self._config.execution.magic,
         }
 
-    def _build_risk_guards(self, lt: dict, config: Any, gauges: dict) -> list[dict]:
+    def _build_risk_guards(self, lt: dict, config: Any) -> list[dict]:
         daily_loss  = lt.get("daily_loss_pct", 0.0)
         eq_dd       = lt.get("profit_drawback_pct", 0.0)
         paused      = lt.get("paused", False)
@@ -713,10 +713,6 @@ class UIBridge:
             {"id": "guard5", "name": "EQUITY THROTTLE", "description": throttle_desc,
              "status": "DISABLED" if not throttle.get("enabled") else "ACTIVE",
              "current_value": throttle.get("drawdown_r", 0.0), "threshold": throttle.get("threshold_r", 0.0), "unit": "R"},
-            {"id": "guard6", "name": "ENTRY DRIFT", "description": "Rejects if fill moved against the trade by this % of signal risk (favorable moves never count)",
-             "status": "DISABLED" if not config.risk.entry_drift.enabled else "ACTIVE",
-             "current_value": round(gauges.get("risk.last_entry_drift_pct_of_risk", 0.0), 2),
-             "threshold": config.risk.entry_drift.max_drift_pct_of_risk, "unit": "%"},
         ]
 
     def _build_metrics(self) -> dict:
@@ -830,6 +826,8 @@ class UIBridge:
             "latency_execution_pipeline_ms": int(gauges.get("latency.execution_pipeline_ms") or 0),
             "latency_pipeline_ms": int(gauges.get("latency.execution_pipeline_ms") or gauges.get("latency.pipeline_ms") or 0),
             "latency_broker_round_trip_ms": int(gauges.get("latency.broker_round_trip_ms") or 0),
+            "entry_drift_pct_of_risk": round(gauges.get("risk.last_entry_drift_pct_of_risk") or 0.0, 2),
+            "entry_drift_max_pct_of_risk": config.risk.entry_drift.max_drift_pct_of_risk,
             "uptime_sec":         int(_uptime()),
             "memory_mb":          round(get_memory_mb(), 1),
             "cpu_percent":        get_cpu_percent(),

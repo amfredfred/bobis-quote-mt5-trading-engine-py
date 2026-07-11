@@ -32,7 +32,6 @@ def _guards_config() -> SimpleNamespace:
             rolling_window_size=2,
             rolling_drawdown_pct=2.0,
             cluster_risk=SimpleNamespace(enabled=False, groups=[]),
-            entry_drift=SimpleNamespace(enabled=False, max_drift_pct_of_risk=25.0),
         )
     )
 
@@ -58,7 +57,7 @@ def test_risk_guards_include_engaged_equity_throttle() -> None:
     bridge = _guards_bridge(
         _throttle_stats(engaged=True, multiplier=0.5, drawdown_r=9.2, samples=120)
     )
-    guards = bridge._build_risk_guards(dict(_LT), _guards_config(), {})
+    guards = bridge._build_risk_guards(dict(_LT), _guards_config())
 
     g5 = next(g for g in guards if g["id"] == "guard5")
     assert g5["name"] == "EQUITY THROTTLE"
@@ -71,36 +70,11 @@ def test_risk_guards_include_engaged_equity_throttle() -> None:
 
 def test_risk_guards_equity_throttle_disabled_state() -> None:
     bridge = _guards_bridge(_throttle_stats(enabled=False))
-    guards = bridge._build_risk_guards(dict(_LT), _guards_config(), {})
+    guards = bridge._build_risk_guards(dict(_LT), _guards_config())
 
     g5 = next(g for g in guards if g["id"] == "guard5")
     assert g5["status"] == "DISABLED"
     assert "Halves risk" in g5["description"]
-
-
-def test_risk_guards_entry_drift_disabled_by_default() -> None:
-    bridge = _guards_bridge(_throttle_stats())
-    guards = bridge._build_risk_guards(dict(_LT), _guards_config(), {})
-
-    g6 = next(g for g in guards if g["id"] == "guard6")
-    assert g6["name"] == "ENTRY DRIFT"
-    assert g6["status"] == "DISABLED"
-    assert g6["threshold"] == 25.0
-    assert g6["current_value"] == 0.0
-
-
-def test_risk_guards_entry_drift_enabled_reflects_live_gauge() -> None:
-    bridge = _guards_bridge(_throttle_stats())
-    config = _guards_config()
-    config.risk.entry_drift = SimpleNamespace(enabled=True, max_drift_pct_of_risk=25.0)
-
-    guards = bridge._build_risk_guards(
-        dict(_LT), config, {"risk.last_entry_drift_pct_of_risk": 13.4}
-    )
-
-    g6 = next(g for g in guards if g["id"] == "guard6")
-    assert g6["status"] == "ACTIVE"
-    assert g6["current_value"] == 13.4
 
 
 class _Repo:
@@ -128,6 +102,7 @@ def _config() -> SimpleNamespace:
         risk=SimpleNamespace(
             max_losing_streak=3,
             max_daily_loss_percent=2.0,
+            entry_drift=SimpleNamespace(enabled=False, max_drift_pct_of_risk=25.0),
         ),
     )
 
@@ -169,6 +144,25 @@ def test_metrics_use_final_trade_outcomes_for_win_rate() -> None:
     assert metrics["win_rate"] == 33.3
     assert metrics["trades_tp1_hit"] == 2
     assert metrics["daily_pnl"] == -30.0
+
+
+def test_metrics_exposes_entry_drift_as_a_gauge_not_a_guard() -> None:
+    metrics = _bridge()._build_metrics_from(
+        lt={
+            "start_of_day_equity": 5_000.0,
+            "daily_loss_pct": 0.0,
+            "daily_budget": 100.0,
+            "equity_peak": 5_000.0,
+            "equity_drawdown_pct": 0.0,
+        },
+        counters={},
+        gauges={"risk.last_entry_drift_pct_of_risk": 13.4},
+        open_trades=[],
+        config=_config(),
+    )
+
+    assert metrics["entry_drift_pct_of_risk"] == 13.4
+    assert metrics["entry_drift_max_pct_of_risk"] == 25.0
 
 
 def test_metrics_hydrate_final_outcomes_from_persisted_trades() -> None:
