@@ -153,9 +153,11 @@ class RiskEngine:
             },
         )
         metrics.increment("risk.approved")
-        if "entry_drift_pct_of_risk" in decision_data:
-            metrics.set_gauge(
-                "risk.last_entry_drift_pct_of_risk",
-                decision_data["entry_drift_pct_of_risk"],
-            )
+        # Any rule can put a number in RuleResult.data to get a live
+        # "current value" gauge for free, with no changes needed here -
+        # e.g. entry_drift_rule's entry_drift_pct_of_risk. Rejections get
+        # the equivalent for free too, via the **result.data spread above.
+        for key, value in decision_data.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                metrics.set_gauge(f"risk.last_{key}", float(value))
         return RiskDecision(approved=True, data=decision_data)
