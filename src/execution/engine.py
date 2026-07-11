@@ -164,15 +164,7 @@ class ExecutionEngine:
                 },
             )
             metrics.increment("signal.stale_rejected")
-            _set_latency_gauge("latency.market_signal_age_ms", signal_age_ms)
-            _set_latency_gauge(
-                "latency.emit_to_receive_ms",
-                _elapsed(signal.emitted_at, signal.received_at),
-            )
-            _set_latency_gauge(
-                "latency.receive_to_execute_ms",
-                _elapsed(signal.received_at, pipeline_start_ms),
-            )
+            _emit_reject_latency_gauges(signal, pipeline_start_ms, signal_age_ms)
             self._bus.emit(
                 Events.RISK_REJECTED, {"signal": signal, "reason": "stale_signal"}
             )
@@ -183,6 +175,7 @@ class ExecutionEngine:
             symbol_info = self._mt5_positions.get_symbol_info(_resolved)
         except Exception:
             logger.exception("ExecutionEngine: failed to fetch broker state")
+            _emit_reject_latency_gauges(signal, pipeline_start_ms)
             self._bus.emit(
                 Events.TRADE_ERROR, {"signal": signal, "reason": "broker_unavailable"}
             )
@@ -200,6 +193,7 @@ class ExecutionEngine:
                     extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
                 )
                 metrics.increment("signal.duplicates_ignored")
+                _emit_reject_latency_gauges(signal, pipeline_start_ms)
                 self._bus.emit(
                     Events.RISK_REJECTED, {"signal": signal, "reason": "duplicate_signal"}
                 )
@@ -220,6 +214,7 @@ class ExecutionEngine:
             )
 
             if not decision.approved:
+                _emit_reject_latency_gauges(signal, pipeline_start_ms)
                 self._bus.emit(
                     Events.RISK_REJECTED, {"signal": signal, "reason": decision.reason}
                 )
@@ -532,3 +527,26 @@ def _elapsed(start: int | None, end: int | None) -> int | None:
 def _set_latency_gauge(name: str, value: int | None) -> None:
     if value is not None:
         metrics.set_gauge(name, value)
+
+
+def _emit_reject_latency_gauges(
+    signal: InboundSignal, pipeline_start_ms: int, market_signal_age_ms: int | None = None
+) -> None:
+    """
+    Pre-execution latency gauges, written on every rejection path (stale,
+    duplicate, broker-unavailable, risk-rejected including RRR) — not just on
+    a successfully opened trade. Only covers stages that complete before a
+    reject decision is made (no broker round trip has happened yet).
+    """
+    if market_signal_age_ms is None:
+        actionable_at = _actionable_signal_at(signal)
+        market_signal_age_ms = (
+            pipeline_start_ms - actionable_at if actionable_at is not None else None
+        )
+    _set_latency_gauge("latency.market_signal_age_ms", market_signal_age_ms)
+    _set_latency_gauge(
+        "latency.emit_to_receive_ms", _elapsed(signal.emitted_at, signal.received_at)
+    )
+    _set_latency_gauge(
+        "latency.receive_to_execute_ms", _elapsed(signal.received_at, pipeline_start_ms)
+    )
