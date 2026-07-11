@@ -44,7 +44,8 @@ risk:
   equity_throttle:
     enabled: true
   # Entry-drift diagnostic — measures how far the live fill price has moved
-  # from the signal's own entry, as % of the signal's own risk distance.
+  # AGAINST the signal's own entry (a favorable move, e.g. a pullback before
+  # a LONG fills, never counts), as % of the signal's own risk distance.
   # Always measured regardless of `enabled`; only rejects on that basis
   # (separately from min_rr_ratio) when enabled.
   entry_drift:

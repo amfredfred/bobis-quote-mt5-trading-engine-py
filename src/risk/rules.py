@@ -332,7 +332,7 @@ def _actual_reward_risk(
 
 
 def entry_drift_rule(ctx: RuleContext) -> RuleResult:
-    """How far has the live fill price drifted from the signal's own entry.
+    """How far has the live fill price drifted *against* the signal's entry.
 
     min_rr_rule (immediately after this rule) recomputes R:R from the live
     fill price while holding the signal's SL/TP fixed — a rejection there
@@ -342,6 +342,13 @@ def entry_drift_rule(ctx: RuleContext) -> RuleResult:
     a percentage of the signal's own risk distance, so a rejection can be
     attributed to one cause or the other instead of only ever seeing "R:R
     too low."
+
+    Only ADVERSE drift counts — a fill that moved in the trade's favor (e.g.
+    a pullback before a LONG fills, buying cheaper than the signal's entry)
+    shrinks risk and grows reward, which is strictly good and must never be
+    penalised just because the price moved. Direction matches the same
+    ask-for-LONG/bid-for-SHORT convention min_rr_rule uses for "fill price",
+    so "adverse" here means exactly what it means there.
 
     The measurement (`entry_drift_pct_of_risk` in this result's `data`) is
     always computed and returned, on both approval and rejection — RiskEngine
@@ -364,11 +371,15 @@ def entry_drift_rule(ctx: RuleContext) -> RuleResult:
         return RuleResult(approved=True)
 
     fill_price = _resolve_fill_price(si, ctx.signal.direction)
-    drift = abs(fill_price - ctx.signal.entry_price)
-    drift_pct_of_risk = (drift / signal_risk) * 100.0
+    if ctx.signal.direction == SignalDirection.LONG:
+        adverse_drift = fill_price - ctx.signal.entry_price  # filled higher = worse
+    else:
+        adverse_drift = ctx.signal.entry_price - fill_price  # filled lower = worse
+    adverse_drift = max(0.0, adverse_drift)  # a favorable fill never counts
+    drift_pct_of_risk = (adverse_drift / signal_risk) * 100.0
 
     data = {
-        "entry_drift_price": drift,
+        "entry_drift_price": adverse_drift,
         "entry_drift_pct_of_risk": drift_pct_of_risk,
         "fill_price": fill_price,
     }

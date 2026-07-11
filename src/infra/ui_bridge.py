@@ -713,7 +713,7 @@ class UIBridge:
             {"id": "guard5", "name": "EQUITY THROTTLE", "description": throttle_desc,
              "status": "DISABLED" if not throttle.get("enabled") else "ACTIVE",
              "current_value": throttle.get("drawdown_r", 0.0), "threshold": throttle.get("threshold_r", 0.0), "unit": "R"},
-            {"id": "guard6", "name": "ENTRY DRIFT", "description": "Rejects if live fill has drifted this % of signal risk from entry",
+            {"id": "guard6", "name": "ENTRY DRIFT", "description": "Rejects if fill moved against the trade by this % of signal risk (favorable moves never count)",
              "status": "DISABLED" if not config.risk.entry_drift.enabled else "ACTIVE",
              "current_value": round(gauges.get("risk.last_entry_drift_pct_of_risk", 0.0), 2),
              "threshold": config.risk.entry_drift.max_drift_pct_of_risk, "unit": "%"},

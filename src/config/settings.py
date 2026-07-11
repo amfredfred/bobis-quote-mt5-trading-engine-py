@@ -191,11 +191,13 @@ class EntryDriftConfig:
     min_rr_rule recomputes R:R from the live fill price while leaving the
     signal's SL/TP unchanged; a rejection there conflates "the setup decayed"
     with "the entry side moved against the spread." This rule measures how
-    far the live fill price has drifted from the signal's own entry, as a
-    percentage of the signal's own risk distance, and — only when enabled —
-    rejects on that basis with a distinct, diagnosable reason. The drift
-    measurement itself is always recorded (via risk-rejection metrics) even
-    while disabled, so it has diagnostic value from day one.
+    far the live fill price has moved AGAINST the signal's own entry (a
+    favorable move — e.g. a pullback before a LONG fills — never counts, no
+    matter how large), as a percentage of the signal's own risk distance,
+    and — only when enabled — rejects on that basis with a distinct,
+    diagnosable reason. The drift measurement itself is always recorded (via
+    risk-rejection metrics) even while disabled, so it has diagnostic value
+    from day one.
     """
 
     enabled: bool = False

@@ -168,6 +168,31 @@ def test_entry_drift_enabled_approves_within_threshold() -> None:
     assert abs(result.data["entry_drift_pct_of_risk"] - 10.0) < 1e-6
 
 
+def test_entry_drift_favorable_pullback_never_counts_even_when_enabled() -> None:
+    # Same pullback scenario as test_min_rr_uses_better_long_pullback_fill:
+    # LONG entry=100, stop=99 -> signal risk = 1.0. Fill at ask=99.5 is
+    # BELOW the signal's entry - a cheaper, more favorable LONG fill that
+    # shrinks risk and grows reward. This must read as zero drift, not a
+    # 50% adverse move, even with the rule enabled and a tight threshold.
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.LONG,
+        ask=99.5,
+        bid=99.4,
+        entry_price=100.0,
+        stop_loss=99.0,
+        tp2=105.0,
+        risk_reward_ratio=5.0,
+        symbol_thresholds={},
+        entry_drift=EntryDriftConfig(enabled=True, max_drift_pct_of_risk=5.0),
+    )
+
+    result = entry_drift_rule(ctx)
+
+    assert result.approved is True
+    assert result.data["entry_drift_pct_of_risk"] == 0.0
+
+
 def _context(
     *,
     symbol: str,
