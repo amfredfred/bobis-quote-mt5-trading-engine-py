@@ -508,6 +508,7 @@ class UIBridge:
         return {
             "connected":   connected_mt5,
             "autotrading_enabled": self._autotrading_enabled(),
+            "signal_engine_connected": c.signal_consumer.is_connected,
             "engine":      self._build_engine_info(lt),
             "system":      self._build_system_info(snap.get("gauges", {})),
             "config":      self._build_config_snapshot(config),
@@ -828,6 +829,7 @@ class UIBridge:
             "latency_broker_round_trip_ms": int(gauges.get("latency.broker_round_trip_ms") or 0),
             "entry_drift_pct_of_risk": round(gauges.get("risk.last_entry_drift_pct_of_risk") or 0.0, 2),
             "entry_drift_max_pct_of_risk": config.risk.entry_drift.max_drift_pct_of_risk,
+            "signal_engine_connected": self._container.signal_consumer.is_connected,
             "uptime_sec":         int(_uptime()),
             "memory_mb":          round(get_memory_mb(), 1),
             "cpu_percent":        get_cpu_percent(),

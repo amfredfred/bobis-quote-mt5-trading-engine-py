@@ -69,6 +69,12 @@ class WebSocketClient:
         self._stopped  = threading.Event()
         self._thread:  threading.Thread | None = None
         self._current_delay = reconnect_delay
+        self._is_connected  = False
+
+    @property
+    def is_connected(self) -> bool:
+        """True from on_open until on_close/on_error fires - the live socket state."""
+        return self._is_connected
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -131,6 +137,7 @@ class WebSocketClient:
     def _handle_open(self, ws: websocket.WebSocketApp) -> None:
         logger.info("WebSocketClient connected: %s", self._url)
         self._current_delay = self._reconnect_delay   # reset backoff
+        self._is_connected = True
         self._on_connected()
 
     def _handle_message(self, ws: websocket.WebSocketApp, message: str) -> None:
@@ -151,6 +158,7 @@ class WebSocketClient:
         logger.warning(
             "WebSocketClient closed: code=%s msg=%s", close_status_code, close_msg
         )
+        self._is_connected = False
         self._on_disconnected()
 
 

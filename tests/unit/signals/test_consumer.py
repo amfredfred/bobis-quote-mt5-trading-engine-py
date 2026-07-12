@@ -17,6 +17,7 @@ from src.signals.signal_validator import SignalValidator
 class FakeWebSocket:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.is_connected = False
 
     def send(self, data: str) -> bool:
         self.sent.append(data)
@@ -158,3 +159,15 @@ def test_close_event_emits_received_but_not_triggered() -> None:
     consumer._handle_raw(json.dumps({"event": "signal.tp1_hit", "payload": payload}))
 
     assert fired == ["received"]
+
+
+def test_is_connected_delegates_to_underlying_socket() -> None:
+    consumer, socket = make_consumer()
+
+    assert consumer.is_connected is False
+
+    socket.is_connected = True
+    assert consumer.is_connected is True
+
+    socket.is_connected = False
+    assert consumer.is_connected is False

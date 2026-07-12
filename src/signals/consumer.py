@@ -68,6 +68,11 @@ class SignalConsumer:
             on_disconnected=self._on_disconnected,
         )
 
+    @property
+    def is_connected(self) -> bool:
+        """Whether the underlying WebSocket link to the signal engine is up."""
+        return self._ws.is_connected
+
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def start(self) -> None:

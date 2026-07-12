@@ -91,6 +91,7 @@ def _bridge(trades: list | None = None) -> UIBridge:
         signal_queue=_Queue(),
         trade_repo=_Repo(trades),
         mt5_client=SimpleNamespace(is_connected=lambda: True, mt5=SimpleNamespace(terminal_info=lambda: None)),
+        signal_consumer=SimpleNamespace(is_connected=True),
     )
     bridge._clients = set()
     return bridge
@@ -163,6 +164,27 @@ def test_metrics_exposes_entry_drift_as_a_gauge_not_a_guard() -> None:
 
     assert metrics["entry_drift_pct_of_risk"] == 13.4
     assert metrics["entry_drift_max_pct_of_risk"] == 25.0
+
+
+def test_metrics_exposes_signal_engine_connection_state() -> None:
+    bridge = _bridge()
+    bridge._container.signal_consumer.is_connected = False
+
+    metrics = bridge._build_metrics_from(
+        lt={
+            "start_of_day_equity": 5_000.0,
+            "daily_loss_pct": 0.0,
+            "daily_budget": 100.0,
+            "equity_peak": 5_000.0,
+            "equity_drawdown_pct": 0.0,
+        },
+        counters={},
+        gauges={},
+        open_trades=[],
+        config=_config(),
+    )
+
+    assert metrics["signal_engine_connected"] is False
 
 
 def test_metrics_hydrate_final_outcomes_from_persisted_trades() -> None:
