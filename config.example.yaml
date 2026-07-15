@@ -3,22 +3,20 @@
   symbols:
     - XAUUSD
     - US100
-    - EURUSD
-    - GBPUSD
-    - USDJPY
+    - US30
 mt5:
-  login: 436323416
-  password: "#1AqAGENTEXNESS"
-  server: "Exness-MT5Trial9"
-  path: "C:\\Program Files\\MetaTrader 5 EXNESS\\terminal64.exe"
+  login: 00000000
+  password: "your-mt5-password"
+  server: "YourBroker-Demo"
+  path: "C:\\Program Files\\Your MT5 Terminal\\terminal64.exe"
   magic: 8858
   slippage: 10
-  comment: bobisquote
+  comment: your-comment-tag
 risk:
   # Aligned with signal-engine circuit_breaker.max_consecutive_losses=10.
   # Streak analysis (3yr, 5269 trades) proved losses are i.i.d. — stopping
   # at 3 was pausing the engine inside random variance with no edge benefit.
-  max_losing_streak: 25
+  max_losing_streak: 20
   max_daily_loss_percent: 100
   max_exposure_per_symbol: 2
   min_rr_ratio: 1.0
@@ -26,9 +24,22 @@ risk:
   min_lot_size: 0.01
   sl_ratio_threshold: 0.35
   symbol_sl_ratio_threshold:
-    XAUUSD: 0.35   # commodity — wider spread tolerance
-    US100: 0.20    # index — tight SL-to-spread requirement
-    XAGUSD: 0.30   # commodity
+    # commodity — wider spread tolerance
+    XAUUSD: 0.55
+    # US100: measured against backtest data, not guessed. Median validated
+    # trade sits at ~26% spread/SL, p25 at ~47% - a tighter threshold (e.g.
+    # the generic "index" template value of 0.20) would reject the median
+    # trade outright. Real spread-to-candle-range for US100 is at least as
+    # good as XAUUSD's, not worse, so it gets the same threshold.
+    US100: 0.55
+    # US30: measured against its own 2-year backtest (30min/1h trades only,
+    # matching its live TF-pair config). Median spread/SL ratio ~11.8%,
+    # p90 ~34.2%, p95 ~52.4%, max ~72.3% - materially tighter than US100's
+    # own distribution. Kept at the same 0.55 as XAUUSD/US100 for a
+    # consistent, easy-to-reason-about policy; it only trims the worst
+    # ~5% tail of US30's own validated trades, same margin of protection
+    # the other two symbols get from this threshold.
+    US30: 0.55
   no_hedging: true
   # Profit drawdown guard — pauses until midnight if today's closed P&L gives
   # back this % of start-of-day equity from its session peak. Dormant until
@@ -43,6 +54,10 @@ risk:
   # only user-facing knob.
   equity_throttle:
     enabled: true
+    drawdown_threshold_r: 8.0
+    release_threshold_r: 6.0
+    risk_multiplier: 0.5
+    window_days: 30
   # Entry-drift diagnostic — measures how far the live fill price has moved
   # AGAINST the signal's own entry (a favorable move, e.g. a pullback before
   # a LONG fills, never counts), as % of the signal's own risk distance.
@@ -51,10 +66,6 @@ risk:
   entry_drift:
     enabled: false
     max_drift_pct_of_risk: 25.0
-  # Cluster risk guard — caps total intraday risk across correlated symbols.
-  # Cross-symbol correlation is near-zero across all 5 pairs (max 0.13
-  # EURUSD/USDJPY over 3yr), so this guard is disabled. Groups are defined
-  # for reference and can be enabled if correlation patterns change.
   cluster_risk:
     enabled: false
     groups:
@@ -66,22 +77,22 @@ risk:
         after_first_loss_risk_multiplier: 0.75
         min_trade_risk_multiplier: 0.25
       - name: indices
-        symbols: [US100]
+        symbols: [US100, US30]
         max_same_day_loss_r: 1.5
         max_concurrent_positions: 1
         max_same_day_losses: 2
         after_first_loss_risk_multiplier: 0.5
         min_trade_risk_multiplier: 0.25
       - name: metals
-        symbols: [XAUUSD, XAGUSD]
+        symbols: [XAUUSD]
         max_same_day_loss_r: 1.5
         max_concurrent_positions: 1
         max_same_day_losses: 2
         after_first_loss_risk_multiplier: 0.5
         min_trade_risk_multiplier: 0.25
 execution:
-  # Global default: 45% trigger for all pairs.
-  # Only US100 overrides to 25% (volatile index needs earlier partial close).
+  # Global default: 45% trigger for all pairs. Override per symbol via
+  # tf_overrides below — e.g. XAUUSD and US100 both diverge from it here.
   # Post v0.2.0: LTF removed — tf_overrides use "*" wildcard TF (not "5/5").
   tp1_trigger_pct: 45.0
   tp1_percentage: 0.0
@@ -89,6 +100,9 @@ execution:
   breakeven_spread_multiplier: 0
   breakeven_max_buffer_pct_of_risk: 10.0
   tf_overrides:
+    XAUUSD:
+      "*":
+        tp1_trigger_pct: 85.0
     US100:
       "*":
         tp1_trigger_pct: 25.0
