@@ -97,7 +97,7 @@ execution:
   tp1_trigger_pct: 45.0
   tp1_percentage: 0.0
   move_sl_to_be_on_tp1: true
-  breakeven_spread_multiplier: 0
+  breakeven_spread_multiplier: 1
   breakeven_max_buffer_pct_of_risk: 10.0
   tf_overrides:
     XAUUSD:
