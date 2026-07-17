@@ -594,14 +594,19 @@ class PositionManager:
 
 
 def calculate_realized_rr(trade: Trade, close_price: float) -> float:
-    if not trade.entry_price or trade.stop_loss == trade.entry_price:
+    # Use plan.stop_loss (the original, never mutated) rather than
+    # trade.stop_loss, which gets overwritten to breakeven after TP1 - using
+    # the live field here would divide by a near-zero risk distance for any
+    # trade that already moved to breakeven, producing wildly inflated RR.
+    initial_sl = trade.plan.stop_loss
+    if not trade.entry_price or initial_sl == trade.entry_price:
         return 0.0
 
     if trade.side.value == "BUY":
-        risk = trade.entry_price - trade.stop_loss
+        risk = trade.entry_price - initial_sl
         reward = close_price - trade.entry_price
     elif trade.side.value == "SELL":
-        risk = trade.stop_loss - trade.entry_price
+        risk = initial_sl - trade.entry_price
         reward = trade.entry_price - close_price
     else:
         return 0.0

@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from src.domain.trade import OrderSide, Trade, TradePlan, TradeStatus
 from src.positions.manager import calculate_realized_rr, _valid_breakeven_sl
 
@@ -20,6 +22,28 @@ def test_calculate_realized_rr_sell_profit_is_positive() -> None:
     trade = _trade(OrderSide.SELL, entry=100.0, stop=105.0)
 
     assert calculate_realized_rr(trade, 90.0) == 2.0
+
+
+def test_calculate_realized_rr_uses_plan_stop_loss_after_breakeven_move() -> None:
+    # trade.stop_loss gets mutated to breakeven after TP1 (see
+    # positions.manager's breakeven-move logic); plan.stop_loss must stay
+    # the original risk-defining value so realized_rr doesn't blow up when
+    # divided by the near-zero breakeven-to-entry distance.
+    trade = _trade(OrderSide.SELL, entry=4002.68, stop=4007.17)
+    trade.stop_loss = 4002.71  # moved to breakeven after TP1
+
+    rr = calculate_realized_rr(trade, 3989.5)
+
+    assert rr == pytest.approx((4002.68 - 3989.5) / (4007.17 - 4002.68), rel=1e-6)
+
+
+def test_calculate_realized_rr_buy_uses_plan_stop_loss_after_breakeven_move() -> None:
+    trade = _trade(OrderSide.BUY, entry=100.0, stop=95.0)
+    trade.stop_loss = 100.02  # moved to breakeven after TP1
+
+    rr = calculate_realized_rr(trade, 110.0)
+
+    assert rr == pytest.approx((110.0 - 100.0) / (100.0 - 95.0), rel=1e-6)
 
 
 def test_valid_breakeven_sl_defers_buy_when_entry_inside_stop_distance() -> None:
