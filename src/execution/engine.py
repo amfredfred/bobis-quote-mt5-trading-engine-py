@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
     from src.risk.cluster_tracker import ClusterRiskTracker
 from src.domain.trade import Trade, TradeStatus
+from src.utils.comment import build_trade_comment
 from src.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
@@ -257,8 +258,11 @@ class ExecutionEngine:
         signal = replace(signal, order_sent_at=broker_send_ms)
 
         try:
+            comment = build_trade_comment(
+                signal.rejection_candle.pattern, signal.htf_interval, signal.ltf_interval
+            )
             ticket, executed_price, filled_volume = self._orders.execute_market_order(
-                plan, symbol_info, tp_override=plan.tp2, comment="xcom"
+                plan, symbol_info, tp_override=plan.tp2, comment=comment
             )
         except Exception as exc:
             with self._pending_lock:

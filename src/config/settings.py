@@ -336,7 +336,6 @@ class ExecutionConfig:
     move_sl_to_be_on_tp1: bool
     slippage: int
     magic: int
-    comment: str
     spread_risk_multiplier: float
     order_retry_count: int
     max_entry_slippage_pct_of_stop: float
@@ -545,7 +544,6 @@ class AppConfig:
                 ),
                 slippage=int(_require(mt5, "slippage", "mt5")),
                 magic=int(_require(mt5, "magic", "mt5")),
-                comment=str(_require(mt5, "comment", "mt5")),
                 spread_risk_multiplier=float(
                     _require(exe, "spread_risk_multiplier", "execution")
                 ),

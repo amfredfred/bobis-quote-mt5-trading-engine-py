@@ -11,7 +11,6 @@ mt5:
   path: "C:\\Program Files\\Your MT5 Terminal\\terminal64.exe"
   magic: 8858
   slippage: 10
-  comment: your-comment-tag
 risk:
   # Aligned with signal-engine circuit_breaker.max_consecutive_losses=10.
   # Streak analysis (3yr, 5269 trades) proved losses are i.i.d. — stopping

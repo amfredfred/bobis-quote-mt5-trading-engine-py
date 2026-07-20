@@ -322,7 +322,6 @@ def _execution_config(max_signal_age_ms: int = 90_000) -> ExecutionConfig:
         move_sl_to_be_on_tp1=True,
         slippage=10,
         magic=12345,
-        comment="test",
         spread_risk_multiplier=1.0,
         order_retry_count=0,
         max_entry_slippage_pct_of_stop=0.2,

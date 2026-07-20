@@ -105,7 +105,7 @@ class OrderManager:
                     tp=tp,
                     slippage=self._cfg.slippage,
                     magic=self._cfg.magic,
-                    comment=f"{comment}_{self._cfg.comment}",
+                    comment=comment,
                     filling_mode=symbol_info.order_filling_mode,
                 )
 
