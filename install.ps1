@@ -33,6 +33,7 @@ $EngineDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WatchdogTaskName    = "AQ Agent Watchdog"
 $WatchdogDescription = "Restarts AQ Agent if it dies or hangs. Runs independently of the agent task's own -RestartCount cap."
 $WatchdogScript      = Join-Path $EngineDir "watchdog.ps1"
+$WatchdogLauncher    = Join-Path $EngineDir "watchdog-launcher.vbs"
 
 # ── Resolve executable ────────────────────────────────────────────────────────
 # Installed via Inno Setup: files land directly under the install dir (no dist\ prefix)
@@ -105,9 +106,15 @@ function Register-Watchdog {
         -RepetitionInterval (New-TimeSpan -Minutes 5) `
         -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
 
+    # Launched via wscript.exe + a VBS shim, not powershell.exe directly:
+    # powershell.exe's own -WindowStyle Hidden still briefly flashes a
+    # console window on many Windows builds (the console host allocates the
+    # window before PowerShell applies the style), which is very visible on
+    # a task that fires every 5 minutes. WScript.Shell.Run with window
+    # style 0 never allocates a visible window at all.
     $wAction = New-ScheduledTaskAction `
-        -Execute          "powershell.exe" `
-        -Argument         "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WatchdogScript`"" `
+        -Execute          "wscript.exe" `
+        -Argument         "//B //Nologo `"$WatchdogLauncher`"" `
         -WorkingDirectory $EngineDir
 
     $wSettings = New-ScheduledTaskSettingsSet `
