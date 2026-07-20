@@ -8,11 +8,14 @@ the Signal Engine.  They are the boundary types: nothing outside the
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 from src.utils.symbol import normalise_symbol
 from src.utils.time import now_ms
+
+logger = logging.getLogger(__name__)
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────────
@@ -39,10 +42,28 @@ class BosDirection(str, Enum):
 
 
 class CandlePattern(str, Enum):
+    """Mirror of the Signal Engine's own CandlePattern (domain/entities/
+    enums.py) — one value per strategy plugin's trigger pattern. This is a
+    SEPARATE codebase from Signal Engine, so nothing enforces these two
+    enums staying in sync; when Signal Engine adds a strategy/pattern, this
+    one needs a matching update or every signal using it fails to
+    deserialize (see UNKNOWN below for why that's now a warning, not a
+    dropped signal, regardless of whether this list is kept current)."""
+
     SHOOTING_STAR = "SHOOTING_STAR"
     HAMMER = "HAMMER"
     CRT_BUY = "CRT_BUY"
     CRT_SELL = "CRT_SELL"
+    ORB_LONG = "ORB_LONG"
+    ORB_SHORT = "ORB_SHORT"
+    BOS_LONG = "BOS_LONG"
+    BOS_SHORT = "BOS_SHORT"
+    FVG_LONG = "FVG_LONG"
+    FVG_SHORT = "FVG_SHORT"
+    # Fallback for any pattern value this enum doesn't (yet) know about —
+    # see RejectionCandle.from_dict. Never raised as a deserialization
+    # error; the raw string is logged instead so the signal still executes.
+    UNKNOWN = "UNKNOWN"
 
 
 class SignalEventName(str, Enum):
@@ -120,6 +141,26 @@ class RejectionCandle:
 
     @classmethod
     def from_dict(cls, d: dict) -> RejectionCandle:
+        raw_pattern = d["pattern"]
+        try:
+            pattern = CandlePattern(raw_pattern)
+        except ValueError:
+            # `pattern` is purely descriptive here — nothing downstream of
+            # this deserialization step reads it for execution decisions
+            # (entry/SL/TP/direction all come from their own fields). An
+            # unrecognized value (e.g. Signal Engine adding a new strategy's
+            # pattern before this enum is updated to match) must not drop
+            # the whole signal — see the 2026-07-19/20 incident where
+            # BOS_LONG/BOS_SHORT/FVG_SHORT signals silently failed to
+            # execute because this enum hadn't been updated for the new
+            # bos_pullback/fvg strategies.
+            logger.warning(
+                "Unrecognized CandlePattern %r — update CandlePattern in "
+                "signal_interface.py to match Signal Engine's domain/entities/"
+                "enums.py. Falling back to UNKNOWN so this signal still executes.",
+                raw_pattern,
+            )
+            pattern = CandlePattern.UNKNOWN
         return cls(
             open=d["open"],
             high=d["high"],
@@ -127,7 +168,7 @@ class RejectionCandle:
             close=d["close"],
             timestamp=d["timestamp"],
             wick_ratio=d["wickRatio"],
-            pattern=CandlePattern(d["pattern"]),
+            pattern=pattern,
             wick_tip=d["wickTip"],
         )
 
