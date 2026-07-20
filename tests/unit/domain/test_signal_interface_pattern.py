@@ -1,14 +1,20 @@
-"""RejectionCandle.from_dict's pattern deserialization — must not drop a
-whole signal just because its CandlePattern value isn't in this codebase's
-copy of the enum yet (see the 2026-07-19/20 incident: BOS_LONG/BOS_SHORT/
-FVG_SHORT signals silently failed to execute because this file's
-CandlePattern hadn't been updated for the new bos_pullback/fvg strategies)."""
+"""Lenient enum deserialization for inbound signal payloads — must not drop
+a whole signal just because a mirrored enum value (CandlePattern,
+SignalStatus, ...) isn't in this codebase's copy yet (see the 2026-07-19/20
+incident: BOS_LONG/BOS_SHORT/FVG_SHORT signals silently failed to execute
+because CandlePattern here hadn't been updated for the new bos_pullback/fvg
+strategies)."""
 
 from __future__ import annotations
 
 import logging
 
-from src.domain.signal_interface import CandlePattern, RejectionCandle
+from src.domain.signal_interface import (
+    CandlePattern,
+    RejectionCandle,
+    SignalStatus,
+    _parse_enum_lenient,
+)
 
 
 def _payload(pattern: str) -> dict:
@@ -58,3 +64,16 @@ def test_unrecognized_pattern_logs_a_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="src.domain.signal_interface"):
         RejectionCandle.from_dict(_payload("SOME_FUTURE_STRATEGY_PATTERN"))
     assert any("Unrecognized CandlePattern" in r.message for r in caplog.records)
+
+
+def test_signal_status_undetermined_is_recognized():
+    """UNDETERMINED is a genuine live status (same-bar SL/TP ambiguity —
+    see signal_service.py's SIGNAL_UNDETERMINED event mapping), not just a
+    backtest artifact — it must round-trip, not fall back to UNKNOWN."""
+    status = _parse_enum_lenient(SignalStatus, "UNDETERMINED", SignalStatus.UNKNOWN)
+    assert status == SignalStatus.UNDETERMINED
+
+
+def test_signal_status_unrecognized_value_falls_back_not_a_crash():
+    status = _parse_enum_lenient(SignalStatus, "SOME_FUTURE_STATUS", SignalStatus.UNKNOWN)
+    assert status == SignalStatus.UNKNOWN

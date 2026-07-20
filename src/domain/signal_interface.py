@@ -18,6 +18,26 @@ from src.utils.time import now_ms
 logger = logging.getLogger(__name__)
 
 
+def _parse_enum_lenient(enum_cls, raw, fallback):
+    """Parse `raw` as `enum_cls`, falling back (with a logged warning)
+    instead of raising when Signal Engine emits a value this codebase's
+    mirrored enum doesn't know about yet. See the 2026-07-19/20 incident:
+    BOS_LONG/BOS_SHORT/FVG_SHORT signals were silently dropped entirely
+    because CandlePattern here hadn't been updated to match Signal Engine's
+    domain/entities/enums.py — never again fatal for a single unrecognized
+    value on a field nothing downstream reads for execution decisions."""
+    try:
+        return enum_cls(raw)
+    except ValueError:
+        logger.warning(
+            "Unrecognized %s value %r — update %s in signal_interface.py "
+            "to match Signal Engine's domain/entities/enums.py. Falling "
+            "back to %s.",
+            enum_cls.__name__, raw, enum_cls.__name__, fallback.name,
+        )
+        return fallback
+
+
 # ── Enums ──────────────────────────────────────────────────────────────────────
 
 
@@ -34,6 +54,15 @@ class SignalStatus(str, Enum):
     SL_HIT = "SL_HIT"
     INVALIDATED = "INVALIDATED"
     EXPIRED = "EXPIRED"
+    # Same-bar SL/TP ambiguity, unresolvable from OHLC alone — Signal
+    # Engine's own genuine status, reachable live (see signal_service.py's
+    # UNDETERMINED -> SIGNAL_UNDETERMINED event mapping), not just backtest.
+    UNDETERMINED = "UNDETERMINED"
+    # Fallback for any status value this enum doesn't (yet) know about —
+    # see InboundSignal.from_dict. Not currently read anywhere for
+    # execution decisions (that's driven by this codebase's own separate
+    # TradeStatus), so a permissive fallback here is safe.
+    UNKNOWN = "UNKNOWN"
 
 
 class BosDirection(str, Enum):
@@ -141,26 +170,11 @@ class RejectionCandle:
 
     @classmethod
     def from_dict(cls, d: dict) -> RejectionCandle:
-        raw_pattern = d["pattern"]
-        try:
-            pattern = CandlePattern(raw_pattern)
-        except ValueError:
-            # `pattern` is purely descriptive here — nothing downstream of
-            # this deserialization step reads it for execution decisions
-            # (entry/SL/TP/direction all come from their own fields). An
-            # unrecognized value (e.g. Signal Engine adding a new strategy's
-            # pattern before this enum is updated to match) must not drop
-            # the whole signal — see the 2026-07-19/20 incident where
-            # BOS_LONG/BOS_SHORT/FVG_SHORT signals silently failed to
-            # execute because this enum hadn't been updated for the new
-            # bos_pullback/fvg strategies.
-            logger.warning(
-                "Unrecognized CandlePattern %r — update CandlePattern in "
-                "signal_interface.py to match Signal Engine's domain/entities/"
-                "enums.py. Falling back to UNKNOWN so this signal still executes.",
-                raw_pattern,
-            )
-            pattern = CandlePattern.UNKNOWN
+        # `pattern` is purely descriptive — nothing downstream reads it for
+        # execution decisions (entry/SL/TP/direction all come from their
+        # own fields) — so an unrecognized value falls back leniently
+        # rather than dropping the whole signal.
+        pattern = _parse_enum_lenient(CandlePattern, d["pattern"], CandlePattern.UNKNOWN)
         return cls(
             open=d["open"],
             high=d["high"],
@@ -249,7 +263,7 @@ class InboundSignal:
             id=d["id"],
             symbol=normalise_symbol(d["symbol"]),
             direction=SignalDirection(d["direction"]),
-            status=SignalStatus(d["status"]),
+            status=_parse_enum_lenient(SignalStatus, d["status"], SignalStatus.UNKNOWN),
             entry_price=d["entryPrice"],
             stop_loss=d["stopLoss"],
             tp1=d["tp1"],
