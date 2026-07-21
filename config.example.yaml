@@ -39,6 +39,19 @@ risk:
     # ~5% tail of US30's own validated trades, same margin of protection
     # the other two symbols get from this threshold.
     US30: 0.55
+  # Per-symbol risk_amount multiplier (optional, defaults to 1.0 for any
+  # symbol not listed) - composes with the cluster/equity-throttle
+  # multipliers, applied in TradePlanner.plan(). Example only; not yet
+  # calibrated against real per-symbol volatility data.
+  symbol_risk_multiplier: {}
+  # Balance-tiered risk ceiling (optional - defaults shown are also the
+  # fallback if this whole section is omitted). Caps risk_amount at
+  # balance * cap_pct/100 on top of the existing daily-budget sizing:
+  # any balance <= base_threshold uses base_cap_pct; above it, the cap
+  # halves for every doubling of balance, down to floor_pct.
+  balance_tier_base_threshold: 500.0
+  balance_tier_base_cap_pct: 5.0
+  balance_tier_floor_pct: 0.05
   no_hedging: true
   # Profit drawdown guard — pauses until midnight if today's closed P&L gives
   # back this % of start-of-day equity from its session peak. Dormant until

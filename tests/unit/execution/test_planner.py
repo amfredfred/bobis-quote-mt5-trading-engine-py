@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.config.settings import ExecutionConfig, RiskConfig
 from src.domain.position import AccountInfo, SymbolInfo
 from src.domain.signal_interface import (
@@ -20,6 +22,13 @@ from src.execution.planner import TradePlanner
 class _LossTracker:
     def daily_risk_amount(self, max_losing_streak: int) -> float:
         return 100.0
+
+    def balance_tier_cap_amount(
+        self, base_threshold: float, base_cap_pct: float, floor_pct: float
+    ) -> float:
+        # No-op ceiling for tests unrelated to the balance-tier feature —
+        # large enough to never clamp the small risk_amounts these tests use.
+        return float("inf")
 
 
 def _account() -> AccountInfo:
@@ -47,6 +56,7 @@ def _planner() -> TradePlanner:
             min_lot_size=0.01,
             sl_ratio_threshold=0.35,
             symbol_sl_ratio_threshold={},
+            symbol_risk_multiplier={},
         ),
         ExecutionConfig(
             tp1_trigger_pct=50.0,
@@ -85,6 +95,94 @@ def test_planner_clamps_risk_multiplier_to_one():
     assert plan.risk_multiplier == 1.0
 
 
+def _exec_config(**overrides) -> ExecutionConfig:
+    defaults = dict(
+        tp1_trigger_pct=50.0,
+        tp1_percentage=0.0,
+        move_sl_to_be_on_tp1=True,
+        slippage=10,
+        magic=12345,
+        spread_risk_multiplier=0.0,
+        order_retry_count=0,
+        max_entry_slippage_pct_of_stop=0.0,
+        close_on_slippage_exceed=False,
+        order_retry_delay_sec=0.0,
+        tf_overrides={},
+    )
+    defaults.update(overrides)
+    return ExecutionConfig(**defaults)
+
+
+def test_planner_applies_symbol_risk_multiplier():
+    risk_config = RiskConfig(
+        max_losing_streak=3,
+        max_daily_loss_percent=2.0,
+        max_exposure_per_symbol=2,
+        min_rr_ratio=1.0,
+        max_lot_size=100.0,
+        min_lot_size=0.01,
+        sl_ratio_threshold=0.35,
+        symbol_sl_ratio_threshold={},
+        symbol_risk_multiplier={"XAUUSD": 0.5},  # US30 not listed -> defaults to 1.0
+    )
+    planner = TradePlanner(risk_config, _exec_config(), _LossTracker())
+
+    xau_plan = planner.plan(
+        _signal(htf_interval="1min", ltf_interval="1min", symbol="XAUUSD"),
+        _account(),
+        _symbol_info(symbol="XAUUSD"),
+    )
+    us30_plan = planner.plan(
+        _signal(htf_interval="1min", ltf_interval="1min", symbol="US30"),
+        _account(),
+        _symbol_info(symbol="US30"),
+    )
+
+    assert xau_plan.risk_amount == pytest.approx(us30_plan.risk_amount * 0.5)
+
+
+def test_planner_clamps_risk_amount_to_balance_tier_cap():
+    class _CappedLossTracker:
+        def daily_risk_amount(self, max_losing_streak: int) -> float:
+            return 100.0  # would otherwise size to this
+
+        def balance_tier_cap_amount(
+            self, base_threshold: float, base_cap_pct: float, floor_pct: float
+        ) -> float:
+            return 10.0  # tier ceiling below the uncapped risk_amount
+
+    planner = TradePlanner(
+        RiskConfig(
+            max_losing_streak=3,
+            max_daily_loss_percent=2.0,
+            max_exposure_per_symbol=2,
+            min_rr_ratio=1.0,
+            max_lot_size=100.0,
+            min_lot_size=0.01,
+            sl_ratio_threshold=0.35,
+            symbol_sl_ratio_threshold={},
+            symbol_risk_multiplier={},
+        ),
+        _exec_config(),
+        _CappedLossTracker(),
+    )
+
+    plan = planner.plan(
+        _signal(htf_interval="1min", ltf_interval="1min"), _account(), _symbol_info()
+    )
+
+    assert plan.risk_amount == pytest.approx(10.0)
+
+
+def test_planner_leaves_risk_amount_untouched_when_under_tier_cap():
+    # Default _LossTracker's balance_tier_cap_amount() returns inf — never clamps.
+    planner = _planner()
+    plan = planner.plan(
+        _signal(htf_interval="1min", ltf_interval="1min"), _account(), _symbol_info()
+    )
+    assert plan.risk_amount == pytest.approx(100.0)
+
+
 def test_planner_uses_symbol_and_timeframe_specific_tp1_trigger_pct():
     planner = TradePlanner(
         RiskConfig(
@@ -96,6 +194,7 @@ def test_planner_uses_symbol_and_timeframe_specific_tp1_trigger_pct():
             min_lot_size=0.01,
             sl_ratio_threshold=0.35,
             symbol_sl_ratio_threshold={},
+            symbol_risk_multiplier={},
         ),
         ExecutionConfig(
             tp1_trigger_pct=50.0,
@@ -203,10 +302,10 @@ def test_execution_config_supports_tp1_close_pct_override_alias():
     assert cfg.tp1_percentage_for("XAUUSD", "5min", "5min") == 0.0
 
 
-def _signal(*, htf_interval: str, ltf_interval: str) -> InboundSignal:
+def _signal(*, htf_interval: str, ltf_interval: str, symbol: str = "XAUUSD") -> InboundSignal:
     return InboundSignal(
         id="sig-1",
-        symbol="XAUUSD",
+        symbol=symbol,
         direction=SignalDirection.LONG,
         status=SignalStatus.TRIGGERED,
         entry_price=100.0,
@@ -250,9 +349,9 @@ def _signal(*, htf_interval: str, ltf_interval: str) -> InboundSignal:
     )
 
 
-def _symbol_info() -> SymbolInfo:
+def _symbol_info(*, symbol: str = "XAUUSD") -> SymbolInfo:
     return SymbolInfo(
-        symbol="XAUUSD",
+        symbol=symbol,
         description="Gold",
         currency_base="XAU",
         currency_profit="USD",

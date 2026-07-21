@@ -33,6 +33,10 @@ class CloseReason(str, Enum):
     EXPIRED = "EXPIRED"
     ERROR = "ERROR"
     CLOSED_WHILE_DOWN = "CLOSED_WHILE_DOWN"
+    # Position closed but neither a cached price nor MT5 deal history could
+    # resolve what happened — genuinely unresolved, not a confirmed SL hit.
+    # See PositionManager._handle_position_gone.
+    UNKNOWN = "UNKNOWN"
 
 
 @dataclass

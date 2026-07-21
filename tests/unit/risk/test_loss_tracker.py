@@ -221,3 +221,76 @@ def test_guard2_resets_on_new_day():
     assert stats["session_closed_pnl"] == 0.0
     assert stats["session_closed_peak"] == 0.0
     assert stats["profit_drawback_pct"] == 0.0
+
+
+# ── Balance-tiered risk ceiling ─────────────────────────────────────────────
+
+def _latch(tracker: LossTracker, balance: float, day: date = date(2026, 1, 6)) -> None:
+    with patch("src.risk.loss_tracker._today", return_value=day), \
+         patch("src.risk.loss_tracker._now_ms", return_value=_day_ms(day)):
+        tracker.update_daily_loss_pct(0.0, balance)
+
+
+@pytest.mark.parametrize(
+    "balance,expected_pct",
+    [
+        (100.0, 5.0),        # below base threshold -> base cap
+        (499.0, 5.0),        # still below threshold
+        (500.0, 5.0),        # at threshold -> base cap
+        (1_000.0, 2.5),      # 1 doubling -> half
+        (2_000.0, 1.25),     # 2 doublings
+        (4_000.0, 0.625),    # 3 doublings
+        (64_000.0, 0.05),    # 7 doublings -> 5/128=0.0390625, floored to 0.05
+        (500_000.0, 0.05),   # far above -> stays at floor, doesn't keep halving
+    ],
+)
+def test_balance_tier_cap_pct(balance, expected_pct):
+    tracker = _make_tracker()
+    _latch(tracker, balance)
+    pct = tracker.balance_tier_cap_pct(
+        base_threshold=500.0, base_cap_pct=5.0, floor_pct=0.05
+    )
+    assert pct == pytest.approx(expected_pct)
+
+
+def test_balance_tier_cap_amount_matches_pct_of_latched_balance():
+    tracker = _make_tracker()
+    _latch(tracker, 2_000.0)
+    amount = tracker.balance_tier_cap_amount(
+        base_threshold=500.0, base_cap_pct=5.0, floor_pct=0.05
+    )
+    # 2 doublings past 500 -> 1.25% cap
+    assert amount == pytest.approx(2_000.0 * 0.0125)
+
+
+def test_balance_tier_cap_amount_zero_when_equity_unlatched():
+    tracker = _make_tracker()
+    assert tracker.balance_tier_cap_amount(500.0, 5.0, 0.05) == 0.0
+
+
+def test_balance_tier_cap_combined_matches_individual_methods():
+    tracker = _make_tracker()
+    _latch(tracker, 2_000.0)
+    pct, amount = tracker.balance_tier_cap(500.0, 5.0, 0.05)
+    assert pct == tracker.balance_tier_cap_pct(500.0, 5.0, 0.05)
+    assert amount == tracker.balance_tier_cap_amount(500.0, 5.0, 0.05)
+
+
+def test_balance_tier_cap_combined_zero_when_equity_unlatched():
+    tracker = _make_tracker()
+    pct, amount = tracker.balance_tier_cap(500.0, 5.0, 0.05)
+    assert pct == 5.0
+    assert amount == 0.0
+
+
+def test_balance_tier_cap_loosens_back_up_after_drawdown():
+    """Tracks current (daily-latched) balance, not a high-water mark."""
+    tracker = _make_tracker()
+    _latch(tracker, 4_000.0, day=date(2026, 1, 6))
+    grown_pct = tracker.balance_tier_cap_pct(500.0, 5.0, 0.05)
+
+    _latch(tracker, 750.0, day=date(2026, 1, 7))  # drawdown - back under 0 doublings
+    drawn_down_pct = tracker.balance_tier_cap_pct(500.0, 5.0, 0.05)
+
+    assert grown_pct == pytest.approx(0.625)
+    assert drawn_down_pct == pytest.approx(5.0)  # loosened back up, no ratchet

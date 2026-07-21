@@ -241,6 +241,7 @@ def _risk_config(
         min_lot_size=0.01,
         sl_ratio_threshold=0.25,
         symbol_sl_ratio_threshold=symbol_thresholds,
+        symbol_risk_multiplier={},
         entry_drift=entry_drift if entry_drift is not None else EntryDriftConfig(),
     )
 

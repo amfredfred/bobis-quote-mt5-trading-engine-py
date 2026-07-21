@@ -499,12 +499,18 @@ class PositionManager:
                 else:
                     logger.warning(
                         "PositionManager._handle_position_gone: no price or deal history "
-                        "for ticket=%s — defaulting to SL_HIT; verify manually",
+                        "for ticket=%s — close reason UNKNOWN, verify manually",
                         trade.entry_ticket,
                     )
 
+            # True only when we genuinely have nothing to go on (no cached
+            # price, no MT5 deal history, or no tp2 to compare against) —
+            # distinct from a real manual close, where we DO have a price
+            # and it just sits between SL and TP2.
+            price_unresolved = last_price is None or not trade.tp2
+
             is_buy = trade.side.value == "BUY"
-            if last_price is not None and trade.tp2:
+            if not price_unresolved:
                 tp2_hit = (
                     (last_price >= trade.tp2) if is_buy else (last_price <= trade.tp2)
                 )
@@ -515,17 +521,29 @@ class PositionManager:
                 )
             else:
                 tp2_hit = False
-                sl_hit = True
+                sl_hit = False
 
             if tp2_hit:
                 close_reason = CloseReason.TP2_HIT
             elif sl_hit:
                 close_reason = CloseReason.SL_HIT
+            elif price_unresolved:
+                close_reason = CloseReason.UNKNOWN
             else:
                 close_reason = CloseReason.MANUAL
 
-            close_price = last_price or trade.tp2 or trade.entry_price or 0.0
-            realized_rr = calculate_realized_rr(trade, close_price)
+            if last_price is None:
+                # Genuinely no price to close at - falling back to trade.tp2
+                # here would fabricate a full TP2 win for an outcome that's
+                # actually unknown (could just as easily have been a loss).
+                # None propagates safely: cluster_tracker coalesces it to
+                # 0.0 (neutral), equity_throttle skips the trade entirely
+                # rather than folding a phantom +R into the drawdown window.
+                close_price = None
+                realized_rr = None
+            else:
+                close_price = last_price or trade.tp2 or trade.entry_price or 0.0
+                realized_rr = calculate_realized_rr(trade, close_price)
 
         logger.info(
             "Position gone from broker",
@@ -535,7 +553,7 @@ class PositionManager:
                 "ticket": trade.entry_ticket,
                 "close_reason": close_reason.value,
                 "close_price": close_price if not is_stub else None,
-                "realized_rr": round(realized_rr, 2) if not is_stub else None,
+                "realized_rr": round(realized_rr, 2) if (not is_stub and realized_rr is not None) else None,
             },
         )
 
@@ -567,7 +585,11 @@ class PositionManager:
                 else (
                     "trades.sl_hit"
                     if sl_hit
-                    else ("trades.stub_closed" if is_stub else "trades.manual_close")
+                    else (
+                        "trades.unknown_close"
+                        if close_reason == CloseReason.UNKNOWN
+                        else ("trades.stub_closed" if is_stub else "trades.manual_close")
+                    )
                 )
             )
             metrics.increment(metric_key)
@@ -575,11 +597,15 @@ class PositionManager:
                 metrics.increment("trades.closed")
                 closed_in_profit = is_profitable_close(updated)
                 closed_in_loss = is_losing_close(updated)
-                if close_reason == CloseReason.TP2_HIT or closed_in_profit or realized_rr > 0:
+                if close_reason == CloseReason.UNKNOWN:
+                    # Genuinely unresolved - don't guess win/loss/breakeven.
+                    # trades.unknown_close (above) already counts it.
+                    pass
+                elif close_reason == CloseReason.TP2_HIT or closed_in_profit or (realized_rr is not None and realized_rr > 0):
                     metrics.increment("trades.winning")
                     if close_reason == CloseReason.MANUAL:
                         metrics.increment("trades.manual_profit")
-                elif close_reason == CloseReason.SL_HIT or closed_in_loss or realized_rr < 0:
+                elif close_reason == CloseReason.SL_HIT or closed_in_loss or (realized_rr is not None and realized_rr < 0):
                     metrics.increment("trades.losing")
                     if close_reason == CloseReason.MANUAL:
                         metrics.increment("trades.manual_loss")

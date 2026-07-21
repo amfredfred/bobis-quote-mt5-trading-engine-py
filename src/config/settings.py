@@ -314,6 +314,7 @@ class RiskConfig:
     min_lot_size: float
     sl_ratio_threshold: float
     symbol_sl_ratio_threshold: Dict[str, float]
+    symbol_risk_multiplier: Dict[str, float]
     no_hedging: bool = True
     max_profit_drawdown_percent: float = 2.0
     rolling_window_size: int = 0
@@ -321,12 +322,37 @@ class RiskConfig:
     cluster_risk: ClusterRiskConfig = field(default_factory=ClusterRiskConfig)
     equity_throttle: EquityThrottleConfig = field(default_factory=EquityThrottleConfig)
     entry_drift: EntryDriftConfig = field(default_factory=EntryDriftConfig)
+    # Balance-tiered risk ceiling: caps risk_amount at balance * cap_pct/100,
+    # where cap_pct is base_cap_pct for any balance <= base_threshold, then
+    # halves for every doubling past base_threshold down to floor_pct. A
+    # ceiling on top of the existing daily-budget sizing, not a replacement -
+    # see TradePlanner.plan() and LossTracker.balance_tier_cap_pct().
+    balance_tier_base_threshold: float = 500.0
+    balance_tier_base_cap_pct: float = 5.0
+    balance_tier_floor_pct: float = 0.05
 
     def __post_init__(self) -> None:
         if self.max_losing_streak < 1:
             raise ValueError(
                 f"risk.max_losing_streak must be >= 1, got: {self.max_losing_streak}"
             )
+        if self.balance_tier_base_threshold <= 0:
+            raise ValueError(
+                "risk.balance_tier_base_threshold must be > 0, got: "
+                f"{self.balance_tier_base_threshold}"
+            )
+        if self.balance_tier_floor_pct <= 0 or self.balance_tier_floor_pct > self.balance_tier_base_cap_pct:
+            raise ValueError(
+                "risk.balance_tier_floor_pct must be > 0 and <= "
+                f"balance_tier_base_cap_pct, got floor={self.balance_tier_floor_pct} "
+                f"base_cap={self.balance_tier_base_cap_pct}"
+            )
+        for symbol, multiplier in self.symbol_risk_multiplier.items():
+            if multiplier < 0:
+                raise ValueError(
+                    f"risk.symbol_risk_multiplier[{symbol!r}] must be >= 0, "
+                    f"got: {multiplier}"
+                )
 
 
 @dataclass(frozen=True)
@@ -523,6 +549,16 @@ class AppConfig:
                         "symbol_sl_ratio_threshold", {}
                     ).items()
                 },
+                # Per-symbol risk_amount multiplier, applied alongside the
+                # cluster/equity-throttle multipliers in TradePlanner.plan().
+                # Omitting a symbol (or the whole map) means 1.0 - no change
+                # from today's flat, symbol-agnostic sizing.
+                symbol_risk_multiplier={
+                    normalise_symbol(str(symbol)): float(multiplier)
+                    for symbol, multiplier in risk.get(
+                        "symbol_risk_multiplier", {}
+                    ).items()
+                },
                 no_hedging=bool(_require(risk, "no_hedging", "risk")),
                 max_profit_drawdown_percent=float(
                     _require(risk, "max_profit_drawdown_percent", "risk")
@@ -535,6 +571,17 @@ class AppConfig:
                 cluster_risk=_parse_cluster_risk(risk.get("cluster_risk")),
                 equity_throttle=_parse_equity_throttle(risk.get("equity_throttle")),
                 entry_drift=_parse_entry_drift(risk.get("entry_drift")),
+                # Balance-tiered risk ceiling - optional, defaults preserve
+                # today's behavior if omitted entirely from config.yaml.
+                balance_tier_base_threshold=float(
+                    risk.get("balance_tier_base_threshold", 500.0)
+                ),
+                balance_tier_base_cap_pct=float(
+                    risk.get("balance_tier_base_cap_pct", 5.0)
+                ),
+                balance_tier_floor_pct=float(
+                    risk.get("balance_tier_floor_pct", 0.05)
+                ),
             ),
             execution=ExecutionConfig(
                 tp1_trigger_pct=float(_require(exe, "tp1_trigger_pct", "execution")),

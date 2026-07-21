@@ -39,6 +39,7 @@ from src.domain.signal_interface import InboundSignal, SignalDirection
 from src.domain.trade import OrderSide, TradePlan
 from src.utils.lot_calculator import calculate_lot_size
 from src.utils.price import pip_size
+from src.utils.symbol import normalise_symbol
 from src.utils.time import now_ms
 
 if TYPE_CHECKING:
@@ -104,7 +105,22 @@ class TradePlanner:
             self._risk.max_losing_streak
         )
         clamped_multiplier = max(0.0, min(1.0, risk_multiplier))
-        risk_amount = base_risk_amount * clamped_multiplier
+        symbol_key = normalise_symbol(signal.resolved_symbol or signal.symbol)
+        symbol_multiplier = self._risk.symbol_risk_multiplier.get(symbol_key, 1.0)
+        risk_amount = base_risk_amount * clamped_multiplier * symbol_multiplier
+
+        # ── Balance-tiered risk ceiling ─────────────────────────────────────
+        # Caps risk_amount on top of everything above — a ceiling, not a
+        # replacement for daily-budget sizing. Derived from the same
+        # daily-latched start_of_day_equity as base_risk_amount (see
+        # LossTracker.balance_tier_cap_amount), so both move together and
+        # neither shifts mid-sequence within a trading day.
+        tier_cap_amount = self._loss_tracker.balance_tier_cap_amount(
+            self._risk.balance_tier_base_threshold,
+            self._risk.balance_tier_base_cap_pct,
+            self._risk.balance_tier_floor_pct,
+        )
+        risk_amount = min(risk_amount, tier_cap_amount)
 
         # ── Lot size calculation ───────────────────────────────────────────
         calc = calculate_lot_size(

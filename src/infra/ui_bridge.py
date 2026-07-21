@@ -74,20 +74,26 @@ def _uptime() -> float:
 def _now_hms() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
-def _serialize_trade(trade: Any) -> dict:
+def _serialize_trade(trade: Any, live_position: Any = None) -> dict:
+    # live_position (a brokers.mt5.positions.Position, keyed by ticket) carries
+    # real-time current_price/profit straight from MT5. Falls back to the
+    # stored entry price / 0.0 pnl when the position can't be matched (e.g.
+    # a transient MT5 read failure) rather than failing the whole snapshot.
+    current_price = live_position.current_price if live_position is not None else (trade.entry_price or 0.0)
+    pnl = live_position.profit if live_position is not None else 0.0
     return {
         "id":            trade.id,
         "symbol":        trade.symbol,
         "side":          trade.side.value if hasattr(trade.side, "value") else str(trade.side),
         "state":         trade.status.value if hasattr(trade.status, "value") else str(trade.status),
         "entry_price":   trade.entry_price or 0.0,
-        "current_price": trade.entry_price or 0.0,
+        "current_price": current_price,
         "sl":            trade.stop_loss,
         "tp1":           trade.tp1,
         "tp2":           trade.tp2,
         "lots":          trade.entry_lots,
         "tp1_lots":      trade.tp1_lots,
-        "pnl":           0.0,
+        "pnl":           pnl,
         "opened_at":     _now_hms(),
         "duration_sec":  0,
         "ticket":        trade.entry_ticket,
@@ -183,6 +189,11 @@ def _trade_outcome(trade: Any) -> str:
         return "win"
     if reason == "SL_HIT":
         return "loss"
+    if reason == "UNKNOWN":
+        # Genuinely unresolved at close time - matches the live in-process
+        # counters (manager.py), which exclude UNKNOWN from win/loss/
+        # breakeven entirely rather than defaulting it into "breakeven".
+        return "unknown"
 
     side = _enum_value(getattr(trade, "side", "") or "").upper()
     entry = getattr(trade, "entry_price", None)
@@ -309,12 +320,27 @@ class UIBridge:
             self._clients.add(websocket)
             logger.debug("Dashboard connected (%d clients)", len(self._clients))
             try:
-                await websocket.send(
-                    json.dumps(
-                        {"type": "STATE_SNAPSHOT", "payload": self._build_snapshot()},
-                        default=str,
+                try:
+                    snapshot_payload = self._build_snapshot()
+                except Exception:
+                    # Unlike metrics_pusher (below), this path had no
+                    # try/except - a build failure here (e.g. a transient
+                    # error inside _build_pressure/_build_risk_guards) would
+                    # silently kill the new client's connection with no log
+                    # line pointing at the cause. Log clearly, skip sending
+                    # a snapshot this round, keep the connection open so
+                    # commands/future METRICS_UPDATE pushes can still work.
+                    logger.exception(
+                        "UIBridge: failed to build STATE_SNAPSHOT for new client"
                     )
-                )
+                    snapshot_payload = None
+                if snapshot_payload is not None:
+                    await websocket.send(
+                        json.dumps(
+                            {"type": "STATE_SNAPSHOT", "payload": snapshot_payload},
+                            default=str,
+                        )
+                    )
                 # Listen for commands
                 async for raw in websocket:
                     try:
@@ -505,6 +531,17 @@ class UIBridge:
         account = self._account_snapshot()
         connected_mt5 = bool(account) or c.mt5_client.is_connected()
 
+        # riskGuards/pressure/trades used to be built twice per snapshot
+        # (once directly here, once inside _build_metrics_from for
+        # metrics.*) - _build_metrics_from already computes all three, so
+        # pull them from its result instead of recomputing (each of
+        # riskGuards/pressure calls into cluster_tracker/equity_throttle/
+        # loss_tracker again, and re-serializing trades means a second live
+        # MT5 positions fetch).
+        metrics_payload = self._build_metrics_from(
+            lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account
+        )
+
         return {
             "connected":   connected_mt5,
             "autotrading_enabled": self._autotrading_enabled(),
@@ -512,14 +549,36 @@ class UIBridge:
             "engine":      self._build_engine_info(lt),
             "system":      self._build_system_info(snap.get("gauges", {})),
             "config":      self._build_config_snapshot(config),
-            "trades":      [_serialize_trade(t) for t in trades],
-            "riskGuards":  self._build_risk_guards(lt, config),
+            "trades":      metrics_payload["trades"],
+            "riskGuards":  metrics_payload["riskGuards"],
+            "pressure":    metrics_payload["pressure"],
             "clusterRisk": c.cluster_tracker.stats(),
-            "metrics":     self._build_metrics_from(lt, snap.get("counters", {}), snap.get("gauges", {}), trades, config, account),
+            "metrics":     metrics_payload,
             "signals":     list(self._signal_buf),
             "logs":        list(self._log_buf)[-50:],
             "riskRejections": metrics.recent_rejections(limit=50),
         }
+
+    def _live_positions_by_ticket(self, config: Any) -> dict:
+        """Live MT5 position data (current_price/profit) keyed by ticket, for
+        joining onto the stored Trade records in _serialize_trade. A fetch
+        failure here (transient MT5 read issue) shouldn't break the whole
+        snapshot - just means positions render with stale entry-price/zero
+        pnl for this one push, same as before this method existed."""
+        try:
+            magic = getattr(config.execution, "magic", None)
+            positions = self._container.mt5_positions.get_open_positions(magic)
+            return {p.ticket: p for p in positions}
+        except Exception:
+            logger.warning("UIBridge: failed to fetch live MT5 positions for pnl/current_price", exc_info=True)
+            return {}
+
+    def _serialize_open_trades(self, open_trades: list, config: Any) -> list[dict]:
+        live_positions_by_ticket = self._live_positions_by_ticket(config)
+        return [
+            _serialize_trade(t, live_positions_by_ticket.get(t.entry_ticket))
+            for t in open_trades
+        ]
 
     def _build_system_info(self, gauges: dict) -> dict:
         last_received = gauges.get("signals.last_received_at")
@@ -689,17 +748,6 @@ class UIBridge:
                 + group_state.get("pending_r", 0.0)
             )
 
-        throttle = self._container.equity_throttle.stats()
-        if throttle.get("engaged"):
-            throttle_desc = (
-                f"Sizing at {throttle['multiplier']:g}× — "
-                f"{throttle['drawdown_r']:.1f}R below {throttle['window_days']}-day peak"
-            )
-        else:
-            throttle_desc = (
-                f"Halves risk when >{throttle['threshold_r']:g}R below rolling peak"
-            )
-
         return [
             {"id": "guard1", "name": "DAILY LOSS",      "description": "Pause until midnight on breach",
              "status": _s("daily loss"),       "current_value": round(daily_loss, 4), "threshold": config.risk.max_daily_loss_percent,    "unit": "%"},
@@ -711,9 +759,64 @@ class UIBridge:
             {"id": "guard4", "name": "CLUSTER RISK",    "description": "Shared risk bucket for correlated symbols",
              "status": "DISABLED" if not cluster_on else "ACTIVE",
              "current_value": round(cluster_used, 4), "threshold": cluster_threshold, "unit": "R"},
-            {"id": "guard5", "name": "EQUITY THROTTLE", "description": throttle_desc,
-             "status": "DISABLED" if not throttle.get("enabled") else "ACTIVE",
-             "current_value": throttle.get("drawdown_r", 0.0), "threshold": throttle.get("threshold_r", 0.0), "unit": "R"},
+        ]
+
+    def _build_pressure(self, config: Any) -> list[dict]:
+        """Sizing-only influences that never pause the engine or reject a trade —
+        distinct from _build_risk_guards, which are all breach/pause-capable.
+        pressure_pct is 0% at normal/full sizing, 100% at maximum reduction —
+        a different scale from the guards' current/threshold breach meter.
+        """
+        throttle = self._container.equity_throttle.stats()
+        throttle_dd_r = throttle.get("drawdown_r", 0.0)
+        throttle_threshold_r = throttle.get("threshold_r", 0.0)
+        # Progress toward the engage threshold, not (1 - multiplier)*100 -
+        # the multiplier only ever jumps 1.0 -> 0.5 the instant drawdown_r
+        # crosses threshold_r, so that framing sat frozen at 0% the entire
+        # time drawdown_r climbed from 0R to just under the threshold. This
+        # version moves continuously with the real number.
+        throttle_pressure = (
+            max(0.0, min(100.0, (throttle_dd_r / throttle_threshold_r) * 100.0))
+            if throttle.get("enabled") and throttle_threshold_r > 0
+            else 0.0
+        )
+        if throttle.get("engaged"):
+            throttle_desc = (
+                f"Sizing at {throttle['multiplier']:g}× — "
+                f"{throttle_dd_r:.1f}R below {throttle['window_days']}-day peak"
+            )
+        else:
+            throttle_desc = (
+                f"Halves risk when >{throttle.get('threshold_r', 0):g}R below rolling peak "
+                f"— currently {throttle_dd_r:.1f}R below peak"
+            )
+
+        tier_cap_pct, tier_cap_amount = self._container.loss_tracker.balance_tier_cap(
+            config.risk.balance_tier_base_threshold,
+            config.risk.balance_tier_base_cap_pct,
+            config.risk.balance_tier_floor_pct,
+        )
+        base_cap = config.risk.balance_tier_base_cap_pct
+        tier_pressure = (
+            max(0.0, min(100.0, (1.0 - tier_cap_pct / base_cap) * 100.0))
+            if base_cap > 0
+            else 0.0
+        )
+        tier_desc = (
+            f"Ceiling on top of daily-budget sizing — currently {tier_cap_pct:g}% "
+            f"(${tier_cap_amount:,.2f}/trade), tracks today's start-of-day balance"
+        )
+
+        return [
+            {"id": "pressure1", "name": "EQUITY THROTTLE", "description": throttle_desc,
+             "pressure_pct": round(throttle_pressure, 1),
+             "detail": (
+                 f"Multiplier {throttle.get('multiplier', 1.0):g}× · {throttle_dd_r:.1f}R below peak"
+                 if throttle.get("enabled") else "Disabled"
+             )},
+            {"id": "pressure2", "name": "BALANCE TIER CAP", "description": tier_desc,
+             "pressure_pct": round(tier_pressure, 1),
+             "detail": f"{tier_cap_pct:g}% cap (${tier_cap_amount:,.2f}/trade)"},
         ]
 
     def _build_metrics(self) -> dict:
@@ -736,12 +839,14 @@ class UIBridge:
             wins = persisted_outcomes["wins"]
             losses = persisted_outcomes["losses"]
             breakeven = persisted_outcomes["breakeven"]
+            unknown_outcome = persisted_outcomes["unknown"]
             total_closed = persisted_outcomes["total_closed"]
         else:
             wins = counters.get("trades.winning", 0)
             losses = counters.get("trades.losing", 0)
             breakeven = counters.get("trades.breakeven", 0)
-            total_closed = counters.get("trades.closed", wins + losses + breakeven)
+            unknown_outcome = counters.get("trades.unknown_close", 0)
+            total_closed = counters.get("trades.closed", wins + losses + breakeven + unknown_outcome)
 
         start_eq   = lt.get("start_of_day_equity", 0.0)
         daily_loss = lt.get("daily_loss_pct", 0.0)
@@ -813,6 +918,7 @@ class UIBridge:
             "trades_tp2_hit":     counters.get("trades.tp2_hit", 0),
             "trades_sl_hit":      counters.get("trades.sl_hit", 0),
             "trades_breakeven":   breakeven,
+            "trades_unknown_outcome": unknown_outcome,
             "trades_open_count":  gauges.get("trades.open_count", len(open_trades)),
             "trades_tracking_failures": counters.get("trades.tracking_failures", 0),
             "trades_persistence_failures": counters.get("trades.persistence_failures", 0),
@@ -835,6 +941,14 @@ class UIBridge:
             "cpu_percent":        get_cpu_percent(),
             "connected_clients":  len(self._clients),
             "signals_last_received_at": gauges.get("signals.last_received_at"),
+            # Included here (not just in the connect-time STATE_SNAPSHOT) so
+            # these refresh on the periodic push cadence instead of freezing
+            # at whatever they were when the browser tab first connected -
+            # trades specifically was the reason pnl/current_price looked
+            # "frozen at first seen": it used to only ever be sent once.
+            "riskGuards": self._build_risk_guards(lt, config),
+            "pressure":   self._build_pressure(config),
+            "trades":     self._serialize_open_trades(open_trades, config),
         }
         if account:
             result.update(
@@ -850,7 +964,7 @@ class UIBridge:
         return result
 
     def _persisted_trade_outcomes(self, config: Any) -> dict:
-        outcomes = {"wins": 0, "losses": 0, "breakeven": 0, "total_closed": 0}
+        outcomes = {"wins": 0, "losses": 0, "breakeven": 0, "unknown": 0, "total_closed": 0}
         repo = getattr(self._container, "trade_repo", None)
         if repo is None or not hasattr(repo, "load_all"):
             return outcomes
@@ -867,11 +981,16 @@ class UIBridge:
                     continue
 
                 outcome = _trade_outcome(trade)
+                # total_closed still counts it (matches trades.closed, which
+                # increments regardless of close_reason) - just kept out of
+                # wins/losses/breakeven so it can't inflate or deflate them.
                 outcomes["total_closed"] += 1
                 if outcome == "win":
                     outcomes["wins"] += 1
                 elif outcome == "loss":
                     outcomes["losses"] += 1
+                elif outcome == "unknown":
+                    outcomes["unknown"] += 1
                 else:
                     outcomes["breakeven"] += 1
         except Exception:

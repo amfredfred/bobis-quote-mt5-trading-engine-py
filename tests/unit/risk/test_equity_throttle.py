@@ -368,6 +368,7 @@ def _risk_config() -> RiskConfig:
         min_lot_size=0.01,
         sl_ratio_threshold=0.35,
         symbol_sl_ratio_threshold={},
+        symbol_risk_multiplier={},
     )
 
 

@@ -23,6 +23,7 @@ Three intraday guards — all reset at midnight:
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections import deque
@@ -235,6 +236,79 @@ class LossTracker:
             daily_budget = self._start_of_day_equity * (self._limit / 100.0)
             risk_slots = max(1, int(max_losing_streak))
             return daily_budget / risk_slots
+
+    # ── Balance-tiered risk ceiling ─────────────────────────────────────
+    @staticmethod
+    def _tier_cap_pct(
+        balance: float,
+        base_threshold: float,
+        base_cap_pct: float,
+        floor_pct: float,
+    ) -> float:
+        if balance <= 0 or base_threshold <= 0 or balance <= base_threshold:
+            return base_cap_pct
+        doublings = math.floor(math.log2(balance / base_threshold))
+        return max(floor_pct, base_cap_pct / (2 ** doublings))
+
+    def balance_tier_cap_pct(
+        self,
+        base_threshold: float,
+        base_cap_pct: float,
+        floor_pct: float,
+    ) -> float:
+        """Risk-% ceiling for the account's current tier.
+
+        Any balance at or below base_threshold uses base_cap_pct. Above it,
+        the cap halves for every doubling of balance past base_threshold,
+        down to floor_pct. Uses the same daily-latched start_of_day_equity
+        as daily_risk_amount() — this is a once-per-day tier, not a live
+        one, and tracks current balance (not a high-water mark): a
+        drawdown back into a lower tier loosens the cap back up with it.
+        """
+        with self._lock:
+            return self._tier_cap_pct(
+                self._start_of_day_equity, base_threshold, base_cap_pct, floor_pct
+            )
+
+    def balance_tier_cap_amount(
+        self,
+        base_threshold: float,
+        base_cap_pct: float,
+        floor_pct: float,
+    ) -> float:
+        """Dollar risk ceiling for the account's current tier (see balance_tier_cap_pct)."""
+        with self._lock:
+            balance = self._start_of_day_equity
+            if balance <= 0:
+                return 0.0
+            cap_pct = self._tier_cap_pct(
+                balance, base_threshold, base_cap_pct, floor_pct
+            )
+            return balance * (cap_pct / 100.0)
+
+    def balance_tier_cap(
+        self,
+        base_threshold: float,
+        base_cap_pct: float,
+        floor_pct: float,
+    ) -> tuple[float, float]:
+        """(cap_pct, cap_amount) from a single locked read of start_of_day_equity.
+
+        Prefer this over calling balance_tier_cap_pct() + balance_tier_cap_amount()
+        back to back - each of those re-acquires the lock and redoes the same
+        doublings math independently, so calling both for one display (e.g.
+        UIBridge._build_pressure) does the work twice for no reason. The two
+        single-value methods stay around for callers that only need one value
+        (e.g. TradePlanner.plan() only needs the amount).
+        """
+        with self._lock:
+            balance = self._start_of_day_equity
+            if balance <= 0:
+                return base_cap_pct, 0.0
+            cap_pct = self._tier_cap_pct(
+                balance, base_threshold, base_cap_pct, floor_pct
+            )
+            return cap_pct, balance * (cap_pct / 100.0)
 
     def stats(self) -> dict:
         with self._lock:
