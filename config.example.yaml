@@ -5,12 +5,11 @@
     - US100
     - US30
 mt5:
-  login: 00000000
-  password: "your-mt5-password"
-  server: "YourBroker-Demo"
-  path: "C:\\Program Files\\Your MT5 Terminal\\terminal64.exe"
-  magic: 8858
-  slippage: 10
+  # Selects a named profile from mt5-credentials.yaml (git-ignored - copy
+  # from mt5-credentials.example.yaml). Omit `use` entirely to fall back to
+  # putting login/password/server/path directly in this block instead
+  # (password still accepts an MT5_PASSWORD env var either way).
+  use: fbs
 risk:
   # Aligned with signal-engine circuit_breaker.max_consecutive_losses=10.
   # Streak analysis (3yr, 5269 trades) proved losses are i.i.d. — stopping
@@ -103,6 +102,10 @@ risk:
         after_first_loss_risk_multiplier: 0.5
         min_trade_risk_multiplier: 0.25
 execution:
+  # MT5 order tagging / slippage tolerance - moved here from mt5: since both
+  # are execution-behavior settings, not connection credentials.
+  magic: 8858
+  slippage: 10
   # Global default: 45% trigger for all pairs. Override per symbol via
   # tf_overrides below — e.g. XAUUSD and US100 both diverge from it here.
   # Post v0.2.0: LTF removed — tf_overrides use "*" wildcard TF (not "5/5").

@@ -450,6 +450,51 @@ class ExecutionConfig:
         return float(override.get("tp1_percentage", self.tp1_percentage))
 
 
+def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, str]:
+    """Load a named MT5 credential profile from mt5-credentials.yaml.
+
+    Returns (login, password, server, terminal_path). Mirrors signal-engine's
+    equivalent loader — same file name, same per-profile field names, same
+    "look next to the config file, then cwd" search order — so editing
+    credentials for either engine feels the same.
+    """
+    candidates = [
+        config_path.parent / "mt5-credentials.yaml",
+        Path.cwd() / "mt5-credentials.yaml",
+    ]
+    creds_path = next((p for p in candidates if p.exists()), None)
+    if creds_path is None:
+        raise FileNotFoundError(
+            f"mt5.use is {profile!r} but no mt5-credentials.yaml was found "
+            f"(looked in {candidates[0].parent} and cwd)."
+        )
+    data = yaml.safe_load(creds_path.read_text(encoding="utf-8")) or {}
+    if profile not in data:
+        available = ", ".join(data.keys()) or "(none)"
+        raise ValueError(
+            f"MT5 credential profile {profile!r} not found in {creds_path}. "
+            f"Available profiles: {available}"
+        )
+    p = data[profile]
+    if not isinstance(p, dict):
+        raise ValueError(f"Profile {profile!r} in {creds_path} must be a mapping.")
+    login = p.get("login")
+    password = p.get("password")
+    server = p.get("server")
+    terminal_path = p.get("terminal_path")
+    required = [
+        ("login", login), ("password", password),
+        ("server", server), ("terminal_path", terminal_path),
+    ]
+    missing = [k for k, v in required if not v]
+    if missing:
+        raise ValueError(
+            f"MT5 credential profile {profile!r} is missing required field(s): "
+            f"{', '.join(missing)}. Add them to {creds_path}."
+        )
+    return int(login), str(password), str(server), str(terminal_path)
+
+
 @dataclass(frozen=True)
 class Mt5Config:
     login: int
@@ -487,7 +532,8 @@ class AppConfig:
         # everything into config.yaml and no longer need .env.
         load_dotenv(override=False)
 
-        with open(path, "r", encoding="utf-8") as fh:
+        config_path = Path(path)
+        with open(config_path, "r", encoding="utf-8") as fh:
             raw: dict = yaml.safe_load(fh) or {}
 
         # "signal_engine" is the current key; "gateway" is accepted as a
@@ -505,16 +551,26 @@ class AppConfig:
                 s.strip() for s in signal_engine_symbols_raw.split(",")
             ]
 
-        # Secret: prefer config.yaml, fall back to MT5_PASSWORD env var so
-        # existing .env-based installs don't need to put a password in a
-        # committed file. One of the two must be set — this is the only
-        # value in this file allowed to come from outside config.yaml.
-        mt5_password = str(mt5.get("password") or os.environ.get("MT5_PASSWORD", ""))
-        if not mt5_password:
-            raise ValueError(
-                "mt5.password is not set in config.yaml and MT5_PASSWORD is not "
-                "set in the environment — one of the two is required."
+        # Credentials: mt5.use selects a named profile from mt5-credentials.yaml
+        # (git-ignored, one broker per profile — same pattern as signal-engine).
+        # Omitting mt5.use keeps today's behavior: login/server/path read
+        # directly from this file's mt5: block, password falling back to
+        # MT5_PASSWORD env var for existing .env-based installs.
+        mt5_profile = mt5.get("use")
+        if mt5_profile:
+            mt5_login, mt5_password, mt5_server, mt5_path = _load_mt5_profile(
+                config_path, str(mt5_profile)
             )
+        else:
+            mt5_login = int(_require(mt5, "login", "mt5"))
+            mt5_password = str(mt5.get("password") or os.environ.get("MT5_PASSWORD", ""))
+            if not mt5_password:
+                raise ValueError(
+                    "mt5.password is not set in config.yaml and MT5_PASSWORD is not "
+                    "set in the environment — one of the two is required."
+                )
+            mt5_server = str(_require(mt5, "server", "mt5"))
+            mt5_path = str(mt5.get("path", ""))
 
         return cls(
             signal_engine=SignalEngineConfig(
@@ -524,10 +580,10 @@ class AppConfig:
                 ],
             ),
             mt5=Mt5Config(
-                login=int(_require(mt5, "login", "mt5")),
+                login=mt5_login,
                 password=mt5_password,
-                server=str(_require(mt5, "server", "mt5")),
-                path=str(mt5.get("path", "")),
+                server=mt5_server,
+                path=mt5_path,
             ),
             risk=RiskConfig(
                 max_losing_streak=int(_require(risk, "max_losing_streak", "risk")),
@@ -589,8 +645,8 @@ class AppConfig:
                 move_sl_to_be_on_tp1=bool(
                     _require(exe, "move_sl_to_be_on_tp1", "execution")
                 ),
-                slippage=int(_require(mt5, "slippage", "mt5")),
-                magic=int(_require(mt5, "magic", "mt5")),
+                slippage=int(_require(exe, "slippage", "execution")),
+                magic=int(_require(exe, "magic", "execution")),
                 spread_risk_multiplier=float(
                     _require(exe, "spread_risk_multiplier", "execution")
                 ),

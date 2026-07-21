@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 config.yaml
+mt5-credentials.yaml
 
 # Python
 __pycache__/
