@@ -30,6 +30,18 @@ logger = logging.getLogger("main")
 
 
 def main() -> None:
+    # --broker=<name> sets MT5_USE for this process before config loads —
+    # lets one checkout run multiple per-broker Task Scheduler actions
+    # (install.ps1 -Broker) without a separate config.yaml per broker. Also
+    # doubles as the visible command-line marker install.ps1/watchdog.ps1
+    # use to tell sibling per-broker processes apart (an inherited env var
+    # alone wouldn't show up in Get-CimInstance Win32_Process.CommandLine).
+    broker_flag = next(
+        (a for a in sys.argv[1:] if a.startswith("--broker=")), None
+    )
+    if broker_flag:
+        os.environ["MT5_USE"] = broker_flag.split("=", 1)[1].strip()
+
     # Explicit config path from CLI args takes priority. If none is supplied,
     # fall back to the same lookup order the packaged build has always used.
     explicit_cfg = next(
@@ -45,10 +57,14 @@ def main() -> None:
     setup_logging(cfg.log_level, cfg.engine_timezone)
     _time.configure(cfg.engine_timezone)
 
-    # File logging: always adjacent to whichever config.yaml was loaded, so
-    # everything (config, logs, storage) lives together in one folder.
+    # File logging: adjacent to whichever config.yaml was loaded, scoped by
+    # broker (mt5.use/MT5_USE) — multiple per-broker instances can share one
+    # config.yaml/checkout (env-var-overridden mt5.use per Task Scheduler
+    # action) without interleaving into the same log file.
     from src.infra.logger import add_file_handler
     logs_dir = Path(config_path).resolve().parent / "logs"
+    if cfg.mt5.profile:
+        logs_dir = logs_dir / cfg.mt5.profile
     try:
         add_file_handler(logs_dir, cfg.engine_timezone)
     except Exception as exc:

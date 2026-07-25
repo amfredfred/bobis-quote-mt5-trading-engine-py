@@ -35,6 +35,7 @@ from src.strategies.router import StrategyRouter
 
 if TYPE_CHECKING:
     from src.infra.ui_bridge import UIBridge
+    from src.infra.hub_forwarder import HubForwarder
 
 
 @dataclass
@@ -56,6 +57,7 @@ class AppContainer:
     equity_throttle: EquityThrottleTracker
     # Set by bootstrap() after construction (needs the fully-built container).
     ui_bridge: "UIBridge | None" = None
+    hub_forwarder: "HubForwarder | None" = None
 
 
 def build_container(config: AppConfig) -> AppContainer:
@@ -129,6 +131,7 @@ def build_container(config: AppConfig) -> AppContainer:
         validator=validator,
         ws_url=config.signal_engine.ws_url,
         symbols=config.signal_engine.symbols,
+        own_broker=config.mt5.profile,
     )
 
     # ── Strategies ────────────────────────────────────────────────────────

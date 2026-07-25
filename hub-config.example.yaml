@@ -1,0 +1,26 @@
+# hub-config.yaml — settings for `python -m src.hub` (see src/hub).
+#
+# Copy this file to hub-config.yaml (git-ignored, same convention as
+# config.yaml) and edit. Every key here can also be set via an env var
+# (env wins if both are present).
+
+internal:
+  # Execution-engine instances' forwarders dial into this. Localhost-only —
+  # never expose this publicly.
+  host: 127.0.0.1
+  port: 8095
+
+public:
+  # The dashboard connects here — same default port (8080) a single
+  # instance's own UIBridge used to serve, since each instance's own
+  # monitoring_port now defaults to a distinct per-broker value instead
+  # (8091/8092/8093), freeing 8080 for the hub.
+  host: 0.0.0.0
+  port: 8080
+
+secret: ""
+max_clients: 50
+
+log:
+  dir: logs/hub
+  level: INFO

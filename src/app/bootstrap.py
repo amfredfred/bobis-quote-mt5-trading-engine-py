@@ -22,6 +22,7 @@ from src.config.settings import AppConfig
 from src.core.event_types import Events
 from src.infra.metrics import metrics
 from src.infra.ui_bridge import UIBridge
+from src.infra.hub_forwarder import HubForwarder
 from src.domain.signal_interface import InboundSignal
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,22 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
     ui_bridge.start()
     container.ui_bridge = ui_bridge
 
+    # ── Optional: also relay this instance's UIBridge to a dashboard hub ───
+    # (see src/hub) so its telemetry/commands fan in alongside other
+    # brokers' instead of the dashboard needing to know every instance's
+    # own monitoring_port. Purely additive — ui_bridge above keeps serving
+    # direct connections unchanged either way.
+    hub_forwarder: HubForwarder | None = None
+    if config.dashboard_hub_enabled:
+        hub_forwarder = HubForwarder(
+            local_url=f"ws://127.0.0.1:{config.monitoring_port}",
+            hub_url=config.dashboard_hub_url,
+            broker=config.mt5.profile,
+            token=config.dashboard_hub_token,
+        )
+        hub_forwarder.start()
+    container.hub_forwarder = hub_forwarder
+
     # ── MT5 + trading services (background, retries forever) ────────────────
     t = threading.Thread(
         target=_connect_mt5_with_retry,
@@ -61,6 +78,8 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 def shutdown(container: AppContainer) -> None:
     logger.info("Shutting down Execution Engine")
     container.event_bus.emit(Events.SYSTEM_STOPPING)
+    if container.hub_forwarder is not None:
+        container.hub_forwarder.stop()
     container.ui_bridge.stop()
     container.signal_consumer.stop()
     container.signal_queue.stop()

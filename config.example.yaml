@@ -131,9 +131,26 @@ execution:
 engine:
   timezone: UTC
   log_level: INFO
-  storage_path: ./data
-  monitoring_port: 8080
+  # {profile} is substituted with mt5.use/MT5_USE at load time — lets one
+  # checkout run multiple per-broker instances (one Task Scheduler action
+  # per broker, each setting MT5_USE) without colliding on the same
+  # storage dir. Plain "./data" also still works for a single instance.
+  storage_path: ./data/{profile}
+  # Omit to auto-derive a per-broker default (fbs=8091, exness=8092,
+  # fundednext=8093, others deterministically 8100-8299) so several
+  # instances sharing one checkout don't collide on the default 8080.
+  # monitoring_port: 8080
   position_poll_interval: 0.6
+
+# Optional: relay this instance's dashboard telemetry/commands through a hub
+# (python -m src.hub — see src/hub) instead of the dashboard needing to know
+# every instance's own monitoring_port directly. Purely additive — the
+# monitoring_port above keeps serving direct connections unchanged either way.
+dashboard_hub:
+  enabled: false
+  url: "ws://127.0.0.1:8095"
+  token: ""
+
 startup:
   auto_start_engine: true
   minimise_on_start: false

@@ -101,6 +101,15 @@ class Mt5Client:
 
         clean = base_symbol.replace("/", "").replace("_", "").upper()
 
+        # Broker alias takes priority over auto-resolution below — some
+        # brokers rename a symbol entirely rather than just suffixing it
+        # (e.g. Exness's US100 is actually "USTECz", which the startswith/
+        # endswith fuzzy match below would never find). Same config field
+        # and same priority order as signal-engine's
+        # MarketDataClient._ensure_symbol().
+        if clean in self._config.symbol_aliases:
+            clean = self._config.symbol_aliases[clean]
+
         # Fast cache hit
         cached = _SYMBOL_CACHE.get(clean)
         if cached:

@@ -225,6 +225,12 @@ class InboundSignal:
     realized_rr: Optional[float] = None
     close_price: Optional[float] = None
     resolved_symbol: Optional[str] = None  # broker-resolved symbol, set at consumer level
+    # Which broker/terminal this signal came from (e.g. "fbs", "exness") —
+    # stamped authoritatively by the signal-engine hub on every event, not
+    # to be confused with resolved_symbol above (that's about MT5 symbol
+    # naming, this is about which broker account the signal originated
+    # from). Empty when talking directly to a pre-hub single terminal.
+    broker: str = ""
     setup_candle_open_at: Optional[int] = None
     setup_candle_close_at: Optional[int] = None
     detected_at: Optional[int] = None
@@ -287,6 +293,7 @@ class InboundSignal:
             outcome=d.get("outcome"),
             realized_rr=d.get("realizedRR"),
             close_price=d.get("closePrice"),
+            broker=str(d.get("broker") or ""),
             setup_candle_open_at=setup_candle_open_at,
             setup_candle_close_at=setup_candle_close_at,
             detected_at=detected_at,

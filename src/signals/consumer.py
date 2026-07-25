@@ -52,10 +52,19 @@ class SignalConsumer:
         validator: SignalValidator,
         ws_url: str,
         symbols: list[str],
+        own_broker: str = "",
     ) -> None:
         self._bus = event_bus
         self._validator = validator
         self._symbols = symbols
+        # This engine's own broker identity (mt5.use/MT5_USE) — behind the
+        # signal-engine hub, one WS endpoint carries every connected
+        # broker's signals, each tagged with `broker`. Only ever act on our
+        # own broker's signals; a mismatched one is silently not for this
+        # account and must never reach the validator/executor. Empty means
+        # unfiltered (single-instance / pre-hub / direct-to-terminal setups
+        # keep today's behavior).
+        self._own_broker = own_broker.strip().lower()
         # Bounded seen-IDs set for deduplication keyed by (event, signal_id).
         # Using a tuple key prevents lifecycle events (pending → triggered)
         # with the same signal_id from being incorrectly dropped as duplicates.
@@ -126,6 +135,15 @@ class SignalConsumer:
             logger.debug(
                 "SignalConsumer: payload is not a signal, skipping event=%s", event
             )
+            return
+
+        signal_broker = str(payload.get("broker") or "").strip().lower()
+        if self._own_broker and signal_broker and signal_broker != self._own_broker:
+            logger.debug(
+                "SignalConsumer: signal for broker=%s, this engine is broker=%s — ignoring",
+                signal_broker, self._own_broker,
+            )
+            metrics.increment("signal.wrong_broker_dropped")
             return
 
         metrics.increment(f"signal.received.{event}")

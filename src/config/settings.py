@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,6 +34,43 @@ def _require(mapping: dict, key: str, section: str) -> Any:
             f"(see config.example.yaml for a fully-populated reference)"
         )
     return mapping[key]
+
+
+def _apply_profile_template(value: str, profile: str) -> str:
+    """Substitutes a literal "{profile}" placeholder in a config value with
+    this instance's own mt5.use/MT5_USE profile — e.g.
+    `storage_path: ./data/{profile}` becomes `./data/fbs`. Opt-in and
+    explicit (you write `{profile}` yourself), not a hidden default — one
+    shared config.yaml can still be reused across per-broker instances
+    (env-var-overridden MT5_USE per Task Scheduler action) without every
+    instance colliding on the same storage directory."""
+    if "{profile}" not in value:
+        return value
+    return value.replace("{profile}", profile)
+
+
+# Known brokers get fixed, predictable monitoring ports so several
+# instances sharing one checkout don't collide on the default — same
+# reasoning and scheme as signal-engine's own per-broker websocket ports,
+# kept in a distinct range (809x) so the two engines' port spaces never
+# overlap even if both run on the same machine.
+_KNOWN_BROKER_MONITORING_PORTS = {
+    "fbs":        8091,
+    "exness":     8092,
+    "fundednext": 8093,
+}
+_UNKNOWN_BROKER_MONITORING_PORT_BASE = 8100
+_UNKNOWN_BROKER_MONITORING_PORT_RANGE = 200
+
+
+def _default_monitoring_port(profile: str) -> int:
+    key = profile.strip().lower()
+    if not key:
+        return 8080  # no profile — keep the historical default
+    if key in _KNOWN_BROKER_MONITORING_PORTS:
+        return _KNOWN_BROKER_MONITORING_PORTS[key]
+    offset = zlib.crc32(key.encode()) % _UNKNOWN_BROKER_MONITORING_PORT_RANGE
+    return _UNKNOWN_BROKER_MONITORING_PORT_BASE + offset
 
 
 def _validate_pct_range(name: str, value: float) -> None:
@@ -450,13 +488,17 @@ class ExecutionConfig:
         return float(override.get("tp1_percentage", self.tp1_percentage))
 
 
-def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, str]:
+def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, str, dict]:
     """Load a named MT5 credential profile from mt5-credentials.yaml.
 
-    Returns (login, password, server, terminal_path). Mirrors signal-engine's
-    equivalent loader — same file name, same per-profile field names, same
-    "look next to the config file, then cwd" search order — so editing
-    credentials for either engine feels the same.
+    Returns (login, password, server, terminal_path, symbol_aliases). Mirrors
+    signal-engine's equivalent loader — same file name, same per-profile
+    field names (including the optional symbol_aliases map — e.g. Exness's
+    US100 is actually named "USTECz" on that broker's own MT5 platform, a
+    rename fuzzy matching alone would never find), same "look next to the
+    config file, then cwd" search order — so editing credentials for either
+    engine feels the same, and a broker's aliases only need to be defined
+    once and copied across.
     """
     candidates = [
         config_path.parent / "mt5-credentials.yaml",
@@ -492,7 +534,10 @@ def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, s
             f"MT5 credential profile {profile!r} is missing required field(s): "
             f"{', '.join(missing)}. Add them to {creds_path}."
         )
-    return int(login), str(password), str(server), str(terminal_path)
+    symbol_aliases = {
+        str(k).upper(): str(v) for k, v in (p.get("symbol_aliases") or {}).items()
+    }
+    return int(login), str(password), str(server), str(terminal_path), symbol_aliases
 
 
 @dataclass(frozen=True)
@@ -501,6 +546,17 @@ class Mt5Config:
     password: str
     server: str
     path: str
+    # mt5.use's profile name (e.g. "fbs") — this engine's own broker
+    # identity, used both to filter incoming hub signals to only this
+    # broker's own and to scope storage_path/monitoring_port per instance.
+    # Empty when mt5.use is omitted (legacy flat login/server/path config).
+    profile: str = ""
+    # Canonical symbol -> broker-specific symbol name (e.g. {"US100": "USTECz"}
+    # for Exness) — checked before MT5Client.resolve_symbol()'s fuzzy
+    # startswith/endswith matching, same priority order as signal-engine's
+    # MarketDataClient._ensure_symbol(). Empty = no overrides, unchanged
+    # fuzzy-only resolution.
+    symbol_aliases: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -524,6 +580,14 @@ class AppConfig:
     position_poll_interval: float
     engine_timezone: ZoneInfo
     monitoring_port: int = 8080
+    # Optional: also dial the local UIBridge out to a dashboard hub (see
+    # src/hub), so this instance's telemetry/commands fan in alongside
+    # other brokers' instead of the dashboard needing to know every
+    # broker's own monitoring_port. Purely additive — monitoring_port above
+    # keeps serving local direct connections unchanged either way.
+    dashboard_hub_enabled: bool = False
+    dashboard_hub_url: str = ""
+    dashboard_hub_token: str = ""
 
     @classmethod
     def from_yaml(cls, path: Path | str = "config.yaml") -> "AppConfig":
@@ -556,9 +620,13 @@ class AppConfig:
         # Omitting mt5.use keeps today's behavior: login/server/path read
         # directly from this file's mt5: block, password falling back to
         # MT5_PASSWORD env var for existing .env-based installs.
-        mt5_profile = mt5.get("use")
+        # MT5_USE env var overrides mt5.use, same convention as signal-engine
+        # — lets one checkout run multiple per-broker instances (one Task
+        # Scheduler action per broker, each setting MT5_USE) without needing
+        # a separate config.yaml per broker.
+        mt5_profile = os.environ.get("MT5_USE", "").strip() or mt5.get("use")
         if mt5_profile:
-            mt5_login, mt5_password, mt5_server, mt5_path = _load_mt5_profile(
+            mt5_login, mt5_password, mt5_server, mt5_path, mt5_symbol_aliases = _load_mt5_profile(
                 config_path, str(mt5_profile)
             )
         else:
@@ -571,6 +639,7 @@ class AppConfig:
                 )
             mt5_server = str(_require(mt5, "server", "mt5"))
             mt5_path = str(mt5.get("path", ""))
+            mt5_symbol_aliases = {}
 
         return cls(
             signal_engine=SignalEngineConfig(
@@ -584,6 +653,8 @@ class AppConfig:
                 password=mt5_password,
                 server=mt5_server,
                 path=mt5_path,
+                profile=str(mt5_profile or ""),
+                symbol_aliases=mt5_symbol_aliases,
             ),
             risk=RiskConfig(
                 max_losing_streak=int(_require(risk, "max_losing_streak", "risk")),
@@ -673,11 +744,19 @@ class AppConfig:
                 # Structural: omitted entirely = no per-symbol/timeframe overrides.
                 tf_overrides=_parse_tf_overrides(exe.get("tf_overrides")),
             ),
-            storage_path=str(_require(eng, "storage_path", "engine")),
+            storage_path=_apply_profile_template(
+                str(_require(eng, "storage_path", "engine")), str(mt5_profile or "")
+            ),
             log_level=str(_require(eng, "log_level", "engine")),
             position_poll_interval=float(
                 _require(eng, "position_poll_interval", "engine")
             ),
             engine_timezone=ZoneInfo(str(_require(eng, "timezone", "engine"))),
-            monitoring_port=int(eng.get("monitoring_port", 8080)),
+            monitoring_port=int(
+                eng.get("monitoring_port")
+                or _default_monitoring_port(str(mt5_profile or ""))
+            ),
+            dashboard_hub_enabled=bool((raw.get("dashboard_hub") or {}).get("enabled", False)),
+            dashboard_hub_url=str((raw.get("dashboard_hub") or {}).get("url", "") or ""),
+            dashboard_hub_token=str((raw.get("dashboard_hub") or {}).get("token", "") or ""),
         )
