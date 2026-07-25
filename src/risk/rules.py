@@ -136,11 +136,21 @@ def no_hedging_rule(ctx: RuleContext) -> RuleResult:
     )
     opposing_side = OrderSide.SELL if incoming_side == OrderSide.BUY else OrderSide.BUY
 
+    # Trade.symbol is stored as the broker-resolved name (planner.py sets it
+    # from symbol_info.symbol, e.g. Deriv's "Crash 500 Index" for canonical
+    # "CRASH500") - comparing against ctx.signal.symbol (canonical, never
+    # resolved) can never match for any aliased symbol, silently disabling
+    # this rule for every broker that needs symbol_aliases (Deriv, Exness's
+    # US100, FundedNext's US100). Same resolved_symbol-or-symbol fallback
+    # execution/engine.py already uses for effective_symbol and rules.py's
+    # own symbol_risk_multiplier lookup.
+    signal_symbol = ctx.signal.resolved_symbol or ctx.signal.symbol
+
     conflict = next(
         (
             t
             for t in ctx.open_trades
-            if t.symbol == ctx.signal.symbol
+            if t.symbol == signal_symbol
             and t.side == opposing_side
             and t.status
             in (TradeStatus.PLANNED, TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED)
@@ -152,7 +162,7 @@ def no_hedging_rule(ctx: RuleContext) -> RuleResult:
             approved=False,
             reason=(
                 f"NO_HEDGING: {opposing_side.value} trade {conflict.id} "
-                f"already open on {ctx.signal.symbol}"
+                f"already open on {signal_symbol}"
             ),
         )
     return RuleResult(approved=True)

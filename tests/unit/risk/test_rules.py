@@ -1,5 +1,8 @@
 """Test risk rules."""
 
+from dataclasses import replace
+from types import SimpleNamespace
+
 from src.config.settings import EntryDriftConfig, RiskConfig
 from src.domain.position import SymbolInfo
 from src.domain.signal_interface import (
@@ -12,7 +15,14 @@ from src.domain.signal_interface import (
     SignalDirection,
     SignalStatus,
 )
-from src.risk.rules import RuleContext, entry_drift_rule, min_rr_rule, spread_quality_rule
+from src.domain.trade import OrderSide, TradeStatus
+from src.risk.rules import (
+    RuleContext,
+    entry_drift_rule,
+    min_rr_rule,
+    no_hedging_rule,
+    spread_quality_rule,
+)
 
 
 def test_spread_quality_uses_xauusd_threshold_override() -> None:
@@ -191,6 +201,74 @@ def test_entry_drift_favorable_pullback_never_counts_even_when_enabled() -> None
 
     assert result.approved is True
     assert result.data["entry_drift_pct_of_risk"] == 0.0
+
+
+def _open_trade(*, symbol: str, side: OrderSide, status: TradeStatus = TradeStatus.OPEN):
+    return SimpleNamespace(id="open-1", symbol=symbol, side=side, status=status)
+
+
+def test_no_hedging_rejects_opposite_side_on_aliased_symbol() -> None:
+    # Regression: Trade.symbol is stored broker-resolved (planner.py sets
+    # it from symbol_info.symbol - e.g. Deriv's "Crash 500 Index" for
+    # canonical "CRASH500"), so the rule must compare against
+    # signal.resolved_symbol, not signal.symbol, or it silently never
+    # matches for any aliased symbol - which is exactly what let a hedge
+    # through on CRASH500.
+    ctx = _context(
+        symbol="CRASH500",
+        direction=SignalDirection.SHORT,
+        ask=66864.0,
+        bid=66850.0,
+        stop_loss=66886.7,
+        symbol_thresholds={},
+    )
+    ctx.signal = replace(ctx.signal, resolved_symbol="Crash 500 Index")
+    ctx.open_trades = [
+        _open_trade(symbol="Crash 500 Index", side=OrderSide.BUY),
+    ]
+
+    result = no_hedging_rule(ctx)
+
+    assert result.approved is False
+    assert "NO_HEDGING" in result.reason
+
+
+def test_no_hedging_approves_same_side_on_aliased_symbol() -> None:
+    ctx = _context(
+        symbol="CRASH500",
+        direction=SignalDirection.SHORT,
+        ask=66864.0,
+        bid=66850.0,
+        stop_loss=66886.7,
+        symbol_thresholds={},
+    )
+    ctx.signal = replace(ctx.signal, resolved_symbol="Crash 500 Index")
+    ctx.open_trades = [
+        _open_trade(symbol="Crash 500 Index", side=OrderSide.SELL),
+    ]
+
+    result = no_hedging_rule(ctx)
+
+    assert result.approved is True
+
+
+def test_no_hedging_ignores_conflict_on_a_different_symbol() -> None:
+    ctx = _context(
+        symbol="CRASH500",
+        direction=SignalDirection.SHORT,
+        ask=66864.0,
+        bid=66850.0,
+        stop_loss=66886.7,
+        symbol_thresholds={},
+    )
+    ctx.signal = replace(ctx.signal, resolved_symbol="Crash 500 Index")
+    ctx.open_trades = [
+        _open_trade(symbol="Boom 500 Index", side=OrderSide.BUY),
+    ]
+
+    result = no_hedging_rule(ctx)
+
+    assert result.approved is True
 
 
 def _context(
