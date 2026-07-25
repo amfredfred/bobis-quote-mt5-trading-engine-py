@@ -89,6 +89,44 @@ class Mt5Positions:
     def resolve_symbol(self, symbol: str) -> Optional[str]:
         return self._client.resolve_symbol(symbol)
 
+    def calc_loss_per_lot(
+        self, symbol: str, is_long: bool, entry_price: float, exit_price: float
+    ) -> float | None:
+        """Dollar cost of exactly 1.0 lot moving from entry_price to
+        exit_price, via MT5's own order_calc_profit.
+
+        lot_calculator.py's tick_value/tick_size formula is only valid for
+        SYMBOL_CALC_MODE_FOREX/CFD - Deriv's synthetic indices (and likely
+        other CFDINDEX-mode instruments) compute profit as
+        price_delta * contract_size * lots instead, with no tick_value/
+        tick_size involved. Using the forex formula there under-costs a lot
+        by orders of magnitude, producing a wildly oversized position that
+        then silently clamps to the broker's volume_max. order_calc_profit
+        is MT5's own authoritative calculation for whatever calc_mode the
+        symbol actually uses, so this is correct regardless of instrument
+        type instead of re-deriving (and getting wrong) the formula per mode.
+
+        Returns None (caller falls back to the legacy tick-based formula) if
+        MT5 can't compute it - e.g. not connected, unknown symbol.
+        """
+        from src.brokers.mt5.types import Mt5OrderType
+
+        resolved = self.resolve_symbol(symbol)
+        if not resolved:
+            return None
+        self._client.ensure_connected()
+        order_type = Mt5OrderType.BUY.value if is_long else Mt5OrderType.SELL.value
+        with _MT5_LOCK:
+            profit = self._mt5.order_calc_profit(order_type, resolved, 1.0, entry_price, exit_price)
+        if profit is None:
+            with _MT5_LOCK:
+                error = self._mt5.last_error()
+            logger.warning(
+                "calc_loss_per_lot(%r): order_calc_profit failed: %s", symbol, error
+            )
+            return None
+        return abs(profit)
+
     def get_symbol_info(self, symbol: str) -> SymbolInfo:
         _resolved_symbol = self.resolve_symbol(symbol)
         self._client.ensure_connected()

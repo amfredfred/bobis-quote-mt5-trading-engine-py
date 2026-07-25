@@ -54,10 +54,12 @@ class TradePlanner:
         risk_config: RiskConfig,
         exec_config: ExecutionConfig,
         loss_tracker: "LossTracker",
+        mt5_positions=None,  # Mt5Positions | None — see plan()'s loss_per_lot
     ) -> None:
         self._risk         = risk_config
         self._exec         = exec_config
         self._loss_tracker = loss_tracker
+        self._mt5_positions = mt5_positions
 
     def plan(
         self,
@@ -123,6 +125,21 @@ class TradePlanner:
         risk_amount = min(risk_amount, tier_cap_amount)
 
         # ── Lot size calculation ───────────────────────────────────────────
+        # loss_per_lot: MT5's own order_calc_profit for 1.0 lot moving
+        # entry->sizing_sl, correct for every trade_calc_mode. The
+        # tick_value/tick_size fallback inside calculate_lot_size only holds
+        # for forex/CFD instruments — it silently under-costs CFDINDEX
+        # symbols (Deriv's synthetic indices), producing a wildly oversized
+        # position that then clamps to the broker's volume_max. None here
+        # (no mt5_positions injected, or the live call failed) falls back
+        # to that formula, same as before this existed.
+        loss_per_lot = (
+            self._mt5_positions.calc_loss_per_lot(
+                symbol_info.symbol, side == OrderSide.BUY, signal.entry_price, sizing_sl
+            )
+            if self._mt5_positions is not None
+            else None
+        )
         calc = calculate_lot_size(
             risk_amount=risk_amount,
             entry_price=signal.entry_price,
@@ -130,6 +147,7 @@ class TradePlanner:
             symbol_info=symbol_info,
             max_lot=self._risk.max_lot_size,
             min_lot=self._risk.min_lot_size,
+            loss_per_lot=loss_per_lot,
         )
 
         # ── Static TP1 level — stored for poll-based partial-close detection ─

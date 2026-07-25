@@ -95,7 +95,7 @@ def build_container(config: AppConfig) -> AppContainer:
         cluster_tracker=cluster_tracker,
         equity_throttle=equity_throttle,
     )
-    trade_planner = TradePlanner(config.risk, config.execution, loss_tracker)
+    trade_planner = TradePlanner(config.risk, config.execution, loss_tracker, mt5_positions)
     order_manager = OrderManager(mt5_orders, mt5_positions, config.execution)
 
     execution_engine = ExecutionEngine(
