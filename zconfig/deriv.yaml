@@ -11,10 +11,8 @@
 signal_engine:
   symbols:
     - VOLATILITY10
-    - VOLATILITY25
     - VOLATILITY50
     - VOLATILITY75
-    - VOLATILITY100
     - BOOM500
     - BOOM1000
     - CRASH500
