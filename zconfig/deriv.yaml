@@ -19,3 +19,14 @@ signal_engine:
     - BOOM1000
     - CRASH500
     - CRASH1000
+
+# Deriv's synthetic indices aren't correlated the way a real instrument's
+# price action is - each symbol path is generated independently around a
+# fixed volatility parameter, so a BUY and SELL on the same symbol from two
+# different strategies/timeframes (this engine runs several concurrently)
+# are two independent trade plans, not a self-cancelling hedge against
+# shared market risk the way it would be on XAUUSD/US100/US30. Overridden
+# here only for Deriv; every other broker keeps config.yaml's global
+# no_hedging: true.
+risk:
+  no_hedging: false
