@@ -110,10 +110,29 @@ class Mt5Client:
         if clean in self._config.symbol_aliases:
             clean = self._config.symbol_aliases[clean]
 
-        # Fast cache hit
-        cached = _SYMBOL_CACHE.get(clean)
+        # Fast cache hit — keyed on the case-normalized form so an alias
+        # value's own casing (e.g. Deriv's "Volatility 75 Index") doesn't
+        # create a second, inconsistent cache entry.
+        clean_upper = clean.upper()
+        cached = _SYMBOL_CACHE.get(clean_upper)
         if cached:
             return cached
+
+        # An aliased symbol's real name (e.g. "Volatility 75 Index",
+        # "USTECz") often isn't all-uppercase — try MT5's own exact lookup
+        # on the alias value as-is first, same as signal-engine's
+        # MarketDataClient._ensure_symbol. The uppercase-comparison loop
+        # below would otherwise never match a mixed-case real name against
+        # itself (upper() vs the alias's original casing always differs).
+        with _MT5_LOCK:
+            info = mt5.symbol_info(clean)
+        if info is not None:
+            exact_name = info.name
+            with _MT5_LOCK:
+                mt5.symbol_select(exact_name, True)
+            _SYMBOL_CACHE[clean_upper] = exact_name
+            logger.info("Symbol %r resolved via exact match → %r", base_symbol, exact_name)
+            return exact_name
 
         with _MT5_LOCK:
             symbols = mt5.symbols_get()
@@ -132,12 +151,12 @@ class Mt5Client:
             upper = name.upper()
 
             # 1. Exact match
-            if upper == clean:
+            if upper == clean_upper:
                 exact_match = name
                 break
 
             # 2. Flexible broker naming (starts with or ends with)
-            if upper.startswith(clean) or upper.endswith(clean):
+            if upper.startswith(clean_upper) or upper.endswith(clean_upper):
                 matches.append(name)
 
         # Exact match wins immediately
@@ -145,7 +164,7 @@ class Mt5Client:
             with _MT5_LOCK:
                 mt5.symbol_select(exact_match, True)
 
-            _SYMBOL_CACHE[clean] = exact_match
+            _SYMBOL_CACHE[clean_upper] = exact_match
 
             logger.info(
                 "Symbol %r resolved via exact match → %r",
@@ -189,7 +208,7 @@ class Mt5Client:
             )
 
         # Cache resolved name
-        _SYMBOL_CACHE[clean] = resolved
+        _SYMBOL_CACHE[clean_upper] = resolved
 
         return resolved
 
