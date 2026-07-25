@@ -137,8 +137,8 @@ engine:
   # storage dir. Plain "./data" also still works for a single instance.
   storage_path: ./data/{profile}
   # Omit to auto-derive a per-broker default (fbs=8091, exness=8092,
-  # fundednext=8093, others deterministically 8100-8299) so several
-  # instances sharing one checkout don't collide on the default 8080.
+  # fundednext=8093, deriv=8094, others deterministically 8100-8299) so
+  # several instances sharing one checkout don't collide on the default 8080.
   # monitoring_port: 8080
   position_poll_interval: 0.6
 

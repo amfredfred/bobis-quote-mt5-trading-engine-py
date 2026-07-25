@@ -74,13 +74,15 @@ def test_load_mt5_profile_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         '  terminal_path: "C:\\\\MT5\\\\terminal64.exe"\n',
         encoding="utf-8",
     )
-    login, password, server, terminal_path = _load_mt5_profile(
+    login, password, server, terminal_path, symbol_aliases, config_ref = _load_mt5_profile(
         tmp_path / "config.yaml", "fbs"
     )
     assert login == 106272844
     assert password == "secret"
     assert server == "FBS-Demo"
     assert terminal_path == "C:\\MT5\\terminal64.exe"
+    assert symbol_aliases == {}
+    assert config_ref is None
 
 
 def test_load_mt5_profile_missing_file_raises(

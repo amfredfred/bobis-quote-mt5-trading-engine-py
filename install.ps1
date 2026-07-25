@@ -55,7 +55,7 @@ param(
 $ErrorActionPreference = "Stop"
 $EngineDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TaskFolder   = "\Apex Quantel\"
-$KnownBrokers = @("fbs", "exness", "fundednext")
+$KnownBrokers = @("fbs", "exness", "fundednext", "deriv")
 
 # ── Runs install/uninstall/update for exactly one identity: either a
 #    broker instance ($broker non-empty, or "" for the legacy single-

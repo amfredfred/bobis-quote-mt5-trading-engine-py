@@ -32,7 +32,7 @@ $EngineDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 # broker's actual port (deterministically hashed in Python) isn't
 # reproducible here, so set engine.monitoring_port explicitly in that
 # broker's config for the watchdog to check the right port.
-$KnownBrokerPorts = @{ fbs = 8091; exness = 8092; fundednext = 8093 }
+$KnownBrokerPorts = @{ fbs = 8091; exness = 8092; fundednext = 8093; deriv = 8094 }
 $HealthPort = if ($Broker -and $KnownBrokerPorts.ContainsKey($Broker.ToLower())) {
     $KnownBrokerPorts[$Broker.ToLower()]
 } else {

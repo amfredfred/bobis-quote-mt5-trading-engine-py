@@ -58,6 +58,7 @@ _KNOWN_BROKER_MONITORING_PORTS = {
     "fbs":        8091,
     "exness":     8092,
     "fundednext": 8093,
+    "deriv":      8094,
 }
 _UNKNOWN_BROKER_MONITORING_PORT_BASE = 8100
 _UNKNOWN_BROKER_MONITORING_PORT_RANGE = 200
@@ -488,17 +489,35 @@ class ExecutionConfig:
         return float(override.get("tp1_percentage", self.tp1_percentage))
 
 
-def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, str, dict]:
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base. Lists are replaced, not merged.
+
+    Mirrors signal-engine's config/settings.py helper of the same name —
+    used to apply a broker's zconfig/<broker>.yaml overlay (e.g. Deriv's
+    synthetic-index symbol list) on top of the base config.yaml.
+    """
+    result = base.copy()
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, str, dict, "str | None"]:
     """Load a named MT5 credential profile from mt5-credentials.yaml.
 
-    Returns (login, password, server, terminal_path, symbol_aliases). Mirrors
-    signal-engine's equivalent loader — same file name, same per-profile
-    field names (including the optional symbol_aliases map — e.g. Exness's
-    US100 is actually named "USTECz" on that broker's own MT5 platform, a
-    rename fuzzy matching alone would never find), same "look next to the
-    config file, then cwd" search order — so editing credentials for either
-    engine feels the same, and a broker's aliases only need to be defined
-    once and copied across.
+    Returns (login, password, server, terminal_path, symbol_aliases,
+    config_ref). Mirrors signal-engine's equivalent loader — same file name,
+    same per-profile field names (including the optional symbol_aliases map
+    — e.g. Exness's US100 is actually named "USTECz" on that broker's own
+    MT5 platform, a rename fuzzy matching alone would never find, and the
+    optional config: key pointing at a zconfig/<broker>.yaml overlay for
+    broker-specific settings like Deriv's synthetic-index symbol list) —
+    same "look next to the config file, then cwd" search order — so editing
+    credentials for either engine feels the same, and a broker's aliases
+    only need to be defined once and copied across.
     """
     candidates = [
         config_path.parent / "mt5-credentials.yaml",
@@ -537,7 +556,11 @@ def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, s
     symbol_aliases = {
         str(k).upper(): str(v) for k, v in (p.get("symbol_aliases") or {}).items()
     }
-    return int(login), str(password), str(server), str(terminal_path), symbol_aliases
+    config_ref = p.get("config")
+    return (
+        int(login), str(password), str(server), str(terminal_path),
+        symbol_aliases, str(config_ref) if config_ref else None,
+    )
 
 
 @dataclass(frozen=True)
@@ -600,6 +623,45 @@ class AppConfig:
         with open(config_path, "r", encoding="utf-8") as fh:
             raw: dict = yaml.safe_load(fh) or {}
 
+        # Credentials: mt5.use selects a named profile from mt5-credentials.yaml
+        # (git-ignored, one broker per profile — same pattern as signal-engine).
+        # Omitting mt5.use keeps today's behavior: login/server/path read
+        # directly from this file's mt5: block, password falling back to
+        # MT5_PASSWORD env var for existing .env-based installs.
+        # MT5_USE env var overrides mt5.use, same convention as signal-engine
+        # — lets one checkout run multiple per-broker instances (one Task
+        # Scheduler action per broker, each setting MT5_USE) without needing
+        # a separate config.yaml per broker.
+        #
+        # Resolved before signal_engine/risk/exe/eng are sliced out below so
+        # a broker's optional config: zconfig/<broker>.yaml overlay (e.g.
+        # Deriv's synthetic-index symbol list — signal_engine.symbols isn't
+        # one-size-fits-all across brokers) can deep-merge over raw first,
+        # same order as signal-engine's _resolve_broker_cfg.
+        mt5_pre = raw.get("mt5", {})
+        mt5_profile = os.environ.get("MT5_USE", "").strip() or mt5_pre.get("use")
+        if mt5_profile:
+            (
+                mt5_login, mt5_password, mt5_server, mt5_path,
+                mt5_symbol_aliases, config_ref,
+            ) = _load_mt5_profile(config_path, str(mt5_profile))
+            if config_ref:
+                overlay_path = config_path.parent / config_ref
+                with open(overlay_path, "r", encoding="utf-8") as fh:
+                    overlay: dict = yaml.safe_load(fh) or {}
+                raw = _deep_merge(raw, overlay)
+        else:
+            mt5_login = int(_require(mt5_pre, "login", "mt5"))
+            mt5_password = str(mt5_pre.get("password") or os.environ.get("MT5_PASSWORD", ""))
+            if not mt5_password:
+                raise ValueError(
+                    "mt5.password is not set in config.yaml and MT5_PASSWORD is not "
+                    "set in the environment — one of the two is required."
+                )
+            mt5_server = str(_require(mt5_pre, "server", "mt5"))
+            mt5_path = str(mt5_pre.get("path", ""))
+            mt5_symbol_aliases = {}
+
         # "signal_engine" is the current key; "gateway" is accepted as a
         # fallback so existing config.yaml files from before this engine
         # connected directly to the signal engine keep working unmodified.
@@ -614,32 +676,6 @@ class AppConfig:
             signal_engine_symbols_raw = [
                 s.strip() for s in signal_engine_symbols_raw.split(",")
             ]
-
-        # Credentials: mt5.use selects a named profile from mt5-credentials.yaml
-        # (git-ignored, one broker per profile — same pattern as signal-engine).
-        # Omitting mt5.use keeps today's behavior: login/server/path read
-        # directly from this file's mt5: block, password falling back to
-        # MT5_PASSWORD env var for existing .env-based installs.
-        # MT5_USE env var overrides mt5.use, same convention as signal-engine
-        # — lets one checkout run multiple per-broker instances (one Task
-        # Scheduler action per broker, each setting MT5_USE) without needing
-        # a separate config.yaml per broker.
-        mt5_profile = os.environ.get("MT5_USE", "").strip() or mt5.get("use")
-        if mt5_profile:
-            mt5_login, mt5_password, mt5_server, mt5_path, mt5_symbol_aliases = _load_mt5_profile(
-                config_path, str(mt5_profile)
-            )
-        else:
-            mt5_login = int(_require(mt5, "login", "mt5"))
-            mt5_password = str(mt5.get("password") or os.environ.get("MT5_PASSWORD", ""))
-            if not mt5_password:
-                raise ValueError(
-                    "mt5.password is not set in config.yaml and MT5_PASSWORD is not "
-                    "set in the environment — one of the two is required."
-                )
-            mt5_server = str(_require(mt5, "server", "mt5"))
-            mt5_path = str(mt5.get("path", ""))
-            mt5_symbol_aliases = {}
 
         return cls(
             signal_engine=SignalEngineConfig(

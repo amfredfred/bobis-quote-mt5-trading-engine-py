@@ -1,0 +1,21 @@
+# Deriv overlay — deep-merged over config.yaml (see mt5-credentials.yaml's
+# deriv.config: key and AppConfig.from_yaml's _deep_merge call). Same
+# pattern as signal-engine's zconfig/<broker>.yaml overlays.
+#
+# signal_engine.symbols in the base config.yaml is XAUUSD/US100/US30 —
+# without this override, the Deriv instance's SignalConsumer subscribes to
+# that same list and silently drops every VOLATILITY/BOOM/CRASH signal the
+# hub forwards, even though signal-engine's Deriv terminal emits them
+# correctly. Must be kept in sync with signal-engine's zconfig/deriv.yaml
+# symbols: list.
+signal_engine:
+  symbols:
+    - VOLATILITY10
+    - VOLATILITY25
+    - VOLATILITY50
+    - VOLATILITY75
+    - VOLATILITY100
+    - BOOM500
+    - BOOM1000
+    - CRASH500
+    - CRASH1000
