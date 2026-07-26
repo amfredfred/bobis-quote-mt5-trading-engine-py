@@ -1,11 +1,46 @@
 # FundedNext overlay — deep-merged over config.yaml (see mt5-credentials.yaml's
 # fundednext.config: key and AppConfig.from_yaml's _deep_merge call).
 #
-# Put on conservative risk mode per owner's 2026-07-26 instruction (fbs and
-# deriv stay aggressive/base; exness and fundednext go conservative). This
-# key is read by the same risk_mode overlay mechanism used for the global
-# RISK_MODE env var / config.yaml risk_mode: key — it fires here because
-# AppConfig.from_yaml checks raw.get("risk_mode") AFTER this broker overlay
-# has already been merged in. See zconfig/conservative.yaml for exactly
-# what it changes.
-risk_mode: conservative
+# Calibrated for the real FundedNext Stellar 1-Step account rules (owner
+# confirmed 2026-07-26), not the generic zconfig/conservative.yaml cut —
+# this account's daily loss limit is 3% and max loss limit is 6% (static,
+# i.e. a permanent floor from the account's original starting balance,
+# never trails). Deliberately does NOT reference risk_mode: conservative,
+# because that overlay merges in AFTER this file (see AppConfig.from_yaml)
+# and would silently overwrite max_daily_loss_percent back to its own 20.0
+# — the FundedNext-specific numbers below have to be the last word, so
+# they're set directly here instead.
+#
+# daily_loss_limit_rule (src/risk/rules.py) hard-stops new trades at 95%
+# of max_daily_loss_percent, so:
+#   max_daily_loss_percent: 2.5 -> real stop at 2.375%, comfortably under
+#     FundedNext's actual 3% daily cap (was 20.0 under generic conservative
+#     mode -> real stop at 19%, ~6x past the real limit — the gap that
+#     prompted this file).
+#   max_losing_streak: 10 -> per-trade risk = 2.5 / 10 = 0.25% (owner chose
+#     10 over 5 for more headroom against the 6% static max-loss floor
+#     across a multi-day bad stretch, since nothing in this codebase yet
+#     enforces that permanent floor directly — see project memory for the
+#     parked follow-up).
+#
+# The rest of the cuts below are carried over from zconfig/conservative.yaml
+# (see that file for the full rationale on each) — still the right defaults
+# for a real funded account, just no longer sourced via the risk_mode
+# indirection now that the daily-budget numbers must be hand-set here.
+risk:
+  max_daily_loss_percent: 2.5
+  max_losing_streak: 10
+  max_lot_size: 10.0
+  max_exposure_per_symbol: 1
+  sl_ratio_threshold: 0.25
+  balance_tier_base_cap_pct: 2.0
+  balance_tier_floor_pct: 0.10
+  max_profit_drawdown_percent: 20.0
+  rolling_drawdown_pct: 5.0
+  equity_throttle:
+    drawdown_threshold_r: 4.0
+    release_threshold_r: 3.0
+    risk_multiplier: 0.3
+  entry_drift:
+    enabled: true
+    max_drift_pct_of_risk: 15.0
