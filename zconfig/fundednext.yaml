@@ -32,15 +32,15 @@ risk:
   max_losing_streak: 10
   max_lot_size: 10.0
   max_exposure_per_symbol: 1
-  sl_ratio_threshold: 0.25
-  balance_tier_base_cap_pct: 2.0
+  sl_ratio_threshold: 0.33
+  balance_tier_base_cap_pct: 0.5
   balance_tier_floor_pct: 0.10
-  max_profit_drawdown_percent: 20.0
+  max_profit_drawdown_percent: 50.0
   rolling_drawdown_pct: 5.0
   equity_throttle:
     drawdown_threshold_r: 4.0
     release_threshold_r: 3.0
-    risk_multiplier: 0.3
+    risk_multiplier: 0.5
   entry_drift:
     enabled: true
-    max_drift_pct_of_risk: 15.0
+    max_drift_pct_of_risk: 20.0
