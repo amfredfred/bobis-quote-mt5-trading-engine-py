@@ -15,5 +15,5 @@
 # Set directly here rather than via risk_mode: aggressive/conservative,
 # since neither generic overlay lands on 2.5%/trade.
 risk:
-  max_daily_loss_percent: 10.0
-  max_losing_streak: 4
+  max_daily_loss_percent: 20.0
+  max_losing_streak: 8
