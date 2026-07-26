@@ -1,11 +1,18 @@
 # Exness overlay — deep-merged over config.yaml (see mt5-credentials.yaml's
 # exness.config: key and AppConfig.from_yaml's _deep_merge call).
 #
-# Put on conservative risk mode per owner's 2026-07-26 instruction (fbs and
-# deriv stay aggressive/base; exness and fundednext go conservative). This
-# key is read by the same risk_mode overlay mechanism used for the global
-# RISK_MODE env var / config.yaml risk_mode: key — it fires here because
-# AppConfig.from_yaml checks raw.get("risk_mode") AFTER this broker overlay
-# has already been merged in. See zconfig/conservative.yaml for exactly
-# what it changes.
-risk_mode: conservative
+# Calibrated for real self-funded money (same treatment as zconfig/fbs.yaml,
+# 2026-07-26) rather than a prop-firm evaluation, so there's no external
+# daily/max-loss cap to match — just a sane real circuit breaker.
+#
+# daily_loss_limit_rule (src/risk/rules.py) hard-stops new trades at 95% of
+# max_daily_loss_percent, so:
+#   max_daily_loss_percent: 10.0, max_losing_streak: 4 -> per-trade risk
+#   = 10/4 = 2.5%, real stop at 9.5% (a bad day halts after ~4 losses,
+#   never wipes the deposit in one session).
+#
+# Set directly here rather than via risk_mode: conservative, since that
+# overlay doesn't land on 2.5%/trade.
+risk:
+  max_daily_loss_percent: 10.0
+  max_losing_streak: 4
