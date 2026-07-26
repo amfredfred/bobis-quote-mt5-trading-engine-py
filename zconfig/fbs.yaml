@@ -1,8 +1,19 @@
 # FBS overlay — deep-merged over config.yaml (see mt5-credentials.yaml's
 # fbs.config: key and AppConfig.from_yaml's _deep_merge call).
 #
-# Explicitly left on aggressive/base risk mode per owner's 2026-07-26
-# instruction (fbs and deriv stay aggressive; exness and fundednext go
-# conservative). See zconfig/aggressive.yaml for why this key exists at
-# all instead of just omitting config: for this profile.
-risk_mode: aggressive
+# Calibrated for real self-funded money (owner's own $500 deposit, per
+# 2026-07-26 discussion) rather than a prop-firm evaluation, so there's no
+# external daily/max-loss cap to match — the numbers below just need to be
+# a sane real circuit breaker, not compliance-mapped like zconfig/fundednext.yaml.
+#
+# daily_loss_limit_rule (src/risk/rules.py) hard-stops new trades at 95% of
+# max_daily_loss_percent, so:
+#   max_daily_loss_percent: 10.0, max_losing_streak: 4 -> per-trade risk
+#   = 10/4 = 2.5%, real stop at 9.5% (a bad day halts after ~4 losses,
+#   never wipes the deposit in one session).
+#
+# Set directly here rather than via risk_mode: aggressive/conservative,
+# since neither generic overlay lands on 2.5%/trade.
+risk:
+  max_daily_loss_percent: 10.0
+  max_losing_streak: 4
