@@ -28,3 +28,9 @@ signal_engine:
 # no_hedging: true.
 risk:
   no_hedging: false
+
+# Explicitly left on aggressive/base risk mode per owner's 2026-07-26
+# instruction (fbs and deriv stay aggressive; exness and fundednext go
+# conservative). See zconfig/aggressive.yaml for why this key exists at
+# all instead of leaving it silently unset.
+risk_mode: aggressive

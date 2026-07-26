@@ -1,0 +1,8 @@
+# FBS overlay — deep-merged over config.yaml (see mt5-credentials.yaml's
+# fbs.config: key and AppConfig.from_yaml's _deep_merge call).
+#
+# Explicitly left on aggressive/base risk mode per owner's 2026-07-26
+# instruction (fbs and deriv stay aggressive; exness and fundednext go
+# conservative). See zconfig/aggressive.yaml for why this key exists at
+# all instead of just omitting config: for this profile.
+risk_mode: aggressive

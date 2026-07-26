@@ -1,0 +1,9 @@
+# Aggressive risk mode — an explicit no-op overlay.
+#
+# Deep-merging an empty risk: block changes nothing; this file exists so a
+# broker can set risk_mode: aggressive in its own zconfig/<broker>.yaml as a
+# self-documenting statement of intent ("this broker was deliberately left
+# on config.yaml's base risk numbers"), symmetric with brokers that set
+# risk_mode: conservative (see zconfig/conservative.yaml) — rather than
+# leaving the key silently absent, which reads as "nobody decided."
+risk: {}

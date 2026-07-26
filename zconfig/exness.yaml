@@ -1,0 +1,11 @@
+# Exness overlay — deep-merged over config.yaml (see mt5-credentials.yaml's
+# exness.config: key and AppConfig.from_yaml's _deep_merge call).
+#
+# Put on conservative risk mode per owner's 2026-07-26 instruction (fbs and
+# deriv stay aggressive/base; exness and fundednext go conservative). This
+# key is read by the same risk_mode overlay mechanism used for the global
+# RISK_MODE env var / config.yaml risk_mode: key — it fires here because
+# AppConfig.from_yaml checks raw.get("risk_mode") AFTER this broker overlay
+# has already been merged in. See zconfig/conservative.yaml for exactly
+# what it changes.
+risk_mode: conservative
