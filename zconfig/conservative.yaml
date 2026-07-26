@@ -1,0 +1,55 @@
+# Conservative risk mode — an explicit, broker-orthogonal safety override.
+# Activated via RISK_MODE=conservative (env var) or config.yaml's top-level
+# risk_mode: conservative key (env var wins if both set, same convention as
+# MT5_USE/mt5.use). Deep-merges on top of config.yaml + whatever broker
+# overlay is active, so it composes with ANY broker (fbs/exness/fundednext/
+# deriv) rather than being tied to one.
+#
+# The current base config.yaml risk block is deliberately aggressive -
+# max_daily_loss_percent: 100 / max_losing_streak: 20 works out to ~5%
+# risk/trade, intentional while building a funding-prospect track record
+# (see memory: project-execution-engine-risk-sizing). This overlay is the
+# "switch to conservative sizing once capital is actually secured" step
+# that memory note flagged as a future action - not a default, opt-in only.
+#
+# Every number below is a deliberate cut from the base value, not a guess:
+#   max_daily_loss_percent 100 -> 20, max_losing_streak unchanged (20)
+#     => ~5% risk/trade -> ~1% risk/trade (the standard conservative-retail
+#     figure), and a real daily stop exists at all (100% effectively never
+#     triggers before the account is wiped out).
+#   max_lot_size 100.0 -> 10.0 - also a second line of defense against a
+#     sizing-formula bug producing a wildly oversized position (see
+#     project-execution-engine-bugs-fixed-2026-07-26's CFDINDEX incident -
+#     a lower hard cap here bounds the blast radius of a similar bug even
+#     if it recurs on an untested instrument type).
+#   max_exposure_per_symbol 2 -> 1 - one position per symbol at a time,
+#     no pyramiding into the same instrument.
+#   sl_ratio_threshold 0.35 -> 0.25 - rejects a trade whose spread eats a
+#     bigger share of its own stop distance, tighter than the base default.
+#   balance_tier_base_cap_pct 5.0 -> 2.0, balance_tier_floor_pct 0.25 -> 0.10
+#     - the balance-tiered ceiling on risk_amount itself gets tighter too,
+#     not just the daily-budget math above.
+#   max_profit_drawdown_percent 50.0 -> 20.0, rolling_drawdown_pct 10.0 ->
+#     5.0 - protects banked profits sooner instead of giving most of a
+#     winning day back before pausing.
+#   equity_throttle: engages sooner (drawdown_threshold_r 8.0 -> 4.0) and
+#     cuts harder (risk_multiplier 0.5 -> 0.3) during a real losing streak.
+#   entry_drift: turned on (was off) as an extra live safety gate - rejects
+#     a fill that's drifted too far against the signal's own entry, on top
+#     of min_rr_ratio's existing check.
+risk:
+  max_daily_loss_percent: 20.0
+  max_lot_size: 10.0
+  max_exposure_per_symbol: 1
+  sl_ratio_threshold: 0.25
+  balance_tier_base_cap_pct: 2.0
+  balance_tier_floor_pct: 0.10
+  max_profit_drawdown_percent: 20.0
+  rolling_drawdown_pct: 5.0
+  equity_throttle:
+    drawdown_threshold_r: 4.0
+    release_threshold_r: 3.0
+    risk_multiplier: 0.3
+  entry_drift:
+    enabled: true
+    max_drift_pct_of_risk: 15.0

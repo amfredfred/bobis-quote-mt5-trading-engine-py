@@ -662,6 +662,24 @@ class AppConfig:
             mt5_path = str(mt5_pre.get("path", ""))
             mt5_symbol_aliases = {}
 
+        # Risk mode: an optional, broker-orthogonal overlay (zconfig/<mode>.yaml,
+        # e.g. zconfig/conservative.yaml) merged on top of everything above -
+        # applies regardless of which broker profile is active, and wins on
+        # any risk key a broker overlay also sets (it's a deliberate, explicit
+        # safety override, not a per-broker tuning value). RISK_MODE env var
+        # takes priority over config.yaml's risk_mode: key, same convention as
+        # MT5_USE/mt5.use.
+        risk_mode = os.environ.get("RISK_MODE", "").strip().lower() or str(raw.get("risk_mode") or "").strip().lower()
+        if risk_mode:
+            risk_mode_path = config_path.parent / "zconfig" / f"{risk_mode}.yaml"
+            if not risk_mode_path.exists():
+                raise FileNotFoundError(
+                    f"risk_mode={risk_mode!r} but {risk_mode_path} does not exist"
+                )
+            with open(risk_mode_path, "r", encoding="utf-8") as fh:
+                risk_mode_overlay: dict = yaml.safe_load(fh) or {}
+            raw = _deep_merge(raw, risk_mode_overlay)
+
         # "signal_engine" is the current key; "gateway" is accepted as a
         # fallback so existing config.yaml files from before this engine
         # connected directly to the signal engine keep working unmodified.

@@ -10,6 +10,14 @@ mt5:
   # putting login/password/server/path directly in this block instead
   # (password still accepts an MT5_PASSWORD env var either way).
   use: fbs
+
+# Optional, broker-orthogonal risk override - deep-merges zconfig/<mode>.yaml
+# (e.g. zconfig/conservative.yaml) on top of everything below, composing with
+# whatever broker profile is active rather than being tied to one. RISK_MODE
+# env var takes priority over this key if both are set. Omit entirely to keep
+# today's risk block as the only source (no override applied).
+# risk_mode: conservative
+
 risk:
   # Aligned with signal-engine circuit_breaker.max_consecutive_losses=10.
   # Streak analysis (3yr, 5269 trades) proved losses are i.i.d. — stopping
