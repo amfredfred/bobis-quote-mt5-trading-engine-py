@@ -74,8 +74,8 @@ def test_load_mt5_profile_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         '  terminal_path: "C:\\\\MT5\\\\terminal64.exe"\n',
         encoding="utf-8",
     )
-    login, password, server, terminal_path, symbol_aliases, config_ref = _load_mt5_profile(
-        tmp_path / "config.yaml", "fbs"
+    login, password, server, terminal_path, symbol_aliases, config_ref, signal_broker = (
+        _load_mt5_profile(tmp_path / "config.yaml", "fbs")
     )
     assert login == 106272844
     assert password == "secret"
@@ -83,6 +83,22 @@ def test_load_mt5_profile_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert terminal_path == "C:\\MT5\\terminal64.exe"
     assert symbol_aliases == {}
     assert config_ref is None
+    assert signal_broker is None
+
+
+def test_load_mt5_profile_signal_broker_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "mt5-credentials.yaml").write_text(
+        "exness2:\n"
+        "  login: 1\n"
+        '  password: "secret"\n'
+        '  server: "Exness-MT5Trial10"\n'
+        '  terminal_path: "C:\\\\MT5\\\\terminal64.exe"\n'
+        "  signal_broker: exness\n",
+        encoding="utf-8",
+    )
+    *_, signal_broker = _load_mt5_profile(tmp_path / "config.yaml", "exness2")
+    assert signal_broker == "exness"
 
 
 def test_load_mt5_profile_missing_file_raises(

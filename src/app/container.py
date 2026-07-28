@@ -131,7 +131,7 @@ def build_container(config: AppConfig) -> AppContainer:
         validator=validator,
         ws_url=config.signal_engine.ws_url,
         symbols=config.signal_engine.symbols,
-        own_broker=config.mt5.profile,
+        own_broker=config.mt5.signal_broker,
     )
 
     # ── Strategies ────────────────────────────────────────────────────────

@@ -505,11 +505,13 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, str, dict, "str | None"]:
+def _load_mt5_profile(
+    config_path: Path, profile: str
+) -> tuple[int, str, str, str, dict, "str | None", "str | None"]:
     """Load a named MT5 credential profile from mt5-credentials.yaml.
 
     Returns (login, password, server, terminal_path, symbol_aliases,
-    config_ref). Mirrors signal-engine's equivalent loader — same file name,
+    config_ref, signal_broker). Mirrors signal-engine's equivalent loader — same file name,
     same per-profile field names (including the optional symbol_aliases map
     — e.g. Exness's US100 is actually named "USTECz" on that broker's own
     MT5 platform, a rename fuzzy matching alone would never find, and the
@@ -557,9 +559,17 @@ def _load_mt5_profile(config_path: Path, profile: str) -> tuple[int, str, str, s
         str(k).upper(): str(v) for k, v in (p.get("symbol_aliases") or {}).items()
     }
     config_ref = p.get("config")
+    # Optional: which broker's signal stream this account subscribes to,
+    # when different from this profile's own name — e.g. a second Exness
+    # account profiled as "exness2" (its own credentials/storage_path/
+    # monitoring_port) but still trading the "exness" signal-engine
+    # instance's signals. Defaults to the profile name itself, today's
+    # behavior, so a single-account-per-broker setup needs nothing extra.
+    signal_broker = p.get("signal_broker")
     return (
         int(login), str(password), str(server), str(terminal_path),
         symbol_aliases, str(config_ref) if config_ref else None,
+        str(signal_broker) if signal_broker else None,
     )
 
 
@@ -569,11 +579,18 @@ class Mt5Config:
     password: str
     server: str
     path: str
-    # mt5.use's profile name (e.g. "fbs") — this engine's own broker
-    # identity, used both to filter incoming hub signals to only this
-    # broker's own and to scope storage_path/monitoring_port per instance.
+    # mt5.use's profile name (e.g. "fbs") — this engine's own broker/account
+    # identity, used to scope storage_path/monitoring_port per instance.
     # Empty when mt5.use is omitted (legacy flat login/server/path config).
     profile: str = ""
+    # Which broker's signal stream this instance filters incoming hub
+    # signals to (see SignalConsumer._own_broker). Defaults to `profile`
+    # (today's behavior) but can be set independently via the credential
+    # profile's optional `signal_broker` key — lets a second account on the
+    # same broker (its own distinct `profile` for credentials/storage/
+    # monitoring port) still subscribe to that broker's existing signal
+    # stream instead of needing one named identically.
+    signal_broker: str = ""
     # Canonical symbol -> broker-specific symbol name (e.g. {"US100": "USTECz"}
     # for Exness) — checked before MT5Client.resolve_symbol()'s fuzzy
     # startswith/endswith matching, same priority order as signal-engine's
@@ -643,7 +660,7 @@ class AppConfig:
         if mt5_profile:
             (
                 mt5_login, mt5_password, mt5_server, mt5_path,
-                mt5_symbol_aliases, config_ref,
+                mt5_symbol_aliases, config_ref, mt5_signal_broker,
             ) = _load_mt5_profile(config_path, str(mt5_profile))
             if config_ref:
                 overlay_path = config_path.parent / config_ref
@@ -661,6 +678,7 @@ class AppConfig:
             mt5_server = str(_require(mt5_pre, "server", "mt5"))
             mt5_path = str(mt5_pre.get("path", ""))
             mt5_symbol_aliases = {}
+            mt5_signal_broker = None
 
         # Risk mode: an optional, broker-orthogonal overlay (zconfig/<mode>.yaml,
         # e.g. zconfig/conservative.yaml) merged on top of everything above -
@@ -709,6 +727,7 @@ class AppConfig:
                 path=mt5_path,
                 profile=str(mt5_profile or ""),
                 symbol_aliases=mt5_symbol_aliases,
+                signal_broker=str(mt5_signal_broker or mt5_profile or ""),
             ),
             risk=RiskConfig(
                 max_losing_streak=int(_require(risk, "max_losing_streak", "risk")),
