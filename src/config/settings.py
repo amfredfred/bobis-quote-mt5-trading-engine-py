@@ -620,6 +620,12 @@ class AppConfig:
     position_poll_interval: float
     engine_timezone: ZoneInfo
     monitoring_port: int = 8080
+    # Resolved risk_mode overlay name (RISK_MODE env var or config.yaml's
+    # risk_mode: key) — e.g. "conservative", "aggressive". Empty when no
+    # overlay is applied (this file's own risk: block is used as-is).
+    # Purely informational at this layer; the overlay itself is already
+    # merged into raw before risk/execution get parsed above.
+    risk_mode: str = ""
     # Optional: also dial the local UIBridge out to a dashboard hub (see
     # src/hub), so this instance's telemetry/commands fan in alongside
     # other brokers' instead of the dashboard needing to know every
@@ -832,4 +838,5 @@ class AppConfig:
             dashboard_hub_enabled=bool((raw.get("dashboard_hub") or {}).get("enabled", False)),
             dashboard_hub_url=str((raw.get("dashboard_hub") or {}).get("url", "") or ""),
             dashboard_hub_token=str((raw.get("dashboard_hub") or {}).get("token", "") or ""),
+            risk_mode=risk_mode,
         )

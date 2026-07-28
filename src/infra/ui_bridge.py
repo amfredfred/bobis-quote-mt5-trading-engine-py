@@ -605,6 +605,7 @@ class UIBridge:
             "mode": "LIVE",
             "symbols": list(config.signal_engine.symbols),
             "signal_ws_url": config.signal_engine.ws_url,
+            "risk_mode": config.risk_mode or "default",
             "risk": {
                 "max_losing_streak": config.risk.max_losing_streak,
                 "max_daily_loss_percent": config.risk.max_daily_loss_percent,
@@ -661,6 +662,8 @@ class UIBridge:
                 "server": config.mt5.server,
                 "magic": config.execution.magic,
                 "slippage": config.execution.slippage,
+                "profile": config.mt5.profile or "-",
+                "signal_broker": config.mt5.signal_broker or "-",
             },
             "engine": {
                 "timezone": str(config.engine_timezone),
