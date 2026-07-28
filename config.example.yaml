@@ -117,7 +117,7 @@ execution:
   # Global default: 45% trigger for all pairs. Override per symbol via
   # tf_overrides below — e.g. XAUUSD and US100 both diverge from it here.
   # Post v0.2.0: LTF removed — tf_overrides use "*" wildcard TF (not "5/5").
-  tp1_trigger_pct: 45.0
+  tp1_trigger_pct: 75.0
   tp1_percentage: 0.0
   move_sl_to_be_on_tp1: true
   breakeven_spread_multiplier: 1
@@ -126,9 +126,7 @@ execution:
     XAUUSD:
       "*":
         tp1_trigger_pct: 85.0
-    US100:
-      "*":
-        tp1_trigger_pct: 25.0
+
   spread_risk_multiplier: 1.0
   order_retry_count: 2
   order_retry_delay_sec: 0.5
