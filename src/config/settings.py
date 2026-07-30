@@ -137,10 +137,10 @@ def _parse_tf_overrides(raw: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
 def _tf_pair_key(htf_interval: str | None, ltf_interval: str | None) -> str | None:
     if not htf_interval or not ltf_interval:
         return None
-    return f"{_interval_to_minutes(htf_interval)}/{_interval_to_minutes(ltf_interval)}"
+    return f"{interval_to_minutes(htf_interval)}/{interval_to_minutes(ltf_interval)}"
 
 
-def _interval_to_minutes(interval: str) -> int:
+def interval_to_minutes(interval: str) -> int:
     value = interval.strip().lower()
     units = (
         ("minutes", 1),

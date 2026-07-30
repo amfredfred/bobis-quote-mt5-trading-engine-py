@@ -25,7 +25,7 @@ import threading
 import uuid
 
 from src.brokers.mt5.positions import Mt5Positions
-from src.config.settings import ExecutionConfig
+from src.config.settings import ExecutionConfig, interval_to_minutes
 from src.core.event_bus import EventBus
 from src.core.events import Events
 from src.execution.order_manager import OrderManager
@@ -134,6 +134,24 @@ class ExecutionEngine:
         signal_age_ms = (
             pipeline_start_ms - actionable_at if actionable_at is not None else None
         )
+        # max_signal_age_ms alone is a flat, timeframe-blind budget for
+        # dispatch/network/broker latency — it is NOT enough on its own,
+        # because signal-engine's own HTF-candle-finalisation-retry logic
+        # (it won't trust a candle as closed until a successor bar
+        # appears) structurally costs roughly one full HTF period before
+        # a signal is even emitted. A flat 120s cutoff guarantees every
+        # 15min/20min/1h setup arrives already "stale" by construction,
+        # regardless of broker or machine (confirmed identical on fbs,
+        # exness, local and VPS alike — this is a code bug, not
+        # environment noise). Add the HTF period back in as a structural
+        # floor, mirroring signal-engine's own max_lag = structural_lag +
+        # buffer split for exactly this reason.
+        structural_lag_ms = (
+            interval_to_minutes(signal.htf_interval) * 60_000
+            if signal.htf_interval
+            else 0
+        )
+        effective_max_age_ms = self._cfg.max_signal_age_ms + structural_lag_ms
         logger.info(
             "Execution timing check",
             extra={
@@ -142,11 +160,13 @@ class ExecutionEngine:
                 "now": pipeline_start_ms,
                 "age_ms": signal_age_ms,
                 "max_signal_age_ms": self._cfg.max_signal_age_ms,
+                "structural_lag_ms": structural_lag_ms,
+                "effective_max_age_ms": effective_max_age_ms,
             },
         )
         if (
             signal_age_ms is not None
-            and signal_age_ms > self._cfg.max_signal_age_ms
+            and signal_age_ms > effective_max_age_ms
         ):
             logger.warning(
                 "Stale signal rejected before broker execution",
@@ -155,6 +175,8 @@ class ExecutionEngine:
                     "symbol": signal.resolved_symbol,
                     "signal_age_ms": signal_age_ms,
                     "max_signal_age_ms": self._cfg.max_signal_age_ms,
+                    "structural_lag_ms": structural_lag_ms,
+                    "effective_max_age_ms": effective_max_age_ms,
                     "setup_candle_open_at": signal.setup_candle_open_at,
                     "setup_candle_close_at": signal.setup_candle_close_at,
                     "detected_at": signal.detected_at,
