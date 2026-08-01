@@ -411,10 +411,17 @@ class ExecutionConfig:
     adjust_levels_on_slippage: bool = False
     max_signal_age_ms: int = 90_000
     tf_overrides: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
+    # Fallback only — a signal's own limit_expiry_seconds (set by the
+    # strategy that requested a limit entry, e.g. pure_crt) always wins
+    # when present. This only applies when a signal somehow arrives with
+    # entry_type="limit" but no expiry of its own.
+    limit_order_expiry_seconds: int = 1800
 
     def __post_init__(self) -> None:
         _validate_pct_range("execution.tp1_trigger_pct", self.tp1_trigger_pct)
         _validate_pct_inclusive("execution.tp1_percentage", self.tp1_percentage)
+        if self.limit_order_expiry_seconds <= 0:
+            raise ValueError("execution.limit_order.expiry_seconds must be > 0.")
         if (
             self.breakeven_spread_multiplier < 0.0
             or 0.0 < self.breakeven_spread_multiplier < 1.0
@@ -822,6 +829,10 @@ class AppConfig:
                 max_signal_age_ms=int(_require(exe, "max_signal_age_ms", "execution")),
                 # Structural: omitted entirely = no per-symbol/timeframe overrides.
                 tf_overrides=_parse_tf_overrides(exe.get("tf_overrides")),
+                # Optional block — new, no existing config.yaml has it yet.
+                limit_order_expiry_seconds=int(
+                    (exe.get("limit_order") or {}).get("expiry_seconds", 1800)
+                ),
             ),
             storage_path=_apply_profile_template(
                 str(_require(eng, "storage_path", "engine")), str(mt5_profile or "")

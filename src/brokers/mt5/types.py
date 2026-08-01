@@ -31,12 +31,22 @@ class Mt5TradeAction(IntEnum):
     DEAL    = 1   # market order
     PENDING = 5   # pending order
     SLTP    = 6   # modify SL/TP
+    MODIFY  = 7   # modify a pending order's price/sl/tp/expiration
+    REMOVE  = 8   # cancel a pending order
     CLOSE_BY= 10  # close by opposite
+
+# MT5 pending-order expiration modes (ORDER_TIME_* in the MetaTrader5 package)
+class Mt5OrderTypeTime(IntEnum):
+    GTC             = 0  # good till cancelled — never auto-expires
+    DAY             = 1  # expires at end of the current trading day
+    SPECIFIED       = 2  # expires at the `expiration` timestamp on the request
+    SPECIFIED_DAY   = 3
 
 # MT5 return codes
 MT5_RETCODE_DONE    = 10009
 MT5_RETCODE_PLACED  = 10008
 MT5_RETCODE_INVALID_STOPS = 10016
+MT5_RETCODE_INVALID_PRICE = 10015
 
 @dataclass(frozen=True)
 class OrderResult:

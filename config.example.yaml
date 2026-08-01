@@ -134,6 +134,13 @@ execution:
   max_signal_age_ms: 120000
   close_on_slippage_exceed: false
   adjust_levels_on_slippage: false
+  # Fallback only — a signal's own limit_expiry_seconds (set by whichever
+  # strategy requested a limit entry, e.g. Signal Engine's pure_crt) always
+  # wins when present. Only used if a signal somehow arrives with
+  # entry_type="limit" but no expiry of its own. Optional block; omitted
+  # entirely defaults to 1800 (30 min).
+  limit_order:
+    expiry_seconds: 1800
 engine:
   timezone: UTC
   log_level: INFO

@@ -10,8 +10,8 @@ import logging
 from typing import List, Optional
 
 from src.brokers.mt5.client import Mt5Client, _MT5_LOCK
-from src.brokers.mt5.types import Mt5PositionType
-from src.domain.position import AccountInfo, Position, PositionSide, SymbolInfo
+from src.brokers.mt5.types import Mt5OrderType, Mt5PositionType
+from src.domain.position import AccountInfo, PendingOrder, Position, PositionSide, SymbolInfo
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -229,6 +229,37 @@ class Mt5Positions:
     def get_position_by_ticket(self, ticket: int) -> Optional[Position]:
         positions = self.get_open_positions()
         return next((p for p in positions if p.ticket == ticket), None)
+
+    def get_pending_orders(self, magic: Optional[int] = None) -> List[PendingOrder]:
+        """Resting BUY_LIMIT/SELL_LIMIT orders not yet filled or expired.
+        Orders MT5 has already filled or auto-cancelled simply won't appear
+        here — that transition is exactly what PendingOrderManager polls for."""
+        self._client.ensure_connected()
+        with _MT5_LOCK:
+            raw = self._mt5.orders_get() or []
+        if magic is not None:
+            raw = [o for o in raw if o.magic == magic]
+
+        return [
+            PendingOrder(
+                ticket=o.ticket,
+                symbol=o.symbol,
+                side=(
+                    PositionSide.BUY
+                    if o.type == Mt5OrderType.BUY_LIMIT
+                    else PositionSide.SELL
+                ),
+                lots=o.volume_current,
+                price=o.price_open,
+                stop_loss=o.sl,
+                take_profit=o.tp,
+                setup_time=int(o.time_setup * 1000),
+                expiration=int(o.time_expiration * 1000) if o.time_expiration else 0,
+                comment=o.comment,
+                magic=o.magic,
+            )
+            for o in raw
+        ]
 
     def get_daily_pnl_info(self, magic: int) -> tuple[float, float, float]:
         """Return (loss_pct, start_of_day_equity) for today.

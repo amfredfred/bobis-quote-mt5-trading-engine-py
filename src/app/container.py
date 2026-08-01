@@ -21,6 +21,8 @@ from src.execution.order_manager import OrderManager
 from src.execution.planner import TradePlanner
 from src.infra.db import Database
 from src.positions.manager import PositionManager
+from src.positions.pending_manager import PendingOrderManager
+from src.positions.pending_store import PendingOrderStore
 from src.positions.store import PositionStore
 from src.risk.cluster_tracker import ClusterRiskTracker
 from src.risk.engine import RiskEngine
@@ -46,6 +48,7 @@ class AppContainer:
     signal_queue: SignalQueue
     execution_engine: ExecutionEngine
     position_manager: PositionManager
+    pending_order_manager: PendingOrderManager
     mt5_client: Mt5Client
     mt5_orders: Mt5Orders
     mt5_positions: Mt5Positions
@@ -98,11 +101,29 @@ def build_container(config: AppConfig) -> AppContainer:
     trade_planner = TradePlanner(config.risk, config.execution, loss_tracker, mt5_positions)
     order_manager = OrderManager(mt5_orders, mt5_positions, config.execution)
 
+    # Constructed before ExecutionEngine (which needs to hand off placed
+    # limit orders to it) — no circular dependency, unlike PositionManager,
+    # which needs execution_engine itself for update_daily_loss.
+    pending_order_store = PendingOrderStore()
+    pending_order_manager = PendingOrderManager(
+        pending_store=pending_order_store,
+        position_store=position_store,
+        mt5_pos=mt5_positions,
+        mt5_orders=mt5_orders,
+        repository=trade_repo,
+        event_bus=event_bus,
+        exec_config=config.execution,
+        cluster_tracker=cluster_tracker,
+        poll_interval=config.position_poll_interval,
+    )
+
     execution_engine = ExecutionEngine(
         risk_engine=risk_engine,
         trade_planner=trade_planner,
         order_manager=order_manager,
         mt5_positions=mt5_positions,
+        mt5_orders=mt5_orders,
+        pending_order_manager=pending_order_manager,
         position_store=position_store,
         trade_repo=trade_repo,
         event_bus=event_bus,
@@ -145,6 +166,7 @@ def build_container(config: AppConfig) -> AppContainer:
         signal_queue=signal_queue,
         execution_engine=execution_engine,
         position_manager=position_manager,
+        pending_order_manager=pending_order_manager,
         mt5_client=mt5_client,
         mt5_orders=mt5_orders,
         mt5_positions=mt5_positions,

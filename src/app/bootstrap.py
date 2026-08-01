@@ -84,6 +84,7 @@ def shutdown(container: AppContainer) -> None:
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()
+    container.pending_order_manager.stop()
     container.mt5_client.disconnect()
     metrics.stop()
     logger.info("Shutdown complete")
@@ -150,6 +151,10 @@ def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
         container.position_store.get_open_trades()
     )
 
+    # Hydrate pending (resting limit) orders the same way — a restart
+    # shouldn't orphan a limit order still resting from before it.
+    container.pending_order_manager.hydrate_from_broker()
+
     # Rebuild the equity-throttle rolling window from persisted closed trades
     throttle_window_ms = (
         config.risk.equity_throttle.window_days * 86_400_000
@@ -185,6 +190,7 @@ def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
     # Start trading services
     container.signal_queue.start()
     container.position_manager.start()
+    container.pending_order_manager.start()
     container.signal_consumer.start()
 
     container.event_bus.emit(Events.SYSTEM_STARTED)

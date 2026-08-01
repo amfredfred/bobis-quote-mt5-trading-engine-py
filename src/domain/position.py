@@ -38,6 +38,23 @@ class Position:
 
 
 @dataclass(frozen=True)
+class PendingOrder:
+    """A resting (not yet filled) pending order as reported by MT5."""
+
+    ticket: int
+    symbol: str
+    side: PositionSide
+    lots: float
+    price: float          # requested resting price
+    stop_loss: float
+    take_profit: float
+    setup_time: int        # Unix ms — when the order was placed
+    expiration: int        # Unix ms — when MT5 will auto-cancel it
+    comment: str
+    magic: int
+
+
+@dataclass(frozen=True)
 class AccountInfo:
     login: int
     server: str

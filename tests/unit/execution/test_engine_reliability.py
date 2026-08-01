@@ -29,6 +29,8 @@ def test_duplicate_signal_is_rejected_before_risk_or_order_execution() -> None:
         risk_engine=risk,
         trade_planner=_Planner(),
         order_manager=orders,
+        mt5_orders=_Mt5Orders(),
+        pending_order_manager=_PendingOrderManager(),
         mt5_positions=_Positions(),
         position_store=_Store(existing_signal_id="sig-1"),
         trade_repo=_Repo(),
@@ -61,6 +63,8 @@ def test_stale_signal_is_rejected_before_broker_or_order_execution() -> None:
         risk_engine=risk,
         trade_planner=_Planner(),
         order_manager=orders,
+        mt5_orders=_Mt5Orders(),
+        pending_order_manager=_PendingOrderManager(),
         mt5_positions=positions,
         position_store=_Store(),
         trade_repo=_Repo(),
@@ -94,6 +98,8 @@ def test_fresh_signal_executes_with_timing_fields() -> None:
         risk_engine=risk,
         trade_planner=_Planner(),
         order_manager=orders,
+        mt5_orders=_Mt5Orders(),
+        pending_order_manager=_PendingOrderManager(),
         mt5_positions=_Positions(),
         position_store=store,
         trade_repo=_Repo(),
@@ -126,6 +132,8 @@ def test_price_drift_does_not_bypass_live_rr_risk_evaluation() -> None:
         risk_engine=risk,
         trade_planner=_Planner(),
         order_manager=orders,
+        mt5_orders=_Mt5Orders(),
+        pending_order_manager=_PendingOrderManager(),
         mt5_positions=_Positions(ask=1.0800, bid=1.0798),
         position_store=_Store(),
         trade_repo=_Repo(),
@@ -165,6 +173,22 @@ class _Orders:
     def execute_market_order(self, *args, **kwargs):
         self.calls += 1
         return 1, 1.0, 0.01
+
+
+class _Mt5Orders:
+    """Fake Mt5Orders — only modify_position is used, by the SL cascade,
+    and none of these tests have a pre-existing open trade to cascade to."""
+
+    def modify_position(self, *args, **kwargs):
+        raise AssertionError("modify_position should not be called — no stacked trade in these tests")
+
+
+class _PendingOrderManager:
+    """Fake PendingOrderManager — every signal here defaults to entry_type
+    'market', so track() should never be reached."""
+
+    def track(self, *args, **kwargs):
+        raise AssertionError("track() should not be called — these tests use market entry_type")
 
 
 class _Planner:

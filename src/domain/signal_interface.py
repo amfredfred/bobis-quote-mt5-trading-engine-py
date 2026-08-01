@@ -231,6 +231,14 @@ class InboundSignal:
     # naming, this is about which broker account the signal originated
     # from). Empty when talking directly to a pre-hub single terminal.
     broker: str = ""
+    # Which strategy owns this decision, not us — a strategy that wants a
+    # resting limit order sets these two itself in Signal Engine's build();
+    # we only ever branch on entry_type, never infer it from `strategy` by
+    # name (that would need updating here every time a strategy's entry
+    # model changed). Default "market" keeps every existing signal (crt,
+    # bos_pullback) executing exactly as before this field existed.
+    entry_type: str = "market"                    # "market" | "limit"
+    limit_expiry_seconds: Optional[int] = None     # only meaningful for "limit"
     setup_candle_open_at: Optional[int] = None
     setup_candle_close_at: Optional[int] = None
     detected_at: Optional[int] = None
@@ -294,6 +302,8 @@ class InboundSignal:
             realized_rr=d.get("realizedRR"),
             close_price=d.get("closePrice"),
             broker=str(d.get("broker") or ""),
+            entry_type=str(d.get("entryType") or d.get("entry_type") or "market"),
+            limit_expiry_seconds=_optional_int(d, "limitExpirySeconds", "limit_expiry_seconds"),
             setup_candle_open_at=setup_candle_open_at,
             setup_candle_close_at=setup_candle_close_at,
             detected_at=detected_at,

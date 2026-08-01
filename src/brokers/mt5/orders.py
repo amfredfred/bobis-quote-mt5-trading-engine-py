@@ -12,12 +12,14 @@ from src.brokers.mt5.client import Mt5Client, _MT5_LOCK
 from src.brokers.mt5.types import (
     Mt5TradeAction,
     Mt5OrderType,
+    Mt5OrderTypeTime,
     MT5_RETCODE_DONE,
     MT5_RETCODE_PLACED,
     OrderResult,
     ModifyResult,
 )
 from src.infra.metrics import metrics
+from src.utils.time import now_sec
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,110 @@ class Mt5Orders:
             retcode=result.retcode,
             comment=result.comment,
         )
+
+    # ── Limit order ───────────────────────────────────────────────────────
+
+    def open_limit_order(
+        self,
+        symbol: str,
+        order_type: int,
+        volume: float,
+        price: float,
+        sl: float,
+        tp: float,
+        magic: int,
+        comment: str,
+        expiry_seconds: int,
+    ) -> OrderResult:
+        """Place a resting BUY_LIMIT/SELL_LIMIT order at exactly `price` — no
+        slippage/deviation concept here (unlike open_market_order), since a
+        limit order either fills at that price or doesn't fill at all."""
+        self._client.ensure_connected()
+
+        request = {
+            "action": Mt5TradeAction.PENDING,
+            "symbol": symbol,
+            "volume": volume,
+            "type": order_type,
+            "price": price,
+            "sl": sl,
+            "tp": tp,
+            "magic": magic,
+            "comment": comment,
+            "type_time": Mt5OrderTypeTime.SPECIFIED,
+            "expiration": now_sec() + expiry_seconds,
+        }
+
+        logger.info(
+            "Sending limit order",
+            extra={
+                "symbol": symbol,
+                "type": "BUY_LIMIT" if order_type == Mt5OrderType.BUY_LIMIT else "SELL_LIMIT",
+                "volume": volume,
+                "price": price,
+                "sl": sl,
+                "tp": tp,
+                "expiry_seconds": expiry_seconds,
+            },
+        )
+
+        with _MT5_LOCK:
+            result = self._mt5.order_send(request)
+            if result is None:
+                error = self._mt5.last_error()
+
+        if result is None:
+            raise RuntimeError(f"order_send returned None — MT5 error: {error}")
+
+        if result.retcode not in (MT5_RETCODE_DONE, MT5_RETCODE_PLACED):
+            raise RuntimeError(
+                f"order_send failed: retcode={result.retcode} comment={result.comment}"
+            )
+
+        logger.info(
+            "Limit order placed",
+            extra={"ticket": result.order, "price": price, "volume": result.volume},
+        )
+        metrics.increment("mt5.orders.limit_placed")
+
+        # executed_price here is the RESTING price, not a real fill — a
+        # pending order hasn't filled yet at placement time. The actual
+        # fill price only exists once PendingOrderManager sees this ticket
+        # graduate into positions_get() and reads the position's own price.
+        return OrderResult(
+            ticket=result.order,
+            executed_price=price,
+            volume=result.volume,
+            retcode=result.retcode,
+            comment=result.comment,
+        )
+
+    # ── Cancel pending order ─────────────────────────────────────────────────
+
+    def cancel_pending_order(self, ticket: int) -> ModifyResult:
+        self._client.ensure_connected()
+
+        request = {
+            "action": Mt5TradeAction.REMOVE,
+            "order": ticket,
+        }
+
+        with _MT5_LOCK:
+            result = self._mt5.order_send(request)
+            if result is None:
+                error = self._mt5.last_error()
+
+        if result is None:
+            raise RuntimeError(f"cancel_pending_order returned None: {error}")
+
+        if result.retcode != MT5_RETCODE_DONE:
+            raise RuntimeError(
+                f"cancel_pending_order failed: retcode={result.retcode} comment={result.comment}"
+            )
+
+        logger.info("Pending order cancelled", extra={"ticket": ticket})
+        metrics.increment("mt5.orders.limit_cancelled")
+        return ModifyResult(retcode=result.retcode, comment=result.comment)
 
     # ── Modify SL/TP ─────────────────────────────────────────────────────
 

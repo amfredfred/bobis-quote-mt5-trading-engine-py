@@ -18,7 +18,7 @@ import time
 
 from src.brokers.mt5.orders import Mt5Orders
 from src.brokers.mt5.positions import Mt5Positions
-from src.brokers.mt5.types import Mt5OrderType
+from src.brokers.mt5.types import Mt5OrderType, MT5_RETCODE_INVALID_PRICE
 from src.config.settings import ExecutionConfig
 from src.infra.metrics import metrics
 from src.domain.position import SymbolInfo
@@ -285,6 +285,127 @@ class OrderManager:
             return result.ticket, result.executed_price, filled_volume
 
         raise last_error or RuntimeError("Order failed after all retries")
+
+    # ── Limit order ────────────────────────────────────────────────────────
+
+    def execute_limit_order(
+        self,
+        plan: TradePlan,
+        symbol_info: SymbolInfo,
+        expiry_seconds: int,
+        tp_override: float | None = None,
+        comment: str | None = "_limit_order",
+    ) -> tuple[int, float]:
+        """
+        Place a resting limit order for *plan* at exactly plan.entry_price —
+        no live-tick fetch, no slippage/deviation concept (unlike
+        execute_market_order): a limit order either fills at that price or
+        it doesn't fill at all, there's no "worse fill" to validate against.
+
+        Returns (ticket, resting_price) — NOT a fill; the caller hands this
+        ticket to PendingOrderManager, which is what actually detects and
+        records the real fill once/if this order triggers.
+
+        If price has already moved through the requested level by placement
+        time, MT5 rejects with INVALID_PRICE (10015) — not in
+        _RETRYABLE_RETCODES, so this raises immediately rather than
+        retrying with a stale price. Deliberately not caught/handled
+        specially here.
+        """
+        order_type = (
+            Mt5OrderType.BUY_LIMIT if plan.side == OrderSide.BUY else Mt5OrderType.SELL_LIMIT
+        )
+        last_error: Exception | None = None
+        max_attempts = 1 + self._cfg.order_retry_count
+
+        price = plan.entry_price
+        sl = plan.stop_loss
+        tp = tp_override if tp_override is not None else plan.tp2
+        volume = plan.lot_size
+        _margin_halved = False
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = self._orders.open_limit_order(
+                    symbol=plan.symbol,
+                    order_type=order_type,
+                    volume=volume,
+                    price=price,
+                    sl=sl,
+                    tp=tp,
+                    magic=self._cfg.magic,
+                    comment=comment,
+                    expiry_seconds=expiry_seconds,
+                )
+
+            except RuntimeError as exc:
+                retcode = _extract_retcode(exc)
+
+                if retcode == _RETCODE_NO_MONEY:
+                    if _margin_halved:
+                        logger.warning(
+                            "Insufficient margin — halved lot size still rejected, dropping limit order",
+                            extra={"symbol": plan.symbol, "volume": volume, "retcode": retcode},
+                        )
+                        raise
+
+                    halved = normalise_lots(
+                        volume / 2,
+                        symbol_info.lot_step,
+                        symbol_info.lot_min,
+                        symbol_info.lot_max,
+                    )
+                    if halved < symbol_info.lot_min:
+                        logger.warning(
+                            "Insufficient margin — halved lot size below broker minimum, dropping limit order",
+                            extra={
+                                "symbol": plan.symbol,
+                                "original_lots": plan.lot_size,
+                                "halved_lots": halved,
+                                "min_lot": symbol_info.lot_min,
+                            },
+                        )
+                        raise
+
+                    metrics.increment("orders.margin_reduced")
+                    volume = halved
+                    _margin_halved = True
+                    last_error = exc
+                    continue
+
+                if retcode not in _RETRYABLE_RETCODES or attempt >= max_attempts:
+                    if retcode == MT5_RETCODE_INVALID_PRICE:
+                        logger.warning(
+                            "Limit price already passed by market — order rejected, not retrying",
+                            extra={"symbol": plan.symbol, "price": price, "retcode": retcode},
+                        )
+                        metrics.increment("orders.limit_price_missed")
+                    raise
+
+                if retcode == 10016:
+                    stop_level_price = symbol_info.stops_level * symbol_info.point
+                    sl, tp = _widen_stops(
+                        side=plan.side, entry=price, sl=sl, tp=tp, min_dist=stop_level_price,
+                    )
+                    logger.warning(
+                        "INVALID_STOPS — widening to broker stop level and retrying",
+                        extra={"attempt": attempt, "symbol": plan.symbol, "new_sl": sl, "new_tp": tp},
+                    )
+                else:
+                    logger.warning(
+                        "Limit order retryable error — retrying",
+                        extra={"attempt": attempt, "max": max_attempts, "retcode": retcode, "symbol": plan.symbol},
+                    )
+
+                metrics.increment("orders.retried")
+                time.sleep(self._cfg.order_retry_delay_sec)
+                last_error = exc
+                continue
+
+            metrics.increment("orders.limit_placed")
+            return result.ticket, result.executed_price
+
+        raise last_error or RuntimeError("Limit order failed after all retries")
 
     # ── Emergency close ───────────────────────────────────────────────────────
 

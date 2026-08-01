@@ -24,6 +24,7 @@ import logging
 import threading
 import uuid
 
+from src.brokers.mt5.orders import Mt5Orders
 from src.brokers.mt5.positions import Mt5Positions
 from src.config.settings import ExecutionConfig, interval_to_minutes
 from src.core.event_bus import EventBus
@@ -34,13 +35,16 @@ from src.infra.metrics import metrics
 from src.positions.store import PositionStore
 from src.risk.engine import RiskEngine
 from src.infra.database import TradeRepository
-from src.domain.signal_interface import InboundSignal
+from src.domain.signal_interface import InboundSignal, SignalDirection
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.risk.loss_tracker import LossTracker
     from src.risk.cluster_tracker import ClusterRiskTracker
 from src.domain.trade import Trade, TradeStatus
+from src.positions.pending_manager import PendingOrderManager
+from src.positions.pending_store import PendingOrderRecord
+from src.positions.sl_cascade import cascade_sl_to_stacked_position
 from src.utils.comment import build_trade_comment
 from src.utils.time import now_ms
 
@@ -54,6 +58,8 @@ class ExecutionEngine:
         trade_planner: TradePlanner,
         order_manager: OrderManager,
         mt5_positions: Mt5Positions,
+        mt5_orders: Mt5Orders,
+        pending_order_manager: PendingOrderManager,
         position_store: PositionStore,
         trade_repo: TradeRepository,
         event_bus: EventBus,
@@ -65,6 +71,8 @@ class ExecutionEngine:
         self._planner = trade_planner
         self._orders = order_manager
         self._mt5_positions = mt5_positions
+        self._mt5_orders = mt5_orders
+        self._pending_orders = pending_order_manager
         self._store = position_store
         self._repo = trade_repo
         self._bus = event_bus
@@ -223,6 +231,34 @@ class ExecutionEngine:
                 return None
 
             open_trades = self._store.get_open_trades()
+
+            # Stacking only makes sense once the earlier trade has already
+            # moved favorably — that's what lets its SL cascade up to the
+            # new trade's tighter level. If price is still at/near entry or
+            # has moved against it, a second same-direction position isn't
+            # a fresh, reconfirmed opportunity, it's compounding exposure
+            # on a read that hasn't paid off yet. Reject outright — not
+            # just "don't cascade," don't open the new trade at all.
+            blocking_trade = _unprofitable_stacked_trade(open_trades, signal, symbol_info)
+            if blocking_trade is not None:
+                logger.warning(
+                    "Signal rejected — existing same-direction position not yet profitable",
+                    extra={
+                        "signal_id": signal.id,
+                        "symbol": signal.resolved_symbol,
+                        "direction": signal.direction.value,
+                        "existing_trade_id": blocking_trade.id,
+                        "existing_entry_price": blocking_trade.entry_price,
+                    },
+                )
+                metrics.increment("signal.stacking_rejected_unprofitable")
+                _emit_reject_latency_gauges(signal, pipeline_start_ms)
+                self._bus.emit(
+                    Events.RISK_REJECTED,
+                    {"signal": signal, "reason": "existing_position_not_profitable"},
+                )
+                return None
+
             effective_open = len(open_trades) + self._pending_total()
             effective_symbol = len(
                 [t for t in open_trades if t.symbol == signal.resolved_symbol]
@@ -279,10 +315,75 @@ class ExecutionEngine:
         broker_send_ms = now_ms()  # [5] broker round-trip start
         signal = replace(signal, order_sent_at=broker_send_ms)
 
-        try:
-            comment = build_trade_comment(
-                signal.rejection_candle.pattern, signal.htf_interval, signal.ltf_interval
+        comment = build_trade_comment(
+            signal.rejection_candle.pattern, signal.htf_interval, signal.ltf_interval
+        )
+
+        # ── 4a. Limit entry — a strategy (e.g. pure_crt) that wants a
+        # resting order sets entry_type itself; we only ever branch on this
+        # field, never infer it from `strategy` by name. Doesn't produce a
+        # Trade/TRADE_OPENED here — that only happens once
+        # PendingOrderManager sees this ticket actually fill.
+        if signal.entry_type == "limit":
+            expiry_seconds = (
+                signal.limit_expiry_seconds
+                if signal.limit_expiry_seconds is not None
+                else self._cfg.limit_order_expiry_seconds
             )
+            try:
+                ticket, resting_price = self._orders.execute_limit_order(
+                    plan, symbol_info, expiry_seconds=expiry_seconds,
+                    tp_override=plan.tp2, comment=comment,
+                )
+            except Exception as exc:
+                with self._pending_lock:
+                    self._release(signal.resolved_symbol, signal.id)
+                if self._cluster_tracker is not None:
+                    self._cluster_tracker.release_signal(signal)
+                # Deliberate per explicit decision: if price already moved
+                # past the requested level (MT5 INVALID_PRICE) or any other
+                # placement failure, skip the trade — do NOT fall back to a
+                # market fill. Chasing at a worse, arbitrary price defeats
+                # the reason this strategy asked for a limit entry at all.
+                logger.warning(
+                    "Limit order placement failed — signal skipped, no market fallback",
+                    extra={
+                        "signal_id": signal.id,
+                        "symbol": signal.resolved_symbol,
+                        "entry_price": signal.entry_price,
+                        "error": str(exc),
+                    },
+                )
+                metrics.increment("orders.limit_placement_failed")
+                self._bus.emit(
+                    Events.TRADE_ERROR,
+                    {"signal": signal, "reason": "limit_order_placement_failed"},
+                )
+                return None
+
+            ts = now_ms()
+            self._pending_orders.track(
+                PendingOrderRecord(
+                    ticket=ticket, plan=plan, placed_at=ts,
+                    expiry_at=ts + expiry_seconds * 1000,
+                )
+            )
+            with self._pending_lock:
+                self._release(signal.resolved_symbol, signal.id)
+            logger.info(
+                "Limit order placed — awaiting fill",
+                extra={
+                    "signal_id": signal.id,
+                    "ticket": ticket,
+                    "price": resting_price,
+                    "expiry_seconds": expiry_seconds,
+                },
+            )
+            metrics.increment("orders.limit_placed_total")
+            return None
+
+        # ── 4b. Market entry — unchanged from before entry_type existed ────
+        try:
             ticket, executed_price, filled_volume = self._orders.execute_market_order(
                 plan, symbol_info, tp_override=plan.tp2, comment=comment
             )
@@ -457,6 +558,11 @@ class ExecutionEngine:
             )
             return None
 
+        # Stacking SL cascade — if an earlier trade on this same
+        # symbol+direction is still open, this new fill's (necessarily
+        # tighter, since it formed later in the same move) SL protects it.
+        cascade_sl_to_stacked_position(self._store, self._mt5_orders, trade)
+
         persisted = self._repo.save(trade)
         if not persisted:
             logger.error(
@@ -533,6 +639,35 @@ class ExecutionEngine:
             },
         )
         return trade
+
+
+def _unprofitable_stacked_trade(
+    open_trades: list[Trade], signal: InboundSignal, symbol_info,
+) -> Trade | None:
+    """Return the first open trade on the same symbol+direction as `signal`
+    whose live price hasn't moved favorably past its own entry yet — None
+    if there's no such trade (either no existing position on this
+    symbol+direction, or it's already genuinely profitable). Bid/ask choice
+    mirrors close_position's own convention elsewhere in this codebase:
+    a BUY closes at bid, a SELL closes at ask."""
+    from src.domain.trade import OrderSide
+
+    new_side = OrderSide.BUY if signal.direction == SignalDirection.LONG else OrderSide.SELL
+    current_price = symbol_info.bid if new_side == OrderSide.BUY else symbol_info.ask
+
+    for trade in open_trades:
+        if trade.symbol != signal.resolved_symbol or trade.side != new_side:
+            continue
+        if trade.entry_price is None:
+            continue
+        is_profitable = (
+            current_price > trade.entry_price
+            if new_side == OrderSide.BUY
+            else current_price < trade.entry_price
+        )
+        if not is_profitable:
+            return trade
+    return None
 
 
 def _actionable_signal_at(signal: InboundSignal) -> int | None:
