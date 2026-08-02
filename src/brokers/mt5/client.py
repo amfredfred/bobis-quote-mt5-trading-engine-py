@@ -35,6 +35,16 @@ class Mt5Client:
         self._config = config
         self._connected = False
         self.broker_utc_offset_hours: int = 0  # derived once on connect()
+        # Last connect()/reconnect failure, surfaced verbatim (not just a
+        # connected: false boolean) via UIBridge's snapshot so a wrong
+        # password looks different on the dashboard than a broker server
+        # being briefly unreachable. Cleared on the next successful
+        # connect(); never overwritten by the generic "reconnect failed
+        # after all attempts" exception in ensure_connected() - that one's
+        # less specific than whatever the last real attempt inside the
+        # loop already set here.
+        self.last_error: str | None = None
+        self.last_error_at: float | None = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -55,7 +65,9 @@ class Mt5Client:
                 path=self._config.path,
             ):
                 error = mt5.last_error()
-                raise ConnectionError(f"MT5 initialize() failed: {error}")
+                self.last_error = f"MT5 initialize() failed: {error}"
+                self.last_error_at = time.time()
+                raise ConnectionError(self.last_error)
 
             if self._config.login:
                 authorised = mt5.login(
@@ -67,7 +79,9 @@ class Mt5Client:
                 if not authorised:
                     error = mt5.last_error()
                     mt5.shutdown()
-                    raise ConnectionError(f"MT5 login() failed: {error}")
+                    self.last_error = f"MT5 login() failed: {error}"
+                    self.last_error_at = time.time()
+                    raise ConnectionError(self.last_error)
 
         info = mt5.terminal_info()
         logger.info(
@@ -80,6 +94,8 @@ class Mt5Client:
             },
         )
         self._connected = True
+        self.last_error = None
+        self.last_error_at = None
         self.broker_utc_offset_hours = self._derive_broker_utc_offset()
 
     def resolve_symbol(self, base_symbol: str) -> str | None:
