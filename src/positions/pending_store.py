@@ -7,13 +7,11 @@ other has), not the same thing in two states. MT5 is the source of truth
 for whether a ticket is still resting, same convention PositionStore uses
 for open positions.
 
-Known gap: no startup hydration from broker yet, unlike PositionStore's
-hydrate_from_broker(). If the engine restarts while orders are resting,
-they're orphaned from this store's point of view (MT5 still holds/expires
-them correctly server-side, but PendingOrderManager won't know to hand off
-a fill to PositionStore for one it never re-discovered). Acceptable for now
-since pure_crt (the only limit-order strategy) isn't live yet; needs
-addressing before this goes live.
+Startup hydration from broker is handled by PendingOrderManager's own
+hydrate_from_broker() (stub-based recovery, mirroring PositionManager's
+pattern) — see that method's docstring for exactly what it does and
+doesn't recover. pure_crt (the only limit-order strategy) has been live
+for FBS since 2026-08-01.
 """
 
 from __future__ import annotations

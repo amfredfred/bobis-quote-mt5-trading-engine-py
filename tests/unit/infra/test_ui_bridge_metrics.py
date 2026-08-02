@@ -156,6 +156,9 @@ def _bridge(trades: list | None = None) -> UIBridge:
             balance_tier_cap_amount=lambda *a: 25.0,
             balance_tier_cap=lambda *a: (5.0, 25.0),
         ),
+        # Same periodic-refresh rationale as trades above — pendingOrders
+        # (resting limit orders) is built here too, not just at connect.
+        pending_order_store=SimpleNamespace(get_all=lambda: []),
     )
     bridge._clients = set()
     return bridge

@@ -99,6 +99,29 @@ def _serialize_trade(trade: Any, live_position: Any = None) -> dict:
         "ticket":        trade.entry_ticket,
     }
 
+def _serialize_pending_order(record: Any) -> dict:
+    # A resting limit order, not yet a Trade — no fill price/pnl exist yet,
+    # only the plan we placed. Mirrors _serialize_trade's shape/naming so
+    # the dashboard can reuse the same row rendering with a handful of
+    # different columns (limit price instead of current price, expiry
+    # instead of duration).
+    plan = record.plan
+    return {
+        "signal_id":     plan.signal_id,
+        "symbol":        plan.symbol,
+        "side":          plan.side.value if hasattr(plan.side, "value") else str(plan.side),
+        "entry_price":   plan.entry_price,  # the resting limit price
+        "sl":            plan.stop_loss,
+        "tp1":           plan.tp1,
+        "tp2":           plan.tp2,
+        "lots":          plan.lot_size,
+        "risk_amount":   plan.risk_amount,
+        "risk_reward_ratio": plan.risk_reward_ratio,
+        "ticket":        record.ticket,
+        "placed_at":     record.placed_at,
+        "expiry_at":     record.expiry_at,
+    }
+
 def _extract_signal(payload: Any) -> dict | None:
     signal = None
     reason: str | None = None
@@ -544,12 +567,23 @@ class UIBridge:
 
         return {
             "connected":   connected_mt5,
+            # Distinct from `connected` on purpose: a bad password retries
+            # forever (bootstrap.py's _connect_mt5_with_retry) without ever
+            # crashing the process, so `connected: false` alone is
+            # indistinguishable from "broker server is briefly slow to
+            # respond." Surfacing the actual last error message (verbatim
+            # from Mt5Client, e.g. "MT5 login() failed: (-6, 'Authorization
+            # failed')") lets the dashboard show WHY, not just that.
+            # Both null once a connection succeeds.
+            "last_connection_error":    c.mt5_client.last_error,
+            "last_connection_error_at": c.mt5_client.last_error_at,
             "autotrading_enabled": self._autotrading_enabled(),
             "signal_engine_connected": c.signal_consumer.is_connected,
             "engine":      self._build_engine_info(lt),
             "system":      self._build_system_info(snap.get("gauges", {})),
             "config":      self._build_config_snapshot(config),
             "trades":      metrics_payload["trades"],
+            "pendingOrders": metrics_payload["pendingOrders"],
             "riskGuards":  metrics_payload["riskGuards"],
             "pressure":    metrics_payload["pressure"],
             "clusterRisk": c.cluster_tracker.stats(),
@@ -952,6 +986,9 @@ class UIBridge:
             "riskGuards": self._build_risk_guards(lt, config),
             "pressure":   self._build_pressure(config),
             "trades":     self._serialize_open_trades(open_trades, config),
+            "pendingOrders": [
+                _serialize_pending_order(r) for r in self._container.pending_order_store.get_all()
+            ],
         }
         if account:
             result.update(

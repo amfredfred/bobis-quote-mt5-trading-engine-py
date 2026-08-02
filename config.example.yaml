@@ -4,6 +4,9 @@
     - XAUUSD
     - US100
     - US30
+    - EURUSD
+    - GBPUSD
+    - USDJPY
 mt5:
   # Selects a named profile from mt5-credentials.yaml (git-ignored - copy
   # from mt5-credentials.example.yaml). Omit `use` entirely to fall back to
@@ -29,23 +32,27 @@ risk:
   max_lot_size: 100.0
   min_lot_size: 0.01
   sl_ratio_threshold: 0.35
+  # Recalibrated 2026-08-02 against pure_crt's own real 2022-2023 FBS
+  # reconfirm data (4h/6min, the actual live combo) — the previous 0.55
+  # for XAUUSD/US100/US30 was CRT-era (30min/1h combo, a retired
+  # strategy) and was never re-measured for pure_crt. All six symbols
+  # pure_crt actually trades show a strikingly consistent real spread/SL
+  # profile under this combo: median ~16-22%, p90 ~30-33%, p95 ~32-35%
+  # (n=1263-1714 trades each) - materially tighter than 0.55 ever
+  # reflected, and homogeneous enough across symbols that one shared
+  # value is the honest calibration, not six different guesses. 0.40 sits
+  # just above every symbol's own p95, rejecting only 0.45-2.32% of real
+  # historical trades per symbol (the true tail: outlier-spread
+  # conditions, not normal trading) - same "trim the worst ~5%, don't
+  # touch the median" principle the old values were meant to follow, just
+  # actually measured against the strategy that's live now.
   symbol_sl_ratio_threshold:
-    # commodity — wider spread tolerance
-    XAUUSD: 0.55
-    # US100: measured against backtest data, not guessed. Median validated
-    # trade sits at ~26% spread/SL, p25 at ~47% - a tighter threshold (e.g.
-    # the generic "index" template value of 0.20) would reject the median
-    # trade outright. Real spread-to-candle-range for US100 is at least as
-    # good as XAUUSD's, not worse, so it gets the same threshold.
-    US100: 0.55
-    # US30: measured against its own 2-year backtest (30min/1h trades only,
-    # matching its live TF-pair config). Median spread/SL ratio ~11.8%,
-    # p90 ~34.2%, p95 ~52.4%, max ~72.3% - materially tighter than US100's
-    # own distribution. Kept at the same 0.55 as XAUUSD/US100 for a
-    # consistent, easy-to-reason-about policy; it only trims the worst
-    # ~5% tail of US30's own validated trades, same margin of protection
-    # the other two symbols get from this threshold.
-    US30: 0.55
+    XAUUSD: 0.40
+    US100: 0.40
+    US30: 0.40
+    EURUSD: 0.40
+    GBPUSD: 0.40
+    USDJPY: 0.40
   # Per-symbol risk_amount multiplier (optional, defaults to 1.0 for any
   # symbol not listed) - composes with the cluster/equity-throttle
   # multipliers, applied in TradePlanner.plan(). Example only; not yet

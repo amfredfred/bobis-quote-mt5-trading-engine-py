@@ -49,6 +49,7 @@ class AppContainer:
     execution_engine: ExecutionEngine
     position_manager: PositionManager
     pending_order_manager: PendingOrderManager
+    pending_order_store: PendingOrderStore
     mt5_client: Mt5Client
     mt5_orders: Mt5Orders
     mt5_positions: Mt5Positions
@@ -167,6 +168,7 @@ def build_container(config: AppConfig) -> AppContainer:
         execution_engine=execution_engine,
         position_manager=position_manager,
         pending_order_manager=pending_order_manager,
+        pending_order_store=pending_order_store,
         mt5_client=mt5_client,
         mt5_orders=mt5_orders,
         mt5_positions=mt5_positions,
