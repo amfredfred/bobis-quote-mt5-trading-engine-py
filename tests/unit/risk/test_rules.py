@@ -54,6 +54,47 @@ def test_spread_quality_keeps_global_threshold_for_unknown_symbols() -> None:
     assert "0.38 > 0.25" in result.reason
 
 
+def test_spread_quality_market_order_uses_live_price_for_sl_distance() -> None:
+    """Live price has drifted very close to the stop (SL distance shrinks
+    to almost nothing), inflating the spread/SL ratio past threshold -
+    correct for a market order, which really would fill near there."""
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.SHORT,
+        ask=101.0,
+        bid=100.9,
+        entry_price=100.0,
+        stop_loss=101.0,
+        symbol_thresholds={},
+        entry_type="market",
+    )
+
+    result = spread_quality_rule(ctx)
+
+    assert result.approved is False
+
+
+def test_spread_quality_limit_order_uses_entry_price_for_sl_distance() -> None:
+    """Same live prices as the market-order case above, but this is a
+    LIMIT order resting at entry_price=100.0 - its real SL distance is
+    abs(100.0-101.0)=1.0, not the live-price-shrunk 0.1, so the ratio must
+    be computed against entry_price and approve."""
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.SHORT,
+        ask=101.0,
+        bid=100.9,
+        entry_price=100.0,
+        stop_loss=101.0,
+        symbol_thresholds={},
+        entry_type="limit",
+    )
+
+    result = spread_quality_rule(ctx)
+
+    assert result.approved is True
+
+
 def test_min_rr_uses_better_long_pullback_fill() -> None:
     ctx = _context(
         symbol="XAUUSD",
@@ -111,6 +152,79 @@ def test_min_rr_rejects_short_chase_that_loses_reward() -> None:
 
     assert result.approved is False
     assert "Actual R:R 0.13 < minimum 1.0" in result.reason
+
+
+def test_min_rr_limit_order_ignores_live_price_drift_past_stop() -> None:
+    """Same numbers as test_min_rr_rejects_long_fill_past_stop (live price
+    has drifted past the stop) - but this is a LIMIT order, which rests at
+    entry_price and never fills at live market price at all. Must approve:
+    checking R:R against a hypothetical "buy right now at market" price is
+    the exact bug that blocked real pure_crt signals live."""
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.LONG,
+        ask=98.5,
+        bid=98.4,
+        entry_price=100.0,
+        stop_loss=99.0,
+        tp2=105.0,
+        risk_reward_ratio=5.0,
+        min_rr_ratio=1.0,
+        symbol_thresholds={},
+        entry_type="limit",
+    )
+
+    result = min_rr_rule(ctx)
+
+    assert result.approved is True
+
+
+def test_min_rr_market_order_unaffected_still_rejects_fill_past_stop() -> None:
+    """Sanity check: the fix is entry_type-scoped - a genuine market order
+    with live price past the stop must still reject, exactly as before."""
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.LONG,
+        ask=98.5,
+        bid=98.4,
+        entry_price=100.0,
+        stop_loss=99.0,
+        tp2=105.0,
+        risk_reward_ratio=5.0,
+        min_rr_ratio=1.0,
+        symbol_thresholds={},
+        entry_type="market",
+    )
+
+    result = min_rr_rule(ctx)
+
+    assert result.approved is False
+
+
+def test_entry_drift_limit_order_never_counts_live_price_drift() -> None:
+    """Same 400%-drift setup as test_entry_drift_enabled_rejects_beyond_
+    threshold, but entry_type="limit": a limit order fills at entry_price
+    (or not at all), so there's no live-price drift to measure until it
+    actually fills - must always report 0% drift and approve, even with
+    the drift check enabled."""
+    ctx = _context(
+        symbol="XAUUSD",
+        direction=SignalDirection.LONG,
+        ask=104.0,
+        bid=103.9,
+        entry_price=100.0,
+        stop_loss=99.0,
+        tp2=110.0,
+        risk_reward_ratio=3.0,
+        symbol_thresholds={},
+        entry_drift=EntryDriftConfig(enabled=True, max_drift_pct_of_risk=25.0),
+        entry_type="limit",
+    )
+
+    result = entry_drift_rule(ctx)
+
+    assert result.approved is True
+    assert result.data["entry_drift_pct_of_risk"] == 0.0
 
 
 def test_entry_drift_disabled_always_approves_but_records_diagnostic() -> None:
@@ -284,6 +398,7 @@ def _context(
     risk_reward_ratio: float = 2.0,
     min_rr_ratio: float = 1.0,
     entry_drift: EntryDriftConfig | None = None,
+    entry_type: str = "market",
 ) -> RuleContext:
     return RuleContext(
         signal=_signal(
@@ -293,6 +408,7 @@ def _context(
             stop_loss=stop_loss,
             tp2=tp2,
             risk_reward_ratio=risk_reward_ratio,
+            entry_type=entry_type,
         ),
         open_trades=[],
         config=_risk_config(
@@ -369,6 +485,7 @@ def _signal(
     stop_loss: float,
     tp2: float,
     risk_reward_ratio: float,
+    entry_type: str = "market",
 ) -> InboundSignal:
     is_short = direction == SignalDirection.SHORT
     return InboundSignal(
@@ -414,4 +531,5 @@ def _signal(
         ),
         created_at=1,
         triggered_at=1,
+        entry_type=entry_type,
     )

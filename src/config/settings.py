@@ -416,6 +416,12 @@ class ExecutionConfig:
     # when present. This only applies when a signal somehow arrives with
     # entry_type="limit" but no expiry of its own.
     limit_order_expiry_seconds: int = 1800
+    # On (default): when a resting limit order is rejected because price
+    # already moved past it (MT5 retcode=10015 INVALID_PRICE), retry once
+    # as the equivalent stop order (BUY_LIMIT->BUY_STOP, SELL_LIMIT->
+    # SELL_STOP) at the exact same price/SL/TP/expiry, instead of just
+    # skipping the signal. Off: original behavior, skip with no fallback.
+    use_limit_to_stop_fallback: bool = True
 
     def __post_init__(self) -> None:
         _validate_pct_range("execution.tp1_trigger_pct", self.tp1_trigger_pct)
@@ -832,6 +838,9 @@ class AppConfig:
                 # Optional block — new, no existing config.yaml has it yet.
                 limit_order_expiry_seconds=int(
                     (exe.get("limit_order") or {}).get("expiry_seconds", 1800)
+                ),
+                use_limit_to_stop_fallback=bool(
+                    exe.get("use_limit_to_stop_fallback", True)
                 ),
             ),
             storage_path=_apply_profile_template(

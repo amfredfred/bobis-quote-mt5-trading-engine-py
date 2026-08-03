@@ -139,10 +139,10 @@ class Mt5Orders:
         }
 
         logger.info(
-            "Sending limit order",
+            "Sending pending order",
             extra={
                 "symbol": symbol,
-                "type": "BUY_LIMIT" if order_type == Mt5OrderType.BUY_LIMIT else "SELL_LIMIT",
+                "type": Mt5OrderType(order_type).name,
                 "volume": volume,
                 "price": price,
                 "sl": sl,

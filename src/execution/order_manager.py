@@ -27,6 +27,14 @@ from src.utils.price import normalise_lots
 
 logger = logging.getLogger(__name__)
 
+# Used by the limit->stop fallback (use_limit_to_stop_fallback): once price
+# has moved past a limit level, that same level becomes a valid STOP price
+# on the other side of the market, so the order can still be placed there.
+_LIMIT_TO_STOP = {
+    Mt5OrderType.BUY_LIMIT: Mt5OrderType.BUY_STOP,
+    Mt5OrderType.SELL_LIMIT: Mt5OrderType.SELL_STOP,
+}
+
 # Retcodes that are transient and worth retrying with a fresh price
 _RETRYABLE_RETCODES = {
     10004,  # TRADE_RETCODE_REQUOTE
@@ -308,9 +316,14 @@ class OrderManager:
 
         If price has already moved through the requested level by placement
         time, MT5 rejects with INVALID_PRICE (10015) — not in
-        _RETRYABLE_RETCODES, so this raises immediately rather than
-        retrying with a stale price. Deliberately not caught/handled
-        specially here.
+        _RETRYABLE_RETCODES, so this doesn't retry the limit order itself
+        with a stale price. Instead, when `use_limit_to_stop_fallback` is
+        on (default), the exact level that's now invalid for a LIMIT order
+        is by definition valid for the equivalent STOP order (price has
+        moved to the other side of it), so this retries once as
+        BUY_STOP/SELL_STOP at the same price/SL/TP/expiry rather than
+        skipping the signal outright. Only fires on a genuine INVALID_PRICE
+        rejection, not on any other retryable/non-retryable error.
         """
         order_type = (
             Mt5OrderType.BUY_LIMIT if plan.side == OrderSide.BUY else Mt5OrderType.SELL_LIMIT
@@ -380,6 +393,45 @@ class OrderManager:
                             extra={"symbol": plan.symbol, "price": price, "retcode": retcode},
                         )
                         metrics.increment("orders.limit_price_missed")
+
+                        if self._cfg.use_limit_to_stop_fallback and order_type in _LIMIT_TO_STOP:
+                            stop_type = _LIMIT_TO_STOP[order_type]
+                            logger.info(
+                                "Limit invalidated by price movement — retrying as stop order "
+                                "at the same level",
+                                extra={
+                                    "symbol": plan.symbol,
+                                    "price": price,
+                                    "stop_type": (
+                                        "BUY_STOP" if stop_type == Mt5OrderType.BUY_STOP
+                                        else "SELL_STOP"
+                                    ),
+                                },
+                            )
+                            try:
+                                fallback_result = self._orders.open_limit_order(
+                                    symbol=plan.symbol,
+                                    order_type=stop_type,
+                                    volume=volume,
+                                    price=price,
+                                    sl=sl,
+                                    tp=tp,
+                                    magic=self._cfg.magic,
+                                    comment=comment,
+                                    expiry_seconds=expiry_seconds,
+                                )
+                                metrics.increment("orders.limit_to_stop_fallback_placed")
+                                return fallback_result.ticket, fallback_result.executed_price
+                            except RuntimeError as stop_exc:
+                                logger.warning(
+                                    "Stop-order fallback also failed — signal skipped",
+                                    extra={
+                                        "symbol": plan.symbol,
+                                        "price": price,
+                                        "error": str(stop_exc),
+                                    },
+                                )
+                                metrics.increment("orders.limit_to_stop_fallback_failed")
                     raise
 
                 if retcode == 10016:

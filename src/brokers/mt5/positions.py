@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class Mt5Positions:
+    # get_deal_info_for_ticket's first-pass search window - generous over
+    # the ~0.6s position_poll_interval this is called on, cheap relative to
+    # the 7-day fallback it widens to on a miss.
+    _RECENT_DEAL_WINDOW = timedelta(minutes=10)
+
     def __init__(self, client: Mt5Client) -> None:
         self._client = client
 
@@ -406,4 +411,54 @@ class Mt5Positions:
             return None
         except Exception as exc:
             logger.warning("Mt5Positions.get_deal_price_for_ticket ticket=%s: %s", ticket, exc)
+            return None
+
+    def get_deal_info_for_ticket(self, ticket: int) -> Optional[tuple[float, Optional[str]]]:
+        """
+        Look up both the close price AND MT5's own recorded reason for the
+        deal that closed this ticket - ("price", "SL"/"TP"/None).
+
+        The reason is authoritative straight from the broker, unlike
+        inferring SL/TP from a cached price snapshot (position_manager's
+        old approach): that snapshot is only as fresh as the last poll
+        cycle, so a genuine SL/TP hit that occurs BETWEEN two polls can get
+        misclassified as MANUAL because the last observed price hadn't
+        crossed the level yet. None reason means the deal closed for some
+        other cause (client/mobile/web/expert-initiated, stop-out, etc.) -
+        callers should fall back to price-based inference in that case.
+        Returns None entirely if no matching OUT deal is found.
+
+        This is now called on EVERY position closure (position_manager used
+        to only reach for deal history when it had no cached price at all),
+        so the search window starts narrow: the position was open as of the
+        last poll at most `position_poll_interval` seconds ago, so a recent
+        deal history is virtually always the answer. Only widens to a full
+        7-day search (this method's old, only, window) on a miss - covering
+        the rare case where the engine restarted while the position was
+        already open and closed during the downtime, so there's no recent
+        history to find.
+        """
+        self._client.ensure_connected()
+        try:
+            to_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+            mt5 = self._client.mt5
+
+            for window in (self._RECENT_DEAL_WINDOW, timedelta(days=7)):
+                deals = self._history_deals_get(to_dt - window, to_dt)
+                for d in deals:
+                    if (
+                        getattr(d, "position_id", None) == ticket
+                        and d.entry == mt5.DEAL_ENTRY_OUT
+                    ):
+                        raw_reason = getattr(d, "reason", None)
+                        if raw_reason == mt5.DEAL_REASON_SL:
+                            reason = "SL"
+                        elif raw_reason == mt5.DEAL_REASON_TP:
+                            reason = "TP"
+                        else:
+                            reason = None
+                        return float(d.price), reason
+            return None
+        except Exception as exc:
+            logger.warning("Mt5Positions.get_deal_info_for_ticket ticket=%s: %s", ticket, exc)
             return None

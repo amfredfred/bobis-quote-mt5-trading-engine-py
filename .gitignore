@@ -2,7 +2,6 @@
 .env
 .env.local
 .env.*.local
-config.yaml
 hub-config.yaml
 mt5-credentials.yaml
 

@@ -486,9 +486,36 @@ class PositionManager:
             close_price = trade.entry_price or 0.0
         else:
             last_price = self._last_price.pop(trade.entry_ticket, None)
-            if last_price is None:
-                deal_price = self._mt5_pos.get_deal_price_for_ticket(trade.entry_ticket)
-                if deal_price is not None:
+
+            # MT5's own recorded reason for the deal that closed this ticket
+            # ("SL"/"TP"/None) - authoritative, unlike inferring SL/TP from
+            # a cached price snapshot: that snapshot is only as fresh as
+            # the last poll cycle, so a genuine SL/TP hit occurring BETWEEN
+            # two polls can get misclassified as MANUAL because the last
+            # observed price hadn't crossed the level yet (confirmed live:
+            # a real SL hit logged close_reason=MANUAL because the cached
+            # price sat just outside the SL threshold). Check this first,
+            # before falling back to price-based inference.
+            deal_price: Optional[float] = None
+            deal_reason: Optional[str] = None
+            deal_info = self._mt5_pos.get_deal_info_for_ticket(trade.entry_ticket)
+            if deal_info is not None:
+                deal_price, deal_reason = deal_info
+
+            # deal_price is always populated alongside a real SL/TP reason
+            # (get_deal_info_for_ticket only returns a reason when it found
+            # an actual MT5 deal, which always carries a real price) - the
+            # `deal_price is not None` check here is a defensive guard
+            # against ever trusting close_reason=SL_HIT/TP2_HIT without a
+            # real price to back it, rather than an expected path.
+            if deal_reason in ("SL", "TP") and deal_price is not None:
+                tp2_hit = deal_reason == "TP"
+                sl_hit = deal_reason == "SL"
+                close_reason = CloseReason.TP2_HIT if tp2_hit else CloseReason.SL_HIT
+                last_price = deal_price
+                price_unresolved = False
+            else:
+                if last_price is None and deal_price is not None:
                     last_price = deal_price
                     logger.info(
                         "PositionManager._handle_position_gone: resolved close price "
@@ -496,41 +523,41 @@ class PositionManager:
                         trade.entry_ticket,
                         deal_price,
                     )
-                else:
+                elif last_price is None:
                     logger.warning(
                         "PositionManager._handle_position_gone: no price or deal history "
                         "for ticket=%s — close reason UNKNOWN, verify manually",
                         trade.entry_ticket,
                     )
 
-            # True only when we genuinely have nothing to go on (no cached
-            # price, no MT5 deal history, or no tp2 to compare against) —
-            # distinct from a real manual close, where we DO have a price
-            # and it just sits between SL and TP2.
-            price_unresolved = last_price is None or not trade.tp2
+                # True only when we genuinely have nothing to go on (no
+                # cached price, no MT5 deal history, or no tp2 to compare
+                # against) — distinct from a real manual close, where we
+                # DO have a price and it just sits between SL and TP2.
+                price_unresolved = last_price is None or not trade.tp2
 
-            is_buy = trade.side.value == "BUY"
-            if not price_unresolved:
-                tp2_hit = (
-                    (last_price >= trade.tp2) if is_buy else (last_price <= trade.tp2)
-                )
-                sl_hit = (
-                    (last_price <= trade.stop_loss)
-                    if is_buy
-                    else (last_price >= trade.stop_loss)
-                )
-            else:
-                tp2_hit = False
-                sl_hit = False
+                is_buy = trade.side.value == "BUY"
+                if not price_unresolved:
+                    tp2_hit = (
+                        (last_price >= trade.tp2) if is_buy else (last_price <= trade.tp2)
+                    )
+                    sl_hit = (
+                        (last_price <= trade.stop_loss)
+                        if is_buy
+                        else (last_price >= trade.stop_loss)
+                    )
+                else:
+                    tp2_hit = False
+                    sl_hit = False
 
-            if tp2_hit:
-                close_reason = CloseReason.TP2_HIT
-            elif sl_hit:
-                close_reason = CloseReason.SL_HIT
-            elif price_unresolved:
-                close_reason = CloseReason.UNKNOWN
-            else:
-                close_reason = CloseReason.MANUAL
+                if tp2_hit:
+                    close_reason = CloseReason.TP2_HIT
+                elif sl_hit:
+                    close_reason = CloseReason.SL_HIT
+                elif price_unresolved:
+                    close_reason = CloseReason.UNKNOWN
+                else:
+                    close_reason = CloseReason.MANUAL
 
             if last_price is None:
                 # Genuinely no price to close at - falling back to trade.tp2

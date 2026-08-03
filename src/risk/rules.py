@@ -275,8 +275,24 @@ def daily_loss_limit_rule(ctx: RuleContext) -> RuleResult:
 # would make individual rules untestable and the failure path ambiguous.
 
 
-def _resolve_fill_price(si: SymbolInfo, direction: SignalDirection) -> float:
-    """Return the expected market-order fill price for the given direction."""
+def _resolve_fill_price(
+    si: SymbolInfo, direction: SignalDirection, signal: InboundSignal
+) -> float:
+    """Return the price this signal will actually fill at.
+
+    Market orders fill at current live bid/ask - that's genuinely the
+    trade being opened. Limit orders (e.g. pure_crt) rest until price
+    returns to the signal's own entry_price; that IS the only price they
+    can ever fill at; not live bid/ask, which may have drifted away from
+    the entry level entirely (the whole point of a resting limit order is
+    waiting for exactly that kind of retracement, not a sign of decay).
+    Using live price here for a limit signal was a real bug: it rejected
+    resting-limit signals as bad R:R/high-drift based on a hypothetical
+    "buy right now at market" scenario that pure_crt never intends to
+    execute.
+    """
+    if signal.entry_type == "limit" and signal.entry_price is not None:
+        return signal.entry_price
     return si.ask if direction == SignalDirection.LONG else si.bid
 
 
@@ -342,7 +358,12 @@ def _actual_reward_risk(
 
 
 def entry_drift_rule(ctx: RuleContext) -> RuleResult:
-    """How far has the live fill price drifted *against* the signal's entry.
+    """How far has the live fill price drifted *against* the signal's entry
+    - for MARKET orders. LIMIT orders resolve "fill price" to their own
+    entry_price (see _resolve_fill_price), so drift is always exactly 0%
+    until the order actually fills there; there's nothing to measure
+    before that, and live-price movement away from a resting limit level
+    is the retracement it's waiting for, not drift.
 
     min_rr_rule (immediately after this rule) recomputes R:R from the live
     fill price while holding the signal's SL/TP fixed — a rejection there
@@ -380,7 +401,7 @@ def entry_drift_rule(ctx: RuleContext) -> RuleResult:
     if signal_risk == 0:
         return RuleResult(approved=True)
 
-    fill_price = _resolve_fill_price(si, ctx.signal.direction)
+    fill_price = _resolve_fill_price(si, ctx.signal.direction, ctx.signal)
     if ctx.signal.direction == SignalDirection.LONG:
         adverse_drift = fill_price - ctx.signal.entry_price  # filled higher = worse
     else:
@@ -409,11 +430,20 @@ def entry_drift_rule(ctx: RuleContext) -> RuleResult:
 
 
 def min_rr_rule(ctx: RuleContext) -> RuleResult:
-    """Check R:R from the actual fill price, not the stale signal entry_price.
+    """Check R:R from the actual fill price, not the stale signal entry_price
+    - for MARKET orders only. A market signal generated at entry_price may
+    arrive at execution with a materially different ask/bid, so computing
+    RRR from live fill price ensures the check reflects the trade actually
+    being opened.
 
-    A signal generated at entry_price may arrive at execution with a materially
-    different ask/bid. Computing RRR from fill price ensures the check reflects
-    the trade you are actually opening.
+    For LIMIT orders (see _resolve_fill_price), "fill price" resolves to
+    the signal's own entry_price instead - a resting limit order fills
+    there or not at all, never at whatever live price happens to be when
+    this rule runs. Using live price for a limit signal was a real bug: it
+    rejected resting-limit signals (e.g. pure_crt) as bad R:R whenever
+    price had simply moved away from the entry level since signal-engine
+    froze it - exactly the retracement a limit order is waiting for, not
+    a sign the setup decayed.
     """
     si = ctx.symbol_info
     invalid = _validate_symbol_info(si)
@@ -424,7 +454,7 @@ def min_rr_rule(ctx: RuleContext) -> RuleResult:
     if pip <= 0:
         return RuleResult(approved=False, reason="Invalid pip size")
 
-    fill_price = _resolve_fill_price(si, ctx.signal.direction)
+    fill_price = _resolve_fill_price(si, ctx.signal.direction, ctx.signal)
 
     sl_pips, tp_pips, invalid = _actual_reward_risk(
         direction=ctx.signal.direction,
@@ -472,7 +502,7 @@ def spread_quality_rule(ctx: RuleContext) -> RuleResult:
     if spread_pips < 0:
         return RuleResult(approved=False, reason="Invalid market data: negative spread")
 
-    fill_price = _resolve_fill_price(si, ctx.signal.direction)
+    fill_price = _resolve_fill_price(si, ctx.signal.direction, ctx.signal)
 
     sl_pips = abs(fill_price - ctx.signal.stop_loss) / pip
     if sl_pips == 0:
