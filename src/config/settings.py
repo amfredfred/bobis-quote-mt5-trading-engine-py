@@ -422,6 +422,15 @@ class ExecutionConfig:
     # SELL_STOP) at the exact same price/SL/TP/expiry, instead of just
     # skipping the signal. Off: original behavior, skip with no fallback.
     use_limit_to_stop_fallback: bool = True
+    # On (default): when a resting order is rejected with retcode=10022
+    # INVALID_EXPIRATION (seen live on XAUUSD - some broker/symbol
+    # combinations reject a SPECIFIED expiration landing outside that
+    # symbol's current tradeable session, even with an ordinary
+    # expiry_seconds), retry once as GTC (no broker-side expiration) at the
+    # same price/SL/TP. PendingOrderManager's own expiry_at tracking still
+    # cancels it on schedule either way - see pending_manager.py - so this
+    # doesn't risk an order resting forever unmonitored.
+    use_gtc_fallback_on_invalid_expiration: bool = True
 
     def __post_init__(self) -> None:
         _validate_pct_range("execution.tp1_trigger_pct", self.tp1_trigger_pct)
@@ -841,6 +850,9 @@ class AppConfig:
                 ),
                 use_limit_to_stop_fallback=bool(
                     exe.get("use_limit_to_stop_fallback", True)
+                ),
+                use_gtc_fallback_on_invalid_expiration=bool(
+                    exe.get("use_gtc_fallback_on_invalid_expiration", True)
                 ),
             ),
             storage_path=_apply_profile_template(

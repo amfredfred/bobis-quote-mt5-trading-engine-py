@@ -64,6 +64,21 @@ def test_open_limit_order_sends_pending_action_with_correct_type():
     assert result.executed_price == 101.5  # the RESTING price, not a real fill
 
 
+def test_open_limit_order_use_gtc_omits_expiration():
+    fake_mt5 = _FakeMt5()
+    orders = Mt5Orders(_FakeClient(fake_mt5))
+
+    orders.open_limit_order(
+        symbol="XAUUSD", order_type=Mt5OrderType.BUY_LIMIT, volume=0.01,
+        price=101.5, sl=99.0, tp=110.0, magic=8858, comment="test",
+        expiry_seconds=900, use_gtc=True,
+    )
+
+    req = fake_mt5.last_request
+    assert req["type_time"] == Mt5OrderTypeTime.GTC
+    assert "expiration" not in req
+
+
 def test_open_limit_order_raises_on_bad_retcode():
     fake_mt5 = _FakeMt5(retcode=10015)  # INVALID_PRICE
     orders = Mt5Orders(_FakeClient(fake_mt5))

@@ -18,7 +18,11 @@ import time
 
 from src.brokers.mt5.orders import Mt5Orders
 from src.brokers.mt5.positions import Mt5Positions
-from src.brokers.mt5.types import Mt5OrderType, MT5_RETCODE_INVALID_PRICE
+from src.brokers.mt5.types import (
+    Mt5OrderType,
+    MT5_RETCODE_INVALID_EXPIRATION,
+    MT5_RETCODE_INVALID_PRICE,
+)
 from src.config.settings import ExecutionConfig
 from src.infra.metrics import metrics
 from src.domain.position import SymbolInfo
@@ -432,6 +436,45 @@ class OrderManager:
                                     },
                                 )
                                 metrics.increment("orders.limit_to_stop_fallback_failed")
+
+                    elif retcode == MT5_RETCODE_INVALID_EXPIRATION:
+                        logger.warning(
+                            "Requested expiration rejected by broker — order rejected, "
+                            "not retrying with the same expiration",
+                            extra={"symbol": plan.symbol, "price": price, "retcode": retcode},
+                        )
+                        metrics.increment("orders.limit_expiration_rejected")
+
+                        if self._cfg.use_gtc_fallback_on_invalid_expiration:
+                            logger.info(
+                                "Retrying as GTC (no broker-side expiration) at the same level",
+                                extra={"symbol": plan.symbol, "price": price},
+                            )
+                            try:
+                                fallback_result = self._orders.open_limit_order(
+                                    symbol=plan.symbol,
+                                    order_type=order_type,
+                                    volume=volume,
+                                    price=price,
+                                    sl=sl,
+                                    tp=tp,
+                                    magic=self._cfg.magic,
+                                    comment=comment,
+                                    expiry_seconds=expiry_seconds,
+                                    use_gtc=True,
+                                )
+                                metrics.increment("orders.gtc_fallback_placed")
+                                return fallback_result.ticket, fallback_result.executed_price
+                            except RuntimeError as gtc_exc:
+                                logger.warning(
+                                    "GTC fallback also failed — signal skipped",
+                                    extra={
+                                        "symbol": plan.symbol,
+                                        "price": price,
+                                        "error": str(gtc_exc),
+                                    },
+                                )
+                                metrics.increment("orders.gtc_fallback_failed")
                     raise
 
                 if retcode == 10016:

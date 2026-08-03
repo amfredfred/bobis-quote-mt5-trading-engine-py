@@ -154,6 +154,14 @@ execution:
   # at the exact same price/SL/TP/expiry, instead of just being skipped.
   # Off: original skip-only behavior. Optional; omitted defaults to true.
   use_limit_to_stop_fallback: true
+  # On (default): a resting order rejected with retcode=10022 INVALID_
+  # EXPIRATION (some broker/symbol combinations reject a SPECIFIED
+  # expiration landing outside that symbol's current tradeable session -
+  # seen live on XAUUSD - even with an ordinary expiry_seconds) gets
+  # retried once as GTC (no broker-side expiration) at the same price/SL/
+  # TP. PendingOrderManager's own expiry_at tracking still cancels it on
+  # schedule either way, so this doesn't risk an order resting forever.
+  use_gtc_fallback_on_invalid_expiration: true
 engine:
   timezone: UTC
   log_level: INFO

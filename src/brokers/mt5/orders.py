@@ -118,10 +118,22 @@ class Mt5Orders:
         magic: int,
         comment: str,
         expiry_seconds: int,
+        use_gtc: bool = False,
     ) -> OrderResult:
-        """Place a resting BUY_LIMIT/SELL_LIMIT order at exactly `price` — no
+        """Place a resting BUY_LIMIT/SELL_LIMIT (or, via the limit->stop
+        fallback, BUY_STOP/SELL_STOP) order at exactly `price` — no
         slippage/deviation concept here (unlike open_market_order), since a
-        limit order either fills at that price or doesn't fill at all."""
+        limit order either fills at that price or doesn't fill at all.
+
+        use_gtc: for the retcode=10022 INVALID_EXPIRATION fallback - some
+        broker/symbol combinations reject a SPECIFIED expiration that lands
+        outside that symbol's current tradeable session (seen live on
+        XAUUSD), even though the requested expiry_seconds itself is
+        perfectly ordinary. GTC sidesteps the issue entirely by not
+        specifying an expiration at all - the order rests until manually
+        cancelled or filled, relying on the caller's own signal-lifetime
+        management rather than a broker-side timer.
+        """
         self._client.ensure_connected()
 
         request = {
@@ -134,9 +146,12 @@ class Mt5Orders:
             "tp": tp,
             "magic": magic,
             "comment": comment,
-            "type_time": Mt5OrderTypeTime.SPECIFIED,
-            "expiration": now_sec() + expiry_seconds,
         }
+        if use_gtc:
+            request["type_time"] = Mt5OrderTypeTime.GTC
+        else:
+            request["type_time"] = Mt5OrderTypeTime.SPECIFIED
+            request["expiration"] = now_sec() + expiry_seconds
 
         logger.info(
             "Sending pending order",
@@ -147,7 +162,8 @@ class Mt5Orders:
                 "price": price,
                 "sl": sl,
                 "tp": tp,
-                "expiry_seconds": expiry_seconds,
+                "expiry_seconds": None if use_gtc else expiry_seconds,
+                "type_time": "GTC" if use_gtc else "SPECIFIED",
             },
         )
 
